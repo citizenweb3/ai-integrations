@@ -25,8 +25,8 @@ const Footer: FC = () => {
             <Link href="https://www.citizenweb3.com/#contacts">Contacts</Link>
           </div>
           <div className="*:font-light *:text-base space-y-2 *:block">
-            <Link href="/">Privacy</Link>
-            <Link href="https://agents.citizenweb3.com">AI Agents</Link>
+            <Link href="https://privacy.citizenweb3.com">Privacy</Link>
+            <Link href="/">AI Agents</Link>
             <Link href="https://monitor.citizenweb3.com">Monitor</Link>
             <Link href="https://www.citizenweb3.com/#careers">Careers</Link>
           </div>
