@@ -61,7 +61,7 @@ const Hero: FC<OwnProps> = ({ title, subtitle, variant = 'default' }) => {
         {subtitle && (
           <p className="font-bold text-2xl tracking-[0.05em] opacity-90">
             {subtitle.includes('\n')
-              ? subtitle.split('\n').map((line, i, arr) => (
+              ? subtitle.split('\n').map((line, i) => (
                   <span key={i} className={i > 0 ? 'block mt-4' : ''}>
                     {line}
                   </span>
