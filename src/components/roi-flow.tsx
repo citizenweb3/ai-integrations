@@ -1,59 +1,52 @@
 import { FC } from 'react';
-import Image from 'next/image';
-import Link from 'next/link';
 
-interface ServiceStep {
-  title: string;
+interface Step {
+  label: string;
   detail: string;
   metrics?: string[];
-  highlight?: boolean;
 }
 
-const steps: ServiceStep[] = [
+const steps: Step[] = [
   {
-    title: 'Discovery & Architecture',
-    detail: 'We audit your workflows, identify what to automate, and design the agent system tailored to your business.',
+    label: 'Your Pain',
+    detail: 'Manual processes eating your team\'s time. Scaling means hiring. Knowledge gets lost.',
   },
   {
-    title: 'Agent Development',
-    detail: 'Custom agents built with your domain knowledge, integrated with your tools via MCP, APIs, and RAG.',
+    label: 'Discovery',
+    detail: 'We map your workflows, identify automation opportunities, design the agent architecture.',
   },
   {
-    title: 'Deployment',
-    detail: 'Self-hosted or hybrid. Agents go live on your or our infrastructure with full monitoring from day one.',
+    label: 'We Build',
+    detail: 'Custom agents deployed on your or our infrastructure. Your data stays yours, full control guaranteed.',
   },
   {
-    title: 'Management & Upgrades',
-    detail: 'Ongoing support, model migrations, new agent roles, performance tuning. Optional — you can run it yourself.',
+    label: 'Agents Work',
+    detail: 'Autonomous workforce running 24/7. Proactive analysis, reactive execution, persistent memory.',
   },
   {
-    title: 'You Get Results',
+    label: 'You Get Results',
     detail: 'Measurable impact from week one.',
-    highlight: true,
     metrics: ['80% less manual work', '24/7 autonomous coverage', 'Zero knowledge loss', 'Predictable scaling costs'],
   },
 ];
 
-const wideBtnClass =
-  'hover:no-underline relative py-4 px-12 md:py-5 md:px-20 font-bold inline-block text-lg md:text-2xl text-center bg-[#1A1A1B] rounded-[9px] hover:bg-[#ffffff]/15 cursor-pointer';
-
-const AgentsService: FC = () => {
+const RoiFlow: FC = () => {
   return (
     <section className="py-8 md:py-16">
       <div className="max-w-[88vw] mx-auto">
-        <h2 className="text-xl md:text-2xl font-bold text-left mb-2">The Service</h2>
+        <h2 className="text-xl md:text-2xl font-bold text-left mb-2">From Problem to Results</h2>
         <div className="w-full h-px bg-white/50 mb-16" />
 
         {/* Desktop: horizontal flow */}
         <div className="hidden lg:block">
           <div className="grid grid-cols-5 gap-0">
             {steps.map((step, i) => (
-              <div key={step.title} className="flex items-start">
+              <div key={step.label} className="flex items-start">
                 <div className="flex-1">
                   {/* Step number + connector line */}
                   <div className="flex items-center mb-6">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm font-bold ${
-                      step.highlight
+                      i === steps.length - 1
                         ? 'border border-[#2FFBF7]/50 text-[#2FFBF7]'
                         : 'border border-white/20 text-[hsl(220,10%,46%)]'
                     }`}>
@@ -67,9 +60,9 @@ const AgentsService: FC = () => {
                   {/* Content */}
                   <div className="pr-6">
                     <p className={`text-base font-bold mb-2 ${
-                      step.highlight ? 'text-[#2FFBF7]' : 'text-[#E6E6E6]'
+                      i === steps.length - 1 ? 'text-[#2FFBF7]' : 'text-[#E6E6E6]'
                     }`}>
-                      {step.title}
+                      {step.label}
                     </p>
                     <p className="text-sm font-light text-[hsl(220,10%,46%)] leading-relaxed">
                       {step.detail}
@@ -93,11 +86,11 @@ const AgentsService: FC = () => {
         {/* Mobile: vertical flow */}
         <div className="lg:hidden">
           {steps.map((step, i) => (
-            <div key={step.title} className="flex">
+            <div key={step.label} className="flex">
               {/* Vertical connector */}
               <div className="flex flex-col items-center mr-5">
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${
-                  step.highlight
+                  i === steps.length - 1
                     ? 'border border-[#2FFBF7]/50 text-[#2FFBF7]'
                     : 'border border-white/20 text-[hsl(220,10%,46%)]'
                 }`}>
@@ -111,9 +104,9 @@ const AgentsService: FC = () => {
               {/* Content */}
               <div className="pb-8 pt-0.5">
                 <p className={`text-base font-bold mb-1 ${
-                  step.highlight ? 'text-[#2FFBF7]' : 'text-[#E6E6E6]'
+                  i === steps.length - 1 ? 'text-[#2FFBF7]' : 'text-[#E6E6E6]'
                 }`}>
-                  {step.title}
+                  {step.label}
                 </p>
                 <p className="text-sm font-light text-[hsl(220,10%,46%)] leading-relaxed">
                   {step.detail}
@@ -131,16 +124,9 @@ const AgentsService: FC = () => {
             </div>
           ))}
         </div>
-
-        <div className="flex justify-end mt-10">
-          <Link href="https://t.me/citizenweb3" target="_blank" rel="noopener noreferrer" className={wideBtnClass}>
-            <Image src="/arrow.svg" alt="arrow" width={12} height={12} className="absolute top-3 right-3 w-3 h-auto" />
-            Quote
-          </Link>
-        </div>
       </div>
     </section>
   );
 };
 
-export default AgentsService;
+export default RoiFlow;
