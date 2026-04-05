@@ -16,11 +16,10 @@ export default function Page() {
           title="AI Agents as a Service: Tailored Automation for Your Business"
           subtitle="We don't build chatbots. We build entire autonomous AI workforces."
         />
-        <BeforeAfter />
-        <AgentsFirstClient />
-        <AiWorkforce />
-        <ComparisonTable />
         <AgentsService />
+        <ComparisonTable />
+        <BeforeAfter />
+        <AiWorkforce />
       </main>
       <SiteFooter />
       <ScrollToTop />

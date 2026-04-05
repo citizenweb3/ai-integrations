@@ -39,7 +39,7 @@ const wideBtnClass =
 
 const AgentsService: FC = () => {
   return (
-    <section className="py-8 md:py-16">
+    <section className="pt-8 md:pt-16">
       <div className="max-w-[88vw] mx-auto">
         <h2 className="text-xl md:text-2xl font-bold text-left mb-2">The Service</h2>
         <div className="w-full h-px bg-white/50 mb-16" />
@@ -132,7 +132,7 @@ const AgentsService: FC = () => {
           ))}
         </div>
 
-        <div className="flex justify-end mt-10">
+        <div className="flex justify-end mt-16">
           <Link href="https://t.me/citizenweb3" target="_blank" rel="noopener noreferrer" className={wideBtnClass}>
             <Image src="/arrow.svg" alt="arrow" width={12} height={12} className="absolute top-3 right-3 w-3 h-auto" />
             Quote
