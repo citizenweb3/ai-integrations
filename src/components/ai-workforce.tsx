@@ -32,7 +32,11 @@ const AiWorkforce: FC = () => {
     <section className="py-8 md:py-16">
       <div className="max-w-[88vw] mx-auto">
         <h2 className="text-xl md:text-2xl font-bold text-left mb-2">Our AI Workforce</h2>
-        <div className="w-full h-px bg-white/50 mb-16" />
+        <div className="w-full h-px bg-white/50 mb-12" />
+        <p className="text-base md:text-xl font-light leading-relaxed mb-12">
+          Our first client was ourselves. Our AI Workforce is Already Running in Production: ValidatorInfo.com is
+          powered by a full team of self-hosted AI agents handling growth, development, outreach, monitoring, and more.
+        </p>
 
         {/* Desktop layout */}
         <div className="hidden lg:block">
@@ -67,7 +71,9 @@ const AiWorkforce: FC = () => {
                   <p className="text-base font-bold text-[#E6E6E6]">{pair.ralph.role}</p>
                   <ul className="mt-2 flex flex-col gap-1">
                     {pair.ralph.tasks.map((t) => (
-                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">{t}</li>
+                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">
+                        {t}
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -90,7 +96,9 @@ const AiWorkforce: FC = () => {
                   <p className="text-base font-bold text-[#E6E6E6]">{pair.reactive.role}</p>
                   <ul className="mt-2 flex flex-col gap-1">
                     {pair.reactive.tasks.map((t) => (
-                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">{t}</li>
+                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">
+                        {t}
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -105,7 +113,9 @@ const AiWorkforce: FC = () => {
 
           {/* Level 3: Shared infrastructure */}
           <div className="border-t border-white/10 pt-6">
-            <p className="text-sm font-bold uppercase tracking-widest text-[hsl(220,10%,46%)] text-center mb-6">Shared Infrastructure</p>
+            <p className="text-sm font-bold uppercase tracking-widest text-[hsl(220,10%,46%)] text-center mb-6">
+              Shared Infrastructure
+            </p>
             <div className="grid grid-cols-4 gap-8">
               {infra.map((item) => (
                 <div key={item.label} className="text-center">
@@ -142,7 +152,9 @@ const AiWorkforce: FC = () => {
                   <p className="text-base font-bold text-[#E6E6E6]">{pair.ralph.role}</p>
                   <ul className="mt-1.5 flex flex-col gap-0.5">
                     {pair.ralph.tasks.map((t) => (
-                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">{t}</li>
+                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">
+                        {t}
+                      </li>
                     ))}
                   </ul>
 
@@ -155,7 +167,9 @@ const AiWorkforce: FC = () => {
                   <p className="text-base font-bold text-[#E6E6E6]">{pair.reactive.role}</p>
                   <ul className="mt-1.5 flex flex-col gap-0.5">
                     {pair.reactive.tasks.map((t) => (
-                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">{t}</li>
+                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">
+                        {t}
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -165,7 +179,9 @@ const AiWorkforce: FC = () => {
 
           {/* Shared infrastructure */}
           <div className="border-t border-white/10 pt-5 mt-2">
-            <p className="text-xs font-bold uppercase tracking-widest text-[hsl(220,10%,46%)] mb-4">Shared Infrastructure</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-[hsl(220,10%,46%)] mb-4">
+              Shared Infrastructure
+            </p>
             <div className="flex flex-col gap-4">
               {infra.map((item) => (
                 <div key={item.label}>
