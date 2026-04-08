@@ -1,0 +1,32 @@
+# Environment and secrets
+.env
+.env.*
+
+# Telegram session
+data/
+*.session
+*.session-journal
+
+# SQLite database
+*.db
+*.db-journal
+*.db-wal
+
+# Claude CLI state
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+
+# GitNexus (auto-generated)
+.gitnexus/
+AGENTS.md

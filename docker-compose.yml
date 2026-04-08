@@ -1,0 +1,38 @@
+services:
+  autoheal:
+    image: willfarrell/autoheal
+    container_name: autoheal
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+      - AUTOHEAL_INTERVAL=30
+
+  tg-growth-agent:
+    build: .
+    container_name: tg-growth-agent
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    env_file: .env
+    environment:
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - CLAUDE_ACCOUNT_UUID=${CLAUDE_ACCOUNT_UUID}
+      - CLAUDE_EMAIL=${CLAUDE_EMAIL}
+      - CLAUDE_ORG_UUID=${CLAUDE_ORG_UUID}
+      - RAG_API_TOKEN=${RAG_API_TOKEN}
+      - RAG_API_URL=${RAG_API_URL:-http://host.docker.internal:3000}
+      - DATABASE_URL=${DATABASE_URL}
+      - TELEGRAM_SESSION=${TELEGRAM_SESSION}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - APPROVAL_CHAT_ID=${APPROVAL_CHAT_ID}

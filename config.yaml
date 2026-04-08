@@ -1,0 +1,192 @@
+# telegram auth: all credentials from env vars (TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION)
+
+target:
+  community_chat: "https://t.me/web_3_society"  # community chat invite link, injected into prompts
+  topics:
+    # EN — staking core
+    - staking
+    - stake
+    - staked
+    - validators
+    - validator
+    - governance
+    - proposal
+    - proposals
+    - vote
+    - votes
+    - voting
+    - delegation
+    - delegate
+    - delegator
+    - nominator
+    - nominate
+    - liquid staking
+    - restaking
+    - restake
+    - proof of stake
+    - APR
+    - APY
+    - slashing
+    - slashed
+    - slash
+    # EN — rewards and earnings
+    - earn
+    - earning
+    - earnings
+    - reward
+    - rewards
+    - commission
+    - commissions
+    - yield
+    - returns
+    - passive income
+    - staking rewards
+    - block rewards
+    # EN — validator operations
+    - unbonding
+    - unbond
+    - bonding
+    - bond
+    - jailing
+    - jail
+    - jailed
+    - unjail
+    - uptime
+    - downtime
+    - node operator
+    - block producer
+    - block proposer
+    - validator set
+    - active set
+    - commission rate
+    - validator commission
+    - self-delegation
+    - self-stake
+    - double sign
+    - double signing
+    - tombstone
+    - epoch
+    - reward distribution
+    - IBC
+    - relayer
+    - node
+    - nodes
+    # RU — staking core
+    - стейкинг
+    - стейкать
+    - стейкнуть
+    - застейкать
+    - валидатор
+    - валидаторы
+    - делегирование
+    - делегировать
+    - делегат
+    - предложение
+    - предложения
+    - голос
+    - голоса
+    - голосование
+    - голосовать
+    - нода
+    - ноды
+    - рестейкинг
+    - ликвидный стейкинг
+    - доходность стейкинга
+    - доходность
+    - награды за стейкинг
+    - процент годовых
+    - инфляция
+    - комиссия валидатора
+    - комиссия
+    # RU — rewards and earnings
+    - заработок
+    - заработать
+    - зарабатывать
+    - награда
+    - награды
+    - вознаграждение
+    - пассивный доход
+    - доход
+    - процент
+    - проценты
+    # RU — validator operations
+    - анбондинг
+    - анбонд
+    - бондинг
+    - бонд
+    - джейл
+    - джэйл
+    - тюрьма
+    - заджейлен
+    - аптайм
+    - даунтайм
+    - оператор ноды
+    - двойная подпись
+    - распределение наград
+    - активный сет
+    - эпоха
+    - релеер
+    - нода
+    - ноды
+    # EN — privacy & bare metal
+    - privacy
+    - private
+    - zero knowledge
+    - zk proof
+    - bare metal
+    - self-hosted
+    - self-custody
+    - sovereign
+    - decentralization
+    - censorship resistance
+    - off-grid
+    - mixnet
+    # RU — privacy & bare metal
+    - приватность
+    - конфиденциальность
+    - нулевое знание
+    - самохостинг
+    - суверенитет
+    - децентрализация
+    - цензуроустойчивость
+
+strategy:
+  # "approval" — every message goes through approval bot, human approves
+  # "auto"     — agent sends on its own, human gets notifications only (NOT IMPLEMENTED YET)
+  mode: "approval"
+  respond_enabled: true                  # enable claude-powered responses on keyword match
+
+limits:
+  messages_per_group_per_day: 10         # max responses per group per day
+  min_delay_per_group: 60                # min seconds between responses in the same group
+  typing_duration_min: 3                 # min typing simulation delay (seconds)
+  typing_duration_max: 15                # max typing simulation delay (seconds)
+  warmup_hours_min: 3                    # min warmup period after joining a group (hours)
+  warmup_hours_max: 6                    # max warmup period after joining a group (hours)
+
+proactive:
+  interval_minutes: 5                    # 5 min for testing, 20 for production
+  window_minutes: 30                     # analyze messages from the last N minutes
+  score_threshold: 0.5                   # min score for a thread to be sent to claude
+  max_candidates_per_cycle: 3            # max threads to evaluate per proactive cycle
+
+claude:
+  model: "claude-sonnet-4-6"             # model for first response (keyword match)
+  model_reply: "claude-opus-4-6"         # model for conversation continuation, DM, proactive
+  timeout_seconds: 120                   # subprocess timeout (higher because claude calls tools)
+  max_concurrent: 3                      # max parallel claude -p subprocesses
+  degraded_pause_minutes: 15             # pause duration after 3 consecutive failures
+
+database:
+  path: "data/agent.db"                  # sqlite database file path
+  message_retention_hours: 48            # delete messages older than this
+  audit_redaction_days: 90               # redact audit log payload after this many days
+
+rag:
+  timeout_seconds: 10                    # http timeout for RAG API requests
+  max_retries: 2                         # retry count on failure
+  circuit_breaker_threshold: 5           # consecutive failures before circuit opens
+  circuit_breaker_cooldown_seconds: 300  # seconds before circuit breaker resets
+
+validatorinfo_db:
+  query_timeout_seconds: 5               # health check sql timeout
