@@ -6,6 +6,8 @@ import AgentsFirstClient from '@/components/agents-first-client';
 import AiWorkforce from '@/components/ai-workforce';
 import AgentsService from '@/components/agents-service';
 import ComparisonTable from '@/components/comparison-table';
+import AutomationCases from '@/components/automation-cases';
+import Pricing from '@/components/pricing';
 
 export default function Page() {
   return (
@@ -18,8 +20,10 @@ export default function Page() {
         />
         <AgentsService />
         <ComparisonTable />
+        <AutomationCases />
         <BeforeAfter />
         <AiWorkforce />
+        <Pricing />
       </main>
       <SiteFooter />
       <ScrollToTop />

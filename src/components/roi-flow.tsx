@@ -48,7 +48,7 @@ const RoiFlow: FC = () => {
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm font-bold ${
                       i === steps.length - 1
                         ? 'border border-[#2FFBF7]/50 text-[#2FFBF7]'
-                        : 'border border-white/20 text-[hsl(220,10%,46%)]'
+                        : 'border border-white/20 text-[hsl(220,10%,64%)]'
                     }`}>
                       {i + 1}
                     </div>
@@ -64,14 +64,14 @@ const RoiFlow: FC = () => {
                     }`}>
                       {step.label}
                     </p>
-                    <p className="text-sm font-light text-[hsl(220,10%,46%)] leading-relaxed">
+                    <p className="text-sm font-light text-[hsl(220,10%,64%)] leading-relaxed">
                       {step.detail}
                     </p>
                     {step.metrics && (
                       <ul className="mt-3 flex flex-col gap-1.5">
                         {step.metrics.map((m) => (
                           <li key={m} className="text-sm font-light text-[#E6E6E6]">
-                            <span className="text-[#2FFBF7]/60 mr-2">—</span>{m}
+                            <span className="text-[#2FFBF7] mr-2">—</span>{m}
                           </li>
                         ))}
                       </ul>
@@ -92,7 +92,7 @@ const RoiFlow: FC = () => {
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${
                   i === steps.length - 1
                     ? 'border border-[#2FFBF7]/50 text-[#2FFBF7]'
-                    : 'border border-white/20 text-[hsl(220,10%,46%)]'
+                    : 'border border-white/20 text-[hsl(220,10%,64%)]'
                 }`}>
                   {i + 1}
                 </div>
@@ -108,14 +108,14 @@ const RoiFlow: FC = () => {
                 }`}>
                   {step.label}
                 </p>
-                <p className="text-sm font-light text-[hsl(220,10%,46%)] leading-relaxed">
+                <p className="text-sm font-light text-[hsl(220,10%,64%)] leading-relaxed">
                   {step.detail}
                 </p>
                 {step.metrics && (
                   <ul className="mt-2 flex flex-col gap-1">
                     {step.metrics.map((m) => (
                       <li key={m} className="text-sm font-light text-[#E6E6E6]">
-                        <span className="text-[#2FFBF7]/60 mr-2">—</span>{m}
+                        <span className="text-[#2FFBF7] mr-2">—</span>{m}
                       </li>
                     ))}
                   </ul>

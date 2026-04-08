@@ -44,7 +44,7 @@ const AiWorkforce: FC = () => {
           <div className="flex justify-center">
             <div className="border border-[#2FFBF7]/30 px-8 py-3">
               <p className="text-lg font-bold text-[#2FFBF7] text-center tracking-wide">Agent Factory</p>
-              <p className="text-sm font-light text-[hsl(220,10%,46%)] text-center mt-1">Orchestrator</p>
+              <p className="text-sm font-light text-[hsl(220,10%,64%)] text-center mt-1">Orchestrator</p>
             </div>
           </div>
 
@@ -67,11 +67,11 @@ const AiWorkforce: FC = () => {
               <div key={pair.ralph.role} className="flex flex-col items-center">
                 <div className="w-px h-8 bg-white/10" />
                 <div className="w-full border border-white/10 px-5 py-4">
-                  <p className="text-sm font-bold uppercase tracking-widest text-[#2FFBF7]/70 mb-0.5">Proactive</p>
+                  <p className="text-sm font-bold uppercase tracking-widest text-[#2FFBF7] mb-0.5">Proactive</p>
                   <p className="text-base font-bold text-[#E6E6E6]">{pair.ralph.role}</p>
                   <ul className="mt-2 flex flex-col gap-1">
                     {pair.ralph.tasks.map((t) => (
-                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">
+                      <li key={t} className="text-sm font-light text-[hsl(220,10%,64%)]">
                         {t}
                       </li>
                     ))}
@@ -88,15 +88,15 @@ const AiWorkforce: FC = () => {
                 <div className="w-px h-8 bg-white/10" />
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-4 h-px bg-white/10" />
-                  <span className="text-xs font-light text-[hsl(220,10%,46%)]">delegates to</span>
+                  <span className="text-xs font-light text-[hsl(220,10%,64%)]">delegates to</span>
                   <div className="w-4 h-px bg-white/10" />
                 </div>
                 <div className="w-full border border-white/5 px-5 py-4">
-                  <p className="text-sm font-bold uppercase tracking-widest text-[hsl(220,10%,46%)] mb-0.5">Reactive</p>
+                  <p className="text-sm font-bold uppercase tracking-widest text-[hsl(220,10%,64%)] mb-0.5">Reactive</p>
                   <p className="text-base font-bold text-[#E6E6E6]">{pair.reactive.role}</p>
                   <ul className="mt-2 flex flex-col gap-1">
                     {pair.reactive.tasks.map((t) => (
-                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">
+                      <li key={t} className="text-sm font-light text-[hsl(220,10%,64%)]">
                         {t}
                       </li>
                     ))}
@@ -113,14 +113,14 @@ const AiWorkforce: FC = () => {
 
           {/* Level 3: Shared infrastructure */}
           <div className="border-t border-white/10 pt-6">
-            <p className="text-sm font-bold uppercase tracking-widest text-[hsl(220,10%,46%)] text-center mb-6">
+            <p className="text-sm font-bold uppercase tracking-widest text-[hsl(220,10%,64%)] text-center mb-6">
               Shared Infrastructure
             </p>
             <div className="grid grid-cols-4 gap-8">
               {infra.map((item) => (
                 <div key={item.label} className="text-center">
                   <p className="text-base font-bold text-[#E6E6E6]">{item.label}</p>
-                  <p className="text-sm font-light text-[hsl(220,10%,46%)] mt-1">{item.desc}</p>
+                  <p className="text-sm font-light text-[hsl(220,10%,64%)] mt-1">{item.desc}</p>
                 </div>
               ))}
             </div>
@@ -132,7 +132,7 @@ const AiWorkforce: FC = () => {
           {/* Orchestrator */}
           <div className="border border-[#2FFBF7]/30 px-6 py-3 w-fit">
             <p className="text-base font-bold text-[#2FFBF7] tracking-wide">Agent Factory</p>
-            <p className="text-xs font-light text-[hsl(220,10%,46%)] mt-0.5">Orchestrator</p>
+            <p className="text-xs font-light text-[hsl(220,10%,64%)] mt-0.5">Orchestrator</p>
           </div>
 
           {/* Agent pairs stacked */}
@@ -148,11 +148,11 @@ const AiWorkforce: FC = () => {
 
                 {/* Pair content */}
                 <div className="pb-6 pt-3 flex-1">
-                  <p className="text-xs font-bold uppercase tracking-widest text-[#2FFBF7]/70 mb-0.5">Proactive</p>
+                  <p className="text-xs font-bold uppercase tracking-widest text-[#2FFBF7] mb-0.5">Proactive</p>
                   <p className="text-base font-bold text-[#E6E6E6]">{pair.ralph.role}</p>
                   <ul className="mt-1.5 flex flex-col gap-0.5">
                     {pair.ralph.tasks.map((t) => (
-                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">
+                      <li key={t} className="text-sm font-light text-[hsl(220,10%,64%)]">
                         {t}
                       </li>
                     ))}
@@ -160,14 +160,14 @@ const AiWorkforce: FC = () => {
 
                   <div className="flex items-center gap-2 my-3">
                     <div className="w-3 h-px bg-white/10" />
-                    <span className="text-xs font-light text-[hsl(220,10%,46%)]">delegates to</span>
+                    <span className="text-xs font-light text-[hsl(220,10%,64%)]">delegates to</span>
                   </div>
 
-                  <p className="text-xs font-bold uppercase tracking-widest text-[hsl(220,10%,46%)] mb-0.5">Reactive</p>
+                  <p className="text-xs font-bold uppercase tracking-widest text-[hsl(220,10%,64%)] mb-0.5">Reactive</p>
                   <p className="text-base font-bold text-[#E6E6E6]">{pair.reactive.role}</p>
                   <ul className="mt-1.5 flex flex-col gap-0.5">
                     {pair.reactive.tasks.map((t) => (
-                      <li key={t} className="text-sm font-light text-[hsl(220,10%,46%)]">
+                      <li key={t} className="text-sm font-light text-[hsl(220,10%,64%)]">
                         {t}
                       </li>
                     ))}
@@ -179,14 +179,14 @@ const AiWorkforce: FC = () => {
 
           {/* Shared infrastructure */}
           <div className="border-t border-white/10 pt-5 mt-2">
-            <p className="text-xs font-bold uppercase tracking-widest text-[hsl(220,10%,46%)] mb-4">
+            <p className="text-xs font-bold uppercase tracking-widest text-[hsl(220,10%,64%)] mb-4">
               Shared Infrastructure
             </p>
             <div className="flex flex-col gap-4">
               {infra.map((item) => (
                 <div key={item.label}>
                   <p className="text-base font-bold text-[#E6E6E6]">{item.label}</p>
-                  <p className="text-sm font-light text-[hsl(220,10%,46%)] mt-0.5">{item.desc}</p>
+                  <p className="text-sm font-light text-[hsl(220,10%,64%)] mt-0.5">{item.desc}</p>
                 </div>
               ))}
             </div>
