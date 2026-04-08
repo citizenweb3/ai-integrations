@@ -45,7 +45,7 @@ const Hero: FC<OwnProps> = ({ title, subtitle, variant = 'default' }) => {
         <h1
           className={
             variant === 'home'
-              ? 'font-bold text-4xl tracking-[0.05em] opacity-90'
+              ? 'font-bold text-4xl tracking-[0.05em]'
               : 'max-w-2xl font-bold text-sm text-zinc-400 md:text-base'
           }
         >
@@ -59,7 +59,7 @@ const Hero: FC<OwnProps> = ({ title, subtitle, variant = 'default' }) => {
         </h1>
         {variant === 'home' && <div className="w-[166px] h-px bg-white opacity-50 my-4" />}
         {subtitle && (
-          <p className="font-bold text-2xl tracking-[0.05em] opacity-90">
+          <p className="font-bold text-2xl tracking-[0.05em]">
             {subtitle.includes('\n')
               ? subtitle.split('\n').map((line, i) => (
                   <span key={i} className={i > 0 ? 'block mt-4' : ''}>

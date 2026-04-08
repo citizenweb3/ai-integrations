@@ -24,7 +24,7 @@ const MenuItem: FC<{ title: string; href: string; onClick: () => void }> = ({ ti
     <Link
       href={href}
       onClick={onClick}
-      className="w-[110px] h-[34px] md:w-[193px] md:h-[47px] flex items-center justify-center bg-[#1A1A1B] border-b border-[#262626] rounded-[10px] z-10 text-lg md:text-[22px] font-semibold tracking-[1.1px] text-center text-white cursor-pointer hover:bg-[#262626] transition-colors hover:no-underline"
+      className="w-[110px] h-[44px] md:w-[193px] md:h-[47px] flex items-center justify-center bg-[#1A1A1B] border-b border-[#262626] rounded-[10px] z-10 text-lg md:text-[22px] font-semibold tracking-[1.1px] text-center text-white cursor-pointer hover:bg-[#262626] transition-colors hover:no-underline"
       target={href.startsWith('http') && !href.includes('citizenweb3') ? '_blank' : '_self'}
       rel={href.startsWith('http') && !href.includes('citizenweb3') ? 'noopener noreferrer' : undefined}
     >
@@ -51,12 +51,16 @@ const Menu: FC = () => {
         />
       )}
       <div ref={ref} className="absolute top-10 right-[6vw] flex items-center justify-center flex-col z-50 p-4 space-y-2">
-        <div
+        <button
+          type="button"
+          aria-expanded={isMenuOpened}
+          aria-haspopup="true"
+          aria-label="Navigation menu"
           onClick={() => setIsMenuOpened(!isMenuOpened)}
-          className="w-[110px] h-[34px] md:w-[193px] md:h-[47px] flex items-center justify-center bg-[#1A1A1B] border-b border-[#262626] rounded-[10px] z-10 text-lg md:text-[22px] font-semibold tracking-[1.1px] text-center text-white cursor-pointer hover:bg-[#262626] transition-colors"
+          className="w-[110px] h-[44px] md:w-[193px] md:h-[47px] flex items-center justify-center bg-[#1A1A1B] border-b border-[#262626] rounded-[10px] z-10 text-lg md:text-[22px] font-semibold tracking-[1.1px] text-center text-white cursor-pointer hover:bg-[#262626] transition-colors"
         >
           Menu
-        </div>
+        </button>
         {isMenuOpened &&
           menuItems.map((item) => (
             <MenuItem key={item.title} title={item.title} href={item.href} onClick={() => setIsMenuOpened(false)} />

@@ -42,14 +42,14 @@ const BeforeAfter: FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-12 md:gap-16">
           {/* Left column — Without Agents */}
           <div>
-            <p className="text-sm font-bold uppercase tracking-widest text-[hsl(220,10%,46%)] mb-8">
+            <p className="text-sm font-bold uppercase tracking-widest text-[hsl(220,10%,64%)] mb-8">
               Without Agents
             </p>
             <ul className="flex flex-col gap-6">
               {pairs.map((pair, i) => (
                 <li
                   key={i}
-                  className="text-base md:text-xl font-light text-[hsl(220,10%,46%)] border-l border-white/10 pl-5"
+                  className="text-base md:text-xl font-light text-[hsl(220,10%,64%)] border-l border-white/10 pl-5"
                 >
                   {pair.before}
                 </li>
@@ -66,7 +66,7 @@ const BeforeAfter: FC = () => {
               {pairs.map((pair, i) => (
                 <li
                   key={i}
-                  className="text-base md:text-xl font-light text-[#E6E6E6] border-l-2 border-[#2FFBF7]/40 pl-5"
+                  className="text-base md:text-xl font-light text-[#E6E6E6] border-l-2 border-[#2FFBF7]/70 pl-5"
                 >
                   {pair.after}
                 </li>
