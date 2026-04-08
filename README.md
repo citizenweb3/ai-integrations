@@ -68,8 +68,8 @@ If running alongside ValidatorInfo:
 
 ```
 RAG_API_TOKEN=<shared token, must match ValidatorInfo .env>
-RAG_API_URL=http://host.docker.internal:3000
-DATABASE_URL=postgresql://user:password@host.docker.internal:5432/validatorinfo_db
+RAG_API_URL=<ValidatorInfo URL>
+DATABASE_URL=<ValidatorInfo PostgreSQL connection string>
 ```
 
 ### 6. Build and generate session
