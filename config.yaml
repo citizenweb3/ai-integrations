@@ -165,14 +165,14 @@ limits:
   warmup_hours_max: 6                    # max warmup period after joining a group (hours)
 
 proactive:
-  interval_minutes: 5                    # 5 min for testing, 20 for production
-  window_minutes: 30                     # analyze messages from the last N minutes
+  interval_minutes: 50                   # run proactive scan every 50 minutes
+  window_minutes: 60                     # analyze messages from the last 60 minutes
   score_threshold: 0.5                   # min score for a thread to be sent to claude
   max_candidates_per_cycle: 3            # max threads to evaluate per proactive cycle
 
 claude:
   model: "claude-sonnet-4-6"             # model for first response (keyword match)
-  model_reply: "claude-opus-4-6"         # model for conversation continuation, DM, proactive
+  model_reply: "claude-opus-4-6"         # model for conversation continuation and DM
   timeout_seconds: 120                   # subprocess timeout (higher because claude calls tools)
   max_concurrent: 3                      # max parallel claude -p subprocesses
   degraded_pause_minutes: 15             # pause duration after 3 consecutive failures

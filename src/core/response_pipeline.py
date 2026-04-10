@@ -41,6 +41,13 @@ async def get_offered_flags(db, chat_id: int, sender_id: int | None = None) -> t
     dm_sent = {"chat": False, "validatorinfo": False, "podcast": False}
 
     if sender_id:
+        chat_keywords = (
+            "web_3_society", "our chat", "our group", "invite",
+            "наш чат", "нашу группу", "инвайт", "send you",
+            "скину", "скинуть", "могу отправить", "community chat",
+            "web3 society",
+        )
+
         # Check what we already mentioned in replies to THIS person
         async with db.db.execute(
             """SELECT r.draft_text FROM responses r
@@ -51,11 +58,11 @@ async def get_offered_flags(db, chat_id: int, sender_id: int | None = None) -> t
         ) as cur:
             for row in await cur.fetchall():
                 t = (row[0] or "").lower()
-                if "web_3_society" in t or "our chat" in t or "our group" in t or "invite" in t:
+                if any(kw in t for kw in chat_keywords):
                     offered["chat"] = True
                 if "validatorinfo" in t:
                     offered["validatorinfo"] = True
-                if "podcast" in t or "citizenweb3.com" in t:
+                if "podcast" in t or "citizenweb3.com" in t or "подкаст" in t:
                     offered["podcast"] = True
                 if "citizenweb3" in t or "citizen web3" in t:
                     offered["citizenweb3"] = True

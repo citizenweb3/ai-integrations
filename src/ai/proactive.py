@@ -204,7 +204,7 @@ class ProactiveScanner:
             text=last_msg.get("text", ""), topic=None,
             group_name=group_name,
             is_reply_to_us=False,
-            use_reply_model=True,
+            use_reply_model=False,
             is_proactive=True,
         )
 

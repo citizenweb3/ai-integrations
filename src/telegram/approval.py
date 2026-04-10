@@ -167,9 +167,13 @@ class ApprovalBot:
 
     async def _on_edit(self, callback: CallbackQuery, state: FSMContext):
         response_id = int(callback.data.split(":")[1])
+        resp = await self.db.get_response(response_id)
+        draft = (resp.get("draft_text") or "") if resp else ""
         await state.set_state(EditStates.waiting_for_text)
         await state.set_data({"response_id": response_id, "message_id": callback.message.message_id})
-        await callback.message.edit_text("\u270f\ufe0f Send the edited text:")
+        await callback.message.edit_text(
+            f"\u270f\ufe0f Edit this text and send back:\n\n{draft}"
+        )
         await callback.answer()
 
     async def _on_edit_text(self, message: Message, state: FSMContext):
