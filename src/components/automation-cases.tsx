@@ -14,13 +14,13 @@ const cases: DomainCase[] = [
   },
   {
     domain: 'SMM & Growth',
-    items: 'Content plans, Telegram outreach, community engagement, cross-platform adaptation, engagement analytics',
+    items: 'Content plans, Telegram outreach, community engagement, cross-platform adaptation, analytics',
     effect: '10x content output, same team',
   },
   {
     domain: 'SEO & Content',
     items: 'Keyword research, ranking analysis, RAG-powered generation, competitor monitoring, meta optimization',
-    effect: 'Content plan from real data',
+    effect: 'Content plans from real data',
   },
   {
     domain: 'DevOps',
@@ -29,7 +29,7 @@ const cases: DomainCase[] = [
   },
   {
     domain: 'Customer Support',
-    items: 'L1 tickets, FAQ, request routing, knowledge base, multilingual responses, L2 handoff summaries',
+    items: 'L1 tickets, FAQ, request routing, knowledge base, multilingual replies, L2 handoff summaries',
     effect: '80% tickets closed by agents',
   },
   {

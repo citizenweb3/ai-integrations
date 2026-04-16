@@ -12,24 +12,24 @@ const steps: ServiceStep[] = [
   {
     title: 'Discovery & Architecture',
     detail:
-      'We audit your workflows, identify what to automate, and design the agent system tailored to your business.',
+      'We audit and identify what to automate to design the system tailored to your business.',
   },
   {
     title: 'Agent Development',
-    detail: 'Custom agents built with your domain knowledge, integrated with your tools via MCP, APIs, and RAG.',
+    detail: 'Custom agents with your domain knowledge, integrated with your tools via MCP, APIs, and RAG.',
   },
   {
     title: 'Deployment',
-    detail: 'Self-hosted or hybrid. Agents go live on your or our infrastructure with full monitoring from day one.',
+    detail: 'Self-hosted or hybrid. On your infrastructure or ours with full monitoring from day one.',
   },
   {
     title: 'Management & Upgrades',
     detail:
-      'Ongoing support, model migrations, new agent roles, performance tuning. Optional — you can run it yourself.',
+      'Ongoing support, model migration, new roles, performance tuning. Or, run it yourself.',
   },
   {
     title: 'You Get Results',
-    detail: 'Measurable impact from week one.',
+    detail: 'Measurable impact:',
     highlight: true,
     metrics: ['80% less manual work', '24/7 autonomous coverage', 'Zero knowledge loss', 'Predictable scaling costs'],
   },

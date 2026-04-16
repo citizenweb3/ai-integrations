@@ -9,7 +9,7 @@ interface OwnProps {
 
 const LinkButton: FC<OwnProps> = ({ buttonText = 'Quote', targetLink = 'https://t.me/citizenweb3' }) => {
   const wideBtnClass =
-    'hover:no-underline relative py-4 px-12 md:py-5 md:px-20 font-bold inline-block text-lg md:text-2xl text-center bg-[#1A1A1B] rounded-[9px] hover:bg-[#ffffff]/15 cursor-pointer';
+    'hover:no-underline relative py-3 px-8 text-base md:py-4 md:px-14 font-bold inline-block md:text-xl text-center bg-[#1A1A1B] rounded-[9px] hover:bg-[#ffffff]/15 cursor-pointer';
 
   return (
     <div className="flex justify-end mt-16">

@@ -10,7 +10,7 @@ interface CostFactor {
 const factors: CostFactor[] = [
   {
     label: 'Agent Configuration',
-    description: 'Number and type of agents determine the base scope.',
+    description: 'Number and type of agents set the base scope.',
     details: [
       'Each domain gets a RALPH (proactive) + Reactive agent pair',
       'Agent Factory orchestrator coordinates multi-domain setups',
@@ -23,14 +23,14 @@ const factors: CostFactor[] = [
     details: [
       'Self-hosted on your servers or managed by us',
       'RAG pipeline, vector database, persistent memory',
-      'LLM API costs depend on provider and usage volume',
+      'LLM API costs depend on provider and usage',
     ],
   },
   {
     label: 'Integration Complexity',
     description: 'How deeply agents connect to your existing systems.',
     details: [
-      'MCP connectors to databases, APIs, internal tools',
+      'MCP connectors to databases, APIs, and internal tools',
       'Custom tool development for domain-specific workflows',
       'Number of external systems and data sources',
     ],
@@ -60,8 +60,7 @@ const Pricing: FC = () => {
         <div className="w-full h-px bg-white/50 mb-12" />
 
         <p className="text-base md:text-xl font-light leading-relaxed text-[hsl(220,10%,66%)] mb-12">
-          Every deployment is different. Price is shaped by four factors — the number of agents, your infrastructure
-          choice, integration depth, and whether you want us to manage it ongoing.
+          Pricing depends on four factors:
         </p>
 
         {/* Cost factors */}
