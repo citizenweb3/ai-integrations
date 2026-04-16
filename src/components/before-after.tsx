@@ -7,28 +7,28 @@ interface ComparisonPair {
 
 const pairs: ComparisonPair[] = [
   {
-    before: '5 people buried in repetitive ops work',
-    after: 'AI agents running those workflows 24/7',
+    before: 'Team buried in repetitive ops',
+    after: 'Agents run workflows 24/7',
   },
   {
-    before: 'Hours lost to manual research and reporting',
-    after: 'Agents deliver structured insights in minutes',
+    before: 'Hours lost to manual research & reporting',
+    after: 'Structured insights delivered in minutes',
   },
   {
-    before: 'Disconnected tools stitched together with duct tape',
+    before: 'Disconnected tools held together with duct tape',
     after: 'Unified autonomous workforce across your stack',
   },
   {
     before: 'Growth means hiring, onboarding, waiting',
-    after: 'Growth means deploying another agent today',
+    after: 'Growth means deploying an agent today',
   },
   {
-    before: 'AI makes things up, no one trusts the output',
+    before: 'AI hallucinates - no one trusts the output',
     after: 'RAG-grounded agents use only your verified data',
   },
   {
     before: 'Tribal knowledge walks out the door with every quit',
-    after: 'Persistent memory, zero knowledge loss, ever',
+    after: 'Persistent memory - zero knowledge loss, ever',
   },
 ];
 
