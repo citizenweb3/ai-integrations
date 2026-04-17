@@ -69,7 +69,13 @@ class Responder:
     def __init__(self, config: dict):
         self.config = config
         self._model = config["claude"]["model"]
+        self._effort = config["claude"].get("effort", "medium")
         self._model_reply = config["claude"].get("model_reply", self._model)
+        self._effort_reply = config["claude"].get("effort_reply", self._effort)
+        self._model_verification = config["claude"].get("model_verification", self._model)
+        self._effort_verification = config["claude"].get("effort_verification", self._effort)
+        self._model_health = config["claude"].get("model_health", self._model)
+        self._effort_health = config["claude"].get("effort_health", "low")
         self._timeout = config["claude"]["timeout_seconds"]
         self._claude_bin = shutil.which("claude") or "claude"
         self._cwd = "/app" if Path("/app").exists() else str(Path(__file__).resolve().parent.parent)
@@ -79,7 +85,7 @@ class Responder:
             pause_minutes=config["claude"]["degraded_pause_minutes"],
         )
 
-    async def generate(self, prompt: str, use_reply_model: bool = False) -> dict | None:
+    async def generate(self, prompt: str, use_reply_model: bool = False, is_verification: bool = False) -> dict | None:
         self.last_error = None
         self.last_error_detail = None
 
@@ -92,9 +98,14 @@ class Responder:
             log.warning("claude_degraded, resume_in=%d", remaining)
             return None
 
-        model = self._model_reply if use_reply_model else self._model
+        if is_verification:
+            model, effort = self._model_verification, self._effort_verification
+        elif use_reply_model:
+            model, effort = self._model_reply, self._effort_reply
+        else:
+            model, effort = self._model, self._effort
         for attempt in range(2):
-            result = await self._invoke(prompt, model=model)
+            result = await self._invoke(prompt, model=model, effort=effort)
             if result is not None:
                 self.health.record_success()
                 return result
@@ -113,13 +124,15 @@ class Responder:
             self.last_error = "consecutive_failure"
         return None
 
-    async def _invoke(self, prompt: str, model: str | None = None) -> dict | None:
+    async def _invoke(self, prompt: str, model: str | None = None, effort: str | None = None) -> dict | None:
         model = model or self._model
+        effort = effort or self._effort
         async with self._semaphore:
             try:
                 proc = await asyncio.create_subprocess_exec(
                     self._claude_bin, "-p", prompt,
                     "--model", model,
+                    "--effort", effort,
                     "--output-format", "text",
                     "--dangerously-skip-permissions",
                     stdout=asyncio.subprocess.PIPE,
@@ -260,6 +273,8 @@ class Responder:
         if self.health.auth_locked:
             return False
         result = await self._invoke(
-            'Respond as JSON: {"ok": true, "action": "skip", "confidence": 0, "reason": "health check"}'
+            'Respond as JSON: {"ok": true, "action": "skip", "confidence": 0, "reason": "health check"}',
+            model=self._model_health,
+            effort=self._effort_health,
         )
         return result is not None and not self.health.auth_locked

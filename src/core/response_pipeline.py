@@ -125,6 +125,7 @@ async def generate_response(
         return None
 
     # Phase 2: verification for medium-confidence responses (0.6-0.79)
+    verified = False
     if confidence < 0.8:
         log.info("[%s] Phase 2: verifying response (conf=%.2f)", group_name, confidence)
         verify_prompt = responder.make_verification_prompt(
@@ -133,7 +134,7 @@ async def generate_response(
             draft_response=reply_text,
             initial_confidence=confidence,
         )
-        result2 = await responder.generate(verify_prompt, use_reply_model=use_reply_model)
+        result2 = await responder.generate(verify_prompt, use_reply_model=use_reply_model, is_verification=True)
         if not result2:
             log.info("[%s] Phase 2: verification call failed, skipping", group_name)
             return None
@@ -147,6 +148,7 @@ async def generate_response(
         result = result2
         reply_text = new_text
         confidence = new_conf
+        verified = True
 
     # Post-processing
     reply_text = reply_text.replace("—", ",").replace("–", ",")
@@ -163,7 +165,12 @@ async def generate_response(
         return None
 
     base_type = "proactive" if is_proactive else "value"
-    model_used = responder._model_reply if use_reply_model else responder._model
+    if verified:
+        model_used = responder._model_verification
+    elif use_reply_model:
+        model_used = responder._model_reply
+    else:
+        model_used = responder._model
     response_id = await db.save_response(
         chat_id=chat_id, in_reply_to=message_id,
         draft_text=reply_text,

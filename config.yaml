@@ -171,11 +171,17 @@ proactive:
   max_candidates_per_cycle: 10           # max threads to evaluate per proactive cycle
 
 claude:
-  model: "claude-sonnet-4-6"             # model for first response (keyword match)
-  model_reply: "claude-opus-4-6"         # model for conversation continuation and DM
-  timeout_seconds: 120                   # subprocess timeout (higher because claude calls tools)
-  max_concurrent: 3                      # max parallel claude -p subprocesses
-  degraded_pause_minutes: 15             # pause duration after 3 consecutive failures
+  model: "claude-sonnet-4-6"                    # reactive (keyword match)
+  effort: "medium"                              # reactive effort
+  model_reply: "claude-opus-4-6"                # reply/DM (conversation continuation)
+  effort_reply: "high"                          # reply effort
+  model_verification: "claude-sonnet-4-6"       # verification of low-confidence drafts
+  effort_verification: "high"                   # verification effort
+  model_health: "claude-haiku-4-5-20251001"    # health check ping (JSON echo, no tools)
+  effort_health: "low"                          # health check effort
+  timeout_seconds: 120                          # subprocess timeout
+  max_concurrent: 3                             # max parallel claude -p subprocesses
+  degraded_pause_minutes: 15                    # pause after 3 consecutive failures
 
 database:
   path: "data/agent.db"                  # sqlite database file path
