@@ -27,8 +27,9 @@ class ContactManager:
     async def forget(self, user_id: int):
         """Delete contact and redact from audit_log."""
         await self.db.redact_audit_logs_for_sender(user_id)
+        await self.db.redact_filter_logs_for_sender(user_id)
         await self.db.delete_contact(user_id)
-        log.info("Contact %s deleted and audit payload redacted", user_id)
+        log.info("Contact %s deleted and linked payload redacted", user_id)
 
     async def get_top(self, limit: int = 50) -> list[dict]:
         """Get top contacts by relevance score."""

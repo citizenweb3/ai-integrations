@@ -80,6 +80,10 @@ class ApprovalBot:
                             is_proactive: bool = False):
         """Send enriched approval message to Ivan."""
         type_emoji = {"value": "\U0001f4a1", "proactive": "\U0001f504", "dm": "\U0001f534"}.get(response_type, "\U0001f4a1")
+        resp = await self.db.get_response(response_id)
+        filter_log = None
+        if resp and resp.get("in_reply_to"):
+            filter_log = await self.db.get_filter_log(resp["chat_id"], resp["in_reply_to"])
 
         text = (
             f"\U0001f4e9 {group_name} ({language}) | {sender_name} wrote:\n"
@@ -93,6 +97,9 @@ class ApprovalBot:
 
         if contains_link:
             text += f"\u26a0\ufe0f \U0001f517 Link\n"
+
+        if filter_log:
+            text += self._format_filter_log_line(filter_log) + "\n"
 
         text += f"\U0001f4c8 Group: {group_daily_count}/{group_daily_limit} today | Last: {last_response_ago}\n"
 
@@ -118,6 +125,18 @@ class ApprovalBot:
         self._ttl_tasks[response_id] = asyncio.create_task(
             self._ttl_watchdog(response_id, msg.message_id, ttl)
         )
+
+    @staticmethod
+    def _format_filter_log_line(filter_log: dict) -> str:
+        line = (
+            f"Llama: {filter_log.get('decision')}, "
+            f"{filter_log.get('latency_ms') or 0}ms, "
+            f"attempts={filter_log.get('attempts') or 0}"
+        )
+        reason = filter_log.get("reason")
+        if reason:
+            line += f", reason={reason}"
+        return line
 
     async def _ttl_watchdog(self, response_id: int, message_id: int, ttl: float):
         """Expire response if not approved within TTL."""

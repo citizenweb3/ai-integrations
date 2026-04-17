@@ -44,4 +44,11 @@ def load_config() -> dict:
     config["validatorinfo"]["rag_api_token"] = environ.get("RAG_API_TOKEN") or dotenv.get("RAG_API_TOKEN", "")
     config["validatorinfo"]["database_url"] = environ.get("DATABASE_URL") or dotenv.get("DATABASE_URL", "")
 
+    config.setdefault("ollama", {})
+    config["ollama"]["token"] = (
+        environ.get("OLLAMA_TOKEN")
+        or dotenv.get("OLLAMA_TOKEN")
+        or config["ollama"].get("token", "")
+    )
+
     return config

@@ -15,6 +15,7 @@ from telethon import TelegramClient
 from src.config import load_config
 from src.storage.db import Database
 from src.ai.rag import RAGClient
+from src.ai.llm_router import LLMRouter
 from src.storage.validatorinfo import ValidatorInfoAdapter
 from src.ai.responder import Responder
 from src.core.rate_limiter import RateLimiter
@@ -76,6 +77,8 @@ async def main():
     sender = Sender(client, config)
     rate_limiter = RateLimiter(db, config)
     contacts = ContactManager(db)
+    llm_router = LLMRouter(config)
+    await llm_router.start()
 
     # 6. Approval bot (aiogram)
     approval = ApprovalBot(db, sender, rate_limiter, contacts, config)
@@ -92,11 +95,12 @@ async def main():
     listener = Listener(
         client, db, responder, rag, vi,
         rate_limiter, contacts, approval, config,
+        llm_router=llm_router,
     )
     await listener.start()
 
     # 8. Proactive scanner
-    proactive = ProactiveScanner(db, responder, rag, vi, rate_limiter, approval, config)
+    proactive = ProactiveScanner(db, responder, rag, vi, rate_limiter, approval, config, llm_router=llm_router)
 
     # 9. Cleanup manager
     cleanup = CleanupManager(db, contacts, config)
@@ -148,6 +152,7 @@ async def main():
         t.cancel()
     await asyncio.gather(*cron_tasks, return_exceptions=True)
     await approval.stop()
+    await llm_router.close()
     await rag.close()
     await vi.close()
     await db.close()
