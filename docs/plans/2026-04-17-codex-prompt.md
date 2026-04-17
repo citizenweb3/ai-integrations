@@ -49,9 +49,11 @@ ollama:
   warmup_on_start: true
   warmup_timeout_seconds: 180
 
-  reactive_context_tokens: 3000
-  proactive_context_tokens: 4000
-  max_message_tokens: 500
+  reactive_context_messages: 3
+  proactive_context_messages: 30
+  reactive_context_tokens: 5500
+  proactive_context_tokens: 5500
+  max_message_tokens: 700
 
   reactive_timeout_seconds: 120
   proactive_timeout_seconds: 240
@@ -70,12 +72,14 @@ Change:
 
 ```yaml
 proactive:
+  interval_minutes: 30
+  window_minutes: 45
   max_candidates_per_cycle: 10
 ```
 
 `max_retries_*` means retries after the first attempt.
 
-`num_ctx` must be sent per request through Ollama `options.num_ctx`. `reactive_context_tokens` and `proactive_context_tokens` are app-side prompt construction limits.
+`num_ctx` must be sent per request through Ollama `options.num_ctx`. `reactive_context_tokens` and `proactive_context_tokens` are app-side prompt construction limits. `reactive_context_messages` and `proactive_context_messages` cap how many prior messages can be sent before token trimming.
 
 ### Step 2: `.env.example`
 
@@ -310,14 +314,15 @@ Reactive path:
 - If decision is `skip`, return before Claude.
 - If decision is `pass`, `timeout_fallback`, `error_fallback`, or `parse_fallback`, continue to Claude.
 
-Build context using the app-side token limits from `ollama.reactive_context_tokens` and `ollama.max_message_tokens`. If exact token counting is not available, use a conservative character approximation and keep the code isolated so it can be replaced later.
+Build context from up to `ollama.reactive_context_messages` messages before the new message. Do not include the new message in recent context, because it is passed separately as `message`. Apply `ollama.reactive_context_tokens` and `ollama.max_message_tokens`; trim the standalone new message with `ollama.max_message_tokens` too. If exact token counting is not available, use a conservative character approximation and keep the code isolated so it can be replaced later.
 
 ```python
-context_messages = await self.db.get_recent_messages(chat_id, limit=12)
-context_text = "\n".join(
-    f"{m.get('sender_name', '?')}: {m.get('text', '')}"
-    for m in context_messages
-)
+context_limit = config["ollama"].get("reactive_context_messages", 3)
+context_messages = await self.db.get_recent_messages(chat_id, limit=context_limit + 1)
+context_messages = [
+    m for m in context_messages
+    if m.get("message_id") != event.id
+][-context_limit:]
 ```
 
 Call:
@@ -355,7 +360,9 @@ Add `llm_router` parameter to `ProactiveScanner.__init__`.
 
 In `_process_candidate()` before `generate_response()`:
 
-- Build context from the tail of `candidate["thread"]` using `ollama.proactive_context_tokens` and `ollama.max_message_tokens`.
+- Build context from up to `ollama.proactive_context_messages` messages before the last message in `candidate["thread"]`, using `ollama.proactive_context_tokens` and `ollama.max_message_tokens`.
+- Trim the standalone last message with `ollama.max_message_tokens`.
+- Do not skip a group only because it has fewer than 3 unresponded messages. Skip only when there are no unresponded messages.
 - Call `llm_router.should_respond(..., source="proactive")`.
 - Save `llm_filter_log`.
 - If `decision == "skip"`, return.

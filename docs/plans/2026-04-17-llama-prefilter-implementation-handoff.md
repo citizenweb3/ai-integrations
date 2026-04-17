@@ -46,9 +46,11 @@ Read both before editing code. Treat `2026-04-17-codex-prompt.md` as the impleme
   - `retry_delay_seconds: 5`
 - `max_retries_*` means retries after the first attempt.
 - App-side context limits for Llama prompt construction:
-  - `reactive_context_tokens: 3000`
-  - `proactive_context_tokens: 4000`
-  - `max_message_tokens: 500`
+  - `reactive_context_messages: 3`
+  - `proactive_context_messages: 30`
+  - `reactive_context_tokens: 5500`
+  - `proactive_context_tokens: 5500`
+  - `max_message_tokens: 700`
 - If exact token counting is not available, implement a conservative approximation behind a small helper so it can be replaced later.
 
 ## Routing Semantics
@@ -58,6 +60,7 @@ Reactive:
 - Save message and update existing group/contact state first, as current code does.
 - Reply-to-us messages bypass Llama and go directly to Claude reply model.
 - Non-reply messages go through Llama only after the existing keyword/topic match.
+- Send at most 3 prior messages as Llama context; do not duplicate the new message in context.
 - Llama `skip` exits before Claude.
 - Llama `pass`, timeout fallback, error fallback, and parse fallback continue to Claude.
 
@@ -65,6 +68,9 @@ Proactive:
 
 - Keep existing `_score_thread() >= threshold` gate.
 - Do not add a second strict keyword-only gate.
+- Run every 30 minutes over a 45-minute window.
+- Do not skip a group only because it has fewer than 3 unresponded messages.
+- Send at most 30 prior messages from the candidate thread as Llama context; pass the final thread message separately.
 - Candidate thread goes through Llama.
 - Llama `skip` exits before Claude.
 - Fallback decisions continue to Claude.

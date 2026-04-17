@@ -4,7 +4,7 @@ import json
 import logging
 import random
 from datetime import datetime, timezone, timedelta
-from src.ai.llm_router import build_context_text
+from src.ai.llm_router import build_context_text, truncate_message_text
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class ProactiveScanner:
                     active_response_ids = {row[0] for row in await cur.fetchall()}
                 messages = [m for m in messages if m.get("message_id") not in active_response_ids]
             log.info("Proactive: group %s has %d unresponded messages", group.get("name"), len(messages))
-            if len(messages) < 3:
+            if not messages:
                 continue
 
             # Find threads (group by reply_to_message_id)
@@ -201,13 +201,20 @@ class ProactiveScanner:
 
         if self.llm_router:
             ollama_config = self.config.get("ollama", {})
+            max_message_tokens = int(ollama_config.get("max_message_tokens", 700))
+            context_limit = int(ollama_config.get("proactive_context_messages", 30))
+            context_thread = thread[:-1]
+            if context_limit > 0:
+                context_thread = context_thread[-context_limit:]
+            else:
+                context_thread = []
             context_text = build_context_text(
-                thread,
-                int(ollama_config.get("proactive_context_tokens", 4000)),
-                int(ollama_config.get("max_message_tokens", 500)),
+                context_thread,
+                int(ollama_config.get("proactive_context_tokens", 5500)),
+                max_message_tokens,
             )
             filter_result = await self.llm_router.should_respond(
-                message=last_msg.get("text", ""),
+                message=truncate_message_text(last_msg.get("text", ""), max_message_tokens),
                 context=context_text,
                 group_name=group_name,
                 sender_name=sender_name,

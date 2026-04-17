@@ -38,6 +38,11 @@ def _truncate_to_tokens(text: str, max_tokens: int) -> str:
     return text[: max(0, char_limit - 3)].rstrip() + "..."
 
 
+def truncate_message_text(text: str, max_message_tokens: int) -> str:
+    """Trim a standalone candidate message with the same budget as context lines."""
+    return _truncate_to_tokens(text or "", max_message_tokens)
+
+
 def build_context_text(
     messages: list[dict],
     token_budget: int,

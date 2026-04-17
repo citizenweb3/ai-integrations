@@ -93,9 +93,11 @@ ollama:
   warmup_on_start: true
   warmup_timeout_seconds: 180
 
-  reactive_context_tokens: 3000
-  proactive_context_tokens: 4000
-  max_message_tokens: 500
+  reactive_context_messages: 3
+  proactive_context_messages: 30
+  reactive_context_tokens: 5500
+  proactive_context_tokens: 5500
+  max_message_tokens: 700
 
   reactive_timeout_seconds: 120
   proactive_timeout_seconds: 240
@@ -123,6 +125,10 @@ With the values above:
 The longer reactive timeout is intentional because Ollama may need about a minute to cold-load the model after it was evicted from memory.
 
 `num_ctx` is the Ollama runtime context window. Set it per request through `options.num_ctx`; do not rely only on a global server default. `reactive_context_tokens` and `proactive_context_tokens` are application-side prompt construction limits and must stay below `num_ctx`.
+
+Reactive context is intentionally small by message count, not by token ceiling: send at most 3 prior group messages, excluding the new message itself. The new message is passed separately and trimmed with `max_message_tokens`.
+
+Proactive context is thread-oriented: send at most 30 prior messages from the selected candidate thread, excluding the final message itself. The final message is passed separately and trimmed with `max_message_tokens`.
 
 `num_predict: 256` gives enough room for strict JSON without allowing long explanations.
 

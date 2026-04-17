@@ -4,7 +4,7 @@ import re
 import logging
 from telethon import TelegramClient, events
 from telethon.tl.types import UpdateChannelParticipant, ChannelParticipantBanned, ChannelParticipantLeft
-from src.ai.llm_router import build_context_text
+from src.ai.llm_router import build_context_text, truncate_message_text
 from src.core.response_pipeline import generate_response
 
 log = logging.getLogger(__name__)
@@ -127,14 +127,22 @@ class Listener:
 
             if self.llm_router and not is_reply_to_us:
                 ollama_config = self.config.get("ollama", {})
-                context_messages = await self.db.get_recent_messages(chat_id, limit=12)
+                max_message_tokens = int(ollama_config.get("max_message_tokens", 700))
+                context_limit = int(ollama_config.get("reactive_context_messages", 3))
+                context_messages = []
+                if context_limit > 0:
+                    context_messages = await self.db.get_recent_messages(chat_id, limit=context_limit + 1)
+                    context_messages = [
+                        m for m in context_messages
+                        if m.get("message_id") != event.id
+                    ][-context_limit:]
                 context_text = build_context_text(
                     context_messages,
-                    int(ollama_config.get("reactive_context_tokens", 3000)),
-                    int(ollama_config.get("max_message_tokens", 500)),
+                    int(ollama_config.get("reactive_context_tokens", 5500)),
+                    max_message_tokens,
                 )
                 filter_result = await self.llm_router.should_respond(
-                    message=text,
+                    message=truncate_message_text(text, max_message_tokens),
                     context=context_text,
                     group_name=group_name,
                     sender_name=sender_name,
