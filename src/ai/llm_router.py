@@ -182,6 +182,7 @@ class LLMRouter:
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
+            "think": False,
             "format": self._cfg.get("format", "json"),
             "keep_alive": self._cfg.get("keep_alive", -1),
             "options": {

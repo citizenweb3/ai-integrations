@@ -1,7 +1,23 @@
 """Configuration loader — YAML config + environment variable overrides."""
 import yaml
+import socket
 from pathlib import Path
 from os import environ
+
+
+def _in_docker() -> bool:
+    return Path("/.dockerenv").exists()
+
+
+def _default_host() -> str:
+    """Use host.docker.internal inside Docker, localhost otherwise."""
+    if _in_docker():
+        return "host.docker.internal"
+    try:
+        socket.getaddrinfo("host.docker.internal", None)
+        return "host.docker.internal"
+    except socket.gaierror:
+        return "localhost"
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 ENV_PATH = Path(__file__).parent.parent / ".env"
@@ -39,7 +55,7 @@ def load_config() -> dict:
     config["validatorinfo"]["rag_api_url"] = (
         environ.get("RAG_API_URL")
         or dotenv.get("RAG_API_URL")
-        or "http://host.docker.internal:3000"
+        or f"http://{_default_host()}:3000"
     )
     config["validatorinfo"]["rag_api_token"] = environ.get("RAG_API_TOKEN") or dotenv.get("RAG_API_TOKEN", "")
     config["validatorinfo"]["database_url"] = environ.get("DATABASE_URL") or dotenv.get("DATABASE_URL", "")
@@ -50,5 +66,7 @@ def load_config() -> dict:
         or dotenv.get("OLLAMA_TOKEN")
         or config["ollama"].get("token", "")
     )
+
+    config["telegram"]["session"] = environ.get("TELEGRAM_SESSION") or dotenv.get("TELEGRAM_SESSION", "")
 
     return config

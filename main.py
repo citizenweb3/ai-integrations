@@ -45,9 +45,9 @@ async def main():
 
     # 2. Telegram client (user account via string session)
     from telethon.sessions import StringSession
-    session_string = environ.get("TELEGRAM_SESSION", "")
+    session_string = config["telegram"].get("session", "")
     if not session_string:
-        log.critical("TELEGRAM_SESSION env var not set. Run: docker compose run --rm tg-growth-agent python scripts/generate-session.py")
+        log.critical("TELEGRAM_SESSION not set. Run: docker compose run --rm tg-growth-agent python scripts/generate-session.py")
         return
     client = TelegramClient(
         StringSession(session_string),
