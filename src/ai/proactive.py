@@ -4,12 +4,13 @@ import json
 import logging
 import random
 from datetime import datetime, timezone, timedelta
+from src.ai.llm_router import build_context_text, truncate_message_text
 
 log = logging.getLogger(__name__)
 
 # Topic keywords by priority
 class ProactiveScanner:
-    def __init__(self, db, responder, rag, vi_adapter, rate_limiter, approval_bot, config: dict):
+    def __init__(self, db, responder, rag, vi_adapter, rate_limiter, approval_bot, config: dict, llm_router=None):
         self.db = db
         self._topics = [t.lower() for t in config["target"]["topics"]]
         self.responder = responder
@@ -18,6 +19,7 @@ class ProactiveScanner:
         self.rate_limiter = rate_limiter
         self.approval = approval_bot
         self.config = config
+        self.llm_router = llm_router
         self.threshold = config["proactive"]["score_threshold"]
         self.max_candidates = config["proactive"]["max_candidates_per_cycle"]
         self.window_minutes = config["proactive"].get("window_minutes", 30)
@@ -57,7 +59,7 @@ class ProactiveScanner:
                     active_response_ids = {row[0] for row in await cur.fetchall()}
                 messages = [m for m in messages if m.get("message_id") not in active_response_ids]
             log.info("Proactive: group %s has %d unresponded messages", group.get("name"), len(messages))
-            if len(messages) < 3:
+            if not messages:
                 continue
 
             # Find threads (group by reply_to_message_id)
@@ -195,11 +197,56 @@ class ProactiveScanner:
         last_msg = thread[-1]
         group_name = group["name"] or str(chat_id)
         sender_name = last_msg.get("sender_name", "[proactive]")
+        message_id = last_msg.get("message_id")
+
+        if self.llm_router:
+            ollama_config = self.config.get("ollama", {})
+            max_message_tokens = int(ollama_config.get("max_message_tokens", 700))
+            context_limit = int(ollama_config.get("proactive_context_messages", 30))
+            context_thread = thread[:-1]
+            if context_limit > 0:
+                context_thread = context_thread[-context_limit:]
+            else:
+                context_thread = []
+            context_text = build_context_text(
+                context_thread,
+                int(ollama_config.get("proactive_context_tokens", 5500)),
+                max_message_tokens,
+            )
+            filter_result = await self.llm_router.should_respond(
+                message=truncate_message_text(last_msg.get("text", ""), max_message_tokens),
+                context=context_text,
+                group_name=group_name,
+                sender_name=sender_name,
+                source="proactive",
+            )
+            if filter_result.decision != "disabled":
+                await self.db.save_filter_log(
+                    source="proactive",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    sender_id=last_msg.get("sender_id"),
+                    sender_name=sender_name,
+                    decision=filter_result.decision,
+                    reason=filter_result.reason,
+                    latency_ms=filter_result.latency_ms,
+                    attempts=filter_result.attempts,
+                )
+                log.info(
+                    "[%s] Llama proactive decision=%s attempts=%d latency_ms=%d reason=%s",
+                    group_name,
+                    filter_result.decision,
+                    filter_result.attempts,
+                    filter_result.latency_ms,
+                    filter_result.reason,
+                )
+            if not filter_result.should_respond:
+                return
 
         response_id = await generate_response(
             db=self.db, responder=self.responder,
             approval=self.approval, config=self.config,
-            chat_id=chat_id, message_id=last_msg.get("message_id"),
+            chat_id=chat_id, message_id=message_id,
             sender_id=None, sender_name=sender_name,
             text=last_msg.get("text", ""), topic=None,
             group_name=group_name,

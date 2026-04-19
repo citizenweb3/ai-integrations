@@ -165,17 +165,23 @@ limits:
   warmup_hours_max: 6                    # max warmup period after joining a group (hours)
 
 proactive:
-  interval_minutes: 50                   # run proactive scan every 50 minutes
-  window_minutes: 60                     # analyze messages from the last 60 minutes
+  interval_minutes: 30                   # run proactive scan every 30 minutes
+  window_minutes: 45                     # analyze messages from the last 45 minutes
   score_threshold: 0.5                   # min score for a thread to be sent to claude
-  max_candidates_per_cycle: 3            # max threads to evaluate per proactive cycle
+  max_candidates_per_cycle: 10           # max threads to evaluate per proactive cycle
 
 claude:
-  model: "claude-sonnet-4-6"             # model for first response (keyword match)
-  model_reply: "claude-opus-4-6"         # model for conversation continuation and DM
-  timeout_seconds: 120                   # subprocess timeout (higher because claude calls tools)
-  max_concurrent: 3                      # max parallel claude -p subprocesses
-  degraded_pause_minutes: 15             # pause duration after 3 consecutive failures
+  model: "claude-sonnet-4-6"                    # reactive (keyword match)
+  effort: "medium"                              # reactive effort
+  model_reply: "claude-opus-4-6"                # reply/DM (conversation continuation)
+  effort_reply: "high"                          # reply effort
+  model_verification: "claude-sonnet-4-6"       # verification of low-confidence drafts
+  effort_verification: "high"                   # verification effort
+  model_health: "claude-haiku-4-5-20251001"    # health check ping (JSON echo, no tools)
+  effort_health: "low"                          # health check effort
+  timeout_seconds: 120                          # subprocess timeout
+  max_concurrent: 3                             # max parallel claude -p subprocesses
+  degraded_pause_minutes: 15                    # pause after 3 consecutive failures
 
 database:
   path: "data/agent.db"                  # sqlite database file path
@@ -190,3 +196,36 @@ rag:
 
 validatorinfo_db:
   query_timeout_seconds: 5               # health check sql timeout
+
+ollama:
+  enabled: true
+  url: "https://model.citizenweb3.com"
+  token: ""
+  model: "qwen3.6:35b-a3b"
+
+  num_ctx: 8192
+  num_predict: 256
+  temperature: 0
+  format: "json"
+  keep_alive: -1
+
+  warmup_on_start: true
+  warmup_timeout_seconds: 360
+
+  reactive_context_messages: 3
+  proactive_context_messages: 30
+  reactive_context_tokens: 5500
+  proactive_context_tokens: 5500
+  max_message_tokens: 700
+
+  reactive_timeout_seconds: 120
+  proactive_timeout_seconds: 240
+
+  reactive_max_concurrent: 2
+  proactive_max_concurrent: 1
+
+  max_retries_reactive: 1
+  max_retries_proactive: 2
+  retry_delay_seconds: 5
+
+  fallback_on_error: true

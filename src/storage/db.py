@@ -111,6 +111,20 @@ CREATE TABLE IF NOT EXISTS audit_log (
     error TEXT
 );
 
+CREATE TABLE IF NOT EXISTS llm_filter_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER,
+    sender_id INTEGER,
+    sender_name TEXT,
+    decision TEXT NOT NULL,
+    reason TEXT,
+    latency_ms INTEGER,
+    attempts INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TRIGGER IF NOT EXISTS enforce_single_pending
 BEFORE INSERT ON responses
 WHEN NEW.status IN ('candidate', 'pending_approval', 'queued', 'sending')
@@ -135,6 +149,9 @@ CREATE INDEX IF NOT EXISTS idx_contacts_relevance ON contacts(relevance_score DE
 CREATE INDEX IF NOT EXISTS idx_contacts_last_seen ON contacts(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_audit_chat ON audit_log(chat_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_filter_log_created ON llm_filter_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_filter_log_message ON llm_filter_log(chat_id, message_id);
+CREATE INDEX IF NOT EXISTS idx_llm_filter_log_sender ON llm_filter_log(sender_id);
 """
 
 COLUMN_MIGRATIONS = {
@@ -645,6 +662,75 @@ class Database:
             (sender_id,),
         )
         await self.db.commit()
+
+    # ── LLM Filter Log ─────────────────────────────────────
+
+    async def save_filter_log(
+        self,
+        source: str,
+        chat_id: int,
+        message_id: int | None,
+        sender_id: int | None,
+        sender_name: str | None,
+        decision: str,
+        reason: str,
+        latency_ms: int,
+        attempts: int,
+    ):
+        await self.db.execute(
+            """INSERT INTO llm_filter_log
+               (source, chat_id, message_id, sender_id, sender_name,
+                decision, reason, latency_ms, attempts)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                source,
+                chat_id,
+                message_id,
+                sender_id,
+                sender_name,
+                decision,
+                reason,
+                latency_ms,
+                attempts,
+            ),
+        )
+        await self.db.commit()
+
+    async def get_filter_log(self, chat_id: int, message_id: int | None) -> dict | None:
+        if message_id is None:
+            async with self.db.execute(
+                """SELECT * FROM llm_filter_log
+                   WHERE chat_id = ? AND message_id IS NULL
+                   ORDER BY created_at DESC, id DESC LIMIT 1""",
+                (chat_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
+        async with self.db.execute(
+            """SELECT * FROM llm_filter_log
+               WHERE chat_id = ? AND message_id = ?
+               ORDER BY created_at DESC, id DESC LIMIT 1""",
+            (chat_id, message_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def redact_filter_logs_for_sender(self, sender_id: int) -> int:
+        cursor = await self.db.execute(
+            "UPDATE llm_filter_log SET sender_name = NULL WHERE sender_id = ?",
+            (sender_id,),
+        )
+        await self.db.commit()
+        return cursor.rowcount
+
+    async def cleanup_old_filter_logs(self, days: int) -> int:
+        cursor = await self.db.execute(
+            "DELETE FROM llm_filter_log WHERE created_at < datetime('now', ?)",
+            (f"-{days} days",),
+        )
+        await self.db.commit()
+        return cursor.rowcount
 
     # ── Digest ──────────────────────────────────────────────
 

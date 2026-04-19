@@ -4,6 +4,7 @@ import re
 import logging
 from telethon import TelegramClient, events
 from telethon.tl.types import UpdateChannelParticipant, ChannelParticipantBanned, ChannelParticipantLeft
+from src.ai.llm_router import build_context_text, truncate_message_text
 from src.core.response_pipeline import generate_response
 
 log = logging.getLogger(__name__)
@@ -11,7 +12,7 @@ log = logging.getLogger(__name__)
 
 class Listener:
     def __init__(self, client: TelegramClient, db, responder, rag, vi_adapter,
-                 rate_limiter, contacts, approval_bot, config: dict):
+                 rate_limiter, contacts, approval_bot, config: dict, llm_router=None):
         self.client = client
         self.db = db
         self.responder = responder
@@ -21,6 +22,7 @@ class Listener:
         self.contacts = contacts
         self.approval = approval_bot
         self.config = config
+        self.llm_router = llm_router
         self.topics = config["target"]["topics"]
         self.respond_enabled = config["strategy"]["respond_enabled"]
         self.topic_pattern = re.compile(
@@ -122,6 +124,52 @@ class Listener:
 
             group_info = await self.db.get_group(chat_id)
             group_name = group_info["name"] if group_info else str(chat_id)
+
+            if self.llm_router and not is_reply_to_us:
+                ollama_config = self.config.get("ollama", {})
+                max_message_tokens = int(ollama_config.get("max_message_tokens", 700))
+                context_limit = int(ollama_config.get("reactive_context_messages", 3))
+                context_messages = []
+                if context_limit > 0:
+                    context_messages = await self.db.get_recent_messages(chat_id, limit=context_limit + 1)
+                    context_messages = [
+                        m for m in context_messages
+                        if m.get("message_id") != event.id
+                    ][-context_limit:]
+                context_text = build_context_text(
+                    context_messages,
+                    int(ollama_config.get("reactive_context_tokens", 5500)),
+                    max_message_tokens,
+                )
+                filter_result = await self.llm_router.should_respond(
+                    message=truncate_message_text(text, max_message_tokens),
+                    context=context_text,
+                    group_name=group_name,
+                    sender_name=sender_name,
+                    source="reactive",
+                )
+                if filter_result.decision != "disabled":
+                    await self.db.save_filter_log(
+                        source="reactive",
+                        chat_id=chat_id,
+                        message_id=event.id,
+                        sender_id=sender.id,
+                        sender_name=sender_name,
+                        decision=filter_result.decision,
+                        reason=filter_result.reason,
+                        latency_ms=filter_result.latency_ms,
+                        attempts=filter_result.attempts,
+                    )
+                    log.info(
+                        "[%s] Llama reactive decision=%s attempts=%d latency_ms=%d reason=%s",
+                        group_name,
+                        filter_result.decision,
+                        filter_result.attempts,
+                        filter_result.latency_ms,
+                        filter_result.reason,
+                    )
+                if not filter_result.should_respond:
+                    return
 
             await generate_response(
                 db=self.db, responder=self.responder,
