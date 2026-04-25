@@ -1,1 +1,0 @@
-ALREADY MENTIONED in group chat: $offered_list. Do NOT mention these again unless the person explicitly asks.

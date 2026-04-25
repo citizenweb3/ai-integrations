@@ -193,7 +193,6 @@ class Responder:
     def make_prompt(self, group_name: str, language: str, recent_messages: str,
                     sender_name: str, message_text: str,
                     is_reply_to_us: bool = False,
-                    already_offered: dict | None = None,
                     dm_already_sent: dict | None = None) -> str:
         parts = [
             render_prompt(
@@ -203,14 +202,6 @@ class Responder:
                 recent_messages=recent_messages,
             )
         ]
-
-        if already_offered:
-            offered_list = [k for k, v in already_offered.items() if v]
-            if offered_list:
-                parts.append(render_prompt(
-                    "snippets/already_offered",
-                    offered_list=", ".join(offered_list),
-                ))
 
         if dm_already_sent:
             sent_list = [k for k, v in dm_already_sent.items() if v]
@@ -222,7 +213,7 @@ class Responder:
 
         if is_reply_to_us:
             parts.append(render_prompt(
-                "snippets/step2_reminder",
+                "snippets/follow_up",
                 sender_name=sender_name,
                 message_text=message_text,
             ))

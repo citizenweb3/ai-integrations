@@ -36,38 +36,10 @@ async def format_messages_with_ours(db, messages: list[dict], chat_id: int) -> s
     return "\n".join(lines)
 
 
-async def get_offered_flags(db, chat_id: int, sender_id: int | None = None) -> tuple[dict, dict]:
-    offered = {"chat": False, "validatorinfo": False, "podcast": False, "citizenweb3": False}
+async def get_dm_already_sent(db, chat_id: int, sender_id: int | None = None) -> dict:
     dm_sent = {"chat": False, "validatorinfo": False, "podcast": False}
 
     if sender_id:
-        chat_keywords = (
-            "web_3_society", "our chat", "our group", "invite",
-            "наш чат", "нашу группу", "инвайт", "send you",
-            "скину", "скинуть", "могу отправить", "community chat",
-            "web3 society",
-        )
-
-        # Check what we already mentioned in replies to THIS person
-        async with db.db.execute(
-            """SELECT r.draft_text FROM responses r
-               JOIN messages m ON m.chat_id = r.chat_id AND m.message_id = r.in_reply_to
-               WHERE r.chat_id = ? AND r.status = 'sent' AND r.response_type IN ('value', 'proactive')
-               AND m.sender_id = ?""",
-            (chat_id, sender_id),
-        ) as cur:
-            for row in await cur.fetchall():
-                t = (row[0] or "").lower()
-                if any(kw in t for kw in chat_keywords):
-                    offered["chat"] = True
-                if "validatorinfo" in t:
-                    offered["validatorinfo"] = True
-                if "podcast" in t or "citizenweb3.com" in t or "подкаст" in t:
-                    offered["podcast"] = True
-                if "citizenweb3" in t or "citizen web3" in t:
-                    offered["citizenweb3"] = True
-
-        # Check what DMs we already sent to THIS person
         async with db.db.execute(
             "SELECT dm_text FROM responses WHERE target_user_id = ? AND status = 'sent' AND response_type = 'dm'",
             (sender_id,),
@@ -81,7 +53,7 @@ async def get_offered_flags(db, chat_id: int, sender_id: int | None = None) -> t
                 if "podcast.citizenweb3" in t:
                     dm_sent["podcast"] = True
 
-    return offered, dm_sent
+    return dm_sent
 
 
 async def generate_response(
@@ -96,14 +68,13 @@ async def generate_response(
     recent = await db.get_recent_messages(chat_id, limit=10)
     language = detect_language(text)
     formatted_messages = await format_messages_with_ours(db, recent, chat_id)
-    offered, dm_sent = await get_offered_flags(db, chat_id, sender_id)
+    dm_sent = await get_dm_already_sent(db, chat_id, sender_id)
 
     prompt = responder.make_prompt(
         group_name=group_name, language=language,
         recent_messages=formatted_messages,
         sender_name=sender_name, message_text=text,
         is_reply_to_us=is_reply_to_us,
-        already_offered=offered,
         dm_already_sent=dm_sent,
     )
 
