@@ -8,6 +8,8 @@ import shutil
 from pathlib import Path
 from time import monotonic
 
+from src.ai.prompts import render as render_prompt
+
 log = logging.getLogger(__name__)
 
 
@@ -194,76 +196,59 @@ class Responder:
                     already_offered: dict | None = None,
                     dm_already_sent: dict | None = None) -> str:
         parts = [
-            f"GROUP: {group_name}",
-            f"LANGUAGE: {language}",
-            f"RECENT MESSAGES:\n{recent_messages}",
+            render_prompt(
+                "responder_main",
+                group_name=group_name,
+                language=language,
+                recent_messages=recent_messages,
+            )
         ]
 
         if already_offered:
             offered_list = [k for k, v in already_offered.items() if v]
             if offered_list:
-                parts.append(
-                    f"ALREADY MENTIONED in group chat: {', '.join(offered_list)}. "
-                    "Do NOT mention these again unless the person explicitly asks."
-                )
+                parts.append(render_prompt(
+                    "snippets/already_offered",
+                    offered_list=", ".join(offered_list),
+                ))
 
         if dm_already_sent:
             sent_list = [k for k, v in dm_already_sent.items() if v]
             if sent_list:
-                parts.append(
-                    f"ALREADY SENT via DM to this person: {', '.join(sent_list)}. "
-                    "Do NOT include these links in dm_text again."
-                )
+                parts.append(render_prompt(
+                    "snippets/already_sent",
+                    sent_list=", ".join(sent_list),
+                ))
 
         if is_reply_to_us:
-            parts.append(
-                f"CONTINUING CONVERSATION — {sender_name} replied to YOUR previous message:\n{message_text}\n\n"
-                "REMINDER: This is STEP 2. You MUST: 1) mention Citizen Web3 if topic is about staking/privacy/validators, "
-                "2) mention the right resource (ValidatorInfo/Podcast/B.V.C./Web3 Society), "
-                "3) offer to send links if you haven't yet."
-            )
+            parts.append(render_prompt(
+                "snippets/step2_reminder",
+                sender_name=sender_name,
+                message_text=message_text,
+            ))
         else:
-            parts.append(f"NEW MESSAGE from {sender_name}:\n{message_text}")
+            parts.append(render_prompt(
+                "snippets/new_message",
+                sender_name=sender_name,
+                message_text=message_text,
+            ))
 
         community_chat = self.config.get("target", {}).get("community_chat", "https://t.me/web_3_society")
-        parts.append(
-            f"RESPOND IN {language} ONLY. Both text and dm_text must be in {language}. "
-            "MANDATORY TOOL USE — you MUST follow these steps for EVERY response, no exceptions: "
-            "1) query-db.py — check ValidatorInfo for on-chain data. "
-            "2) WebSearch — search the web for the latest news/status about the topic. ALWAYS do this, even if you think you know the answer. Your training data is outdated. "
-            "3) search-rag.py — check if relevant podcast content exists. "
-            "Only AFTER completing at least steps 1 and 2, write your response using VERIFIED data from tools. "
-            "If you mention ANY number (APR, %, validator count, commission) it MUST come from a tool call. If no tool returned it, skip. "
-            "Tools: python src/tools/search-rag.py, python src/tools/query-db.py, and WebSearch (built-in). "
-            "NEVER include URLs in the 'text' field. Group chats have anti-link bots. Mention names only (ValidatorInfo, CitizenWeb3 podcast). "
-            "If you set dm_request: true, you MUST use search-rag.py first to find exact episode URLs for dm_text. "
-            f"Links for dm_text ONLY (never in text): "
-            f"community chat: {community_chat} | "
-            f"explorer: https://validatorinfo.com | "
-            f"podcast: https://podcast.citizenweb3.com (use search-rag.py for specific episodes). "
-            "Then respond as JSON: "
-            '{"action": "respond"|"skip", "text": "...", "confidence": 0-1, "reason": "...", "dm_request": false}'
-        )
+        parts.append(render_prompt(
+            "snippets/closing_instructions",
+            language=language,
+            community_chat=community_chat,
+        ))
         return "\n\n".join(parts)
 
     def make_verification_prompt(self, language: str, original_question: str,
                                     draft_response: str, initial_confidence: float) -> str:
-        return (
-            f"VERIFICATION TASK. You wrote a draft response with confidence {initial_confidence:.2f}. "
-            "Your confidence was below 0.8, so you MUST now verify it.\n\n"
-            f"ORIGINAL QUESTION: {original_question}\n\n"
-            f"YOUR DRAFT: {draft_response}\n\n"
-            "NOW DO THIS:\n"
-            "1) Use python src/tools/query-db.py to check ValidatorInfo database for relevant on-chain data\n"
-            "2) Use WebSearch to find the latest news and facts about this topic\n"
-            "3) Use python src/tools/search-rag.py if podcast content might be relevant\n\n"
-            "After verification, respond with an UPDATED answer based on what you found. "
-            "If tools confirmed your draft is accurate, set confidence >= 0.8. "
-            "If tools showed your draft was wrong or you found no data to verify, set action to 'skip'. "
-            "Do NOT repeat your draft without verifying. You MUST call at least one tool.\n\n"
-            f"RESPOND IN {language} ONLY.\n"
-            "Respond as JSON: "
-            '{"action": "respond"|"skip", "text": "...", "confidence": 0-1, "reason": "...", "dm_request": false}'
+        return render_prompt(
+            "responder_verification",
+            language=language,
+            original_question=original_question,
+            draft_response=draft_response,
+            initial_confidence=f"{initial_confidence:.2f}",
         )
 
     def prompt_hash(self, prompt: str) -> str:
