@@ -1,9 +1,9 @@
 """LLM prompt loader.
 
 All LLM prompts live in /prompts/ at the repo root. Edit prompt content there,
-not in code. To add a prompt, drop a .txt file with $var placeholders (string.Template
+not in code. To add a prompt, drop a .md file with $var placeholders (string.Template
 syntax) and call render('name', var=value). Nested names like 'snippets/foo' map to
-'prompts/snippets/foo.txt'. Rendering uses safe_substitute and then asserts that no
+'prompts/snippets/foo.md'. Rendering uses safe_substitute and then asserts that no
 unresolved $placeholders remain — missing vars raise KeyError. Cache is process-level:
 editing a prompt file requires a process restart to take effect.
 """
@@ -24,7 +24,7 @@ def load_prompt(name: str) -> Template:
     cached = _CACHE.get(name)
     if cached is not None:
         return cached
-    path = _PROMPTS_DIR / f"{name}.txt"
+    path = _PROMPTS_DIR / f"{name}.md"
     template = Template(path.read_text(encoding="utf-8"))
     _CACHE[name] = template
     return template
