@@ -91,19 +91,21 @@ async def generate_response(
     reply_text = result.get("text", "")
     confidence = result.get("confidence", 0)
 
-    if action != "respond" or confidence < 0.6 or not reply_text:
+    if action != "respond" or confidence < 0.7 or not reply_text:
         log.info("[%s] Claude skipped (action=%s, conf=%.2f)", group_name, action, confidence)
         return None
 
-    # Phase 2: verification for medium-confidence responses (0.6-0.79)
+    # Phase 2: verification for confidence in [0.7, 0.9). >=0.9 sends directly.
     verified = False
-    if confidence < 0.8:
+    if confidence < 0.9:
         log.info("[%s] Phase 2: verifying response (conf=%.2f)", group_name, confidence)
         verify_prompt = responder.make_verification_prompt(
             language=language,
             original_question=text,
             draft_response=reply_text,
             initial_confidence=confidence,
+            original_dm_request=result.get("dm_request", False),
+            original_dm_text=result.get("dm_text", ""),
         )
         result2 = await responder.generate(verify_prompt, use_reply_model=use_reply_model, is_verification=True)
         if not result2:
@@ -112,7 +114,7 @@ async def generate_response(
         new_conf = result2.get("confidence", 0)
         new_action = result2.get("action")
         new_text = result2.get("text", "")
-        if new_action != "respond" or new_conf < 0.8 or not new_text:
+        if new_action != "respond" or new_conf < 0.9 or not new_text:
             log.info("[%s] Phase 2: not verified (action=%s, conf=%.2f→%.2f), skipping", group_name, new_action, confidence, new_conf)
             return None
         log.info("[%s] Phase 2: verified (conf=%.2f→%.2f)", group_name, confidence, new_conf)

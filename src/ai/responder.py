@@ -200,6 +200,7 @@ class Responder:
                 group_name=group_name,
                 language=language,
                 recent_messages=recent_messages,
+                is_reply_to_us=str(bool(is_reply_to_us)).lower(),
             )
         ]
 
@@ -233,13 +234,17 @@ class Responder:
         return "\n\n".join(parts)
 
     def make_verification_prompt(self, language: str, original_question: str,
-                                    draft_response: str, initial_confidence: float) -> str:
+                                    draft_response: str, initial_confidence: float,
+                                    original_dm_request: bool = False,
+                                    original_dm_text: str = "") -> str:
         return render_prompt(
             "responder_verification",
             language=language,
             original_question=original_question,
             draft_response=draft_response,
             initial_confidence=f"{initial_confidence:.2f}",
+            original_dm_request=str(bool(original_dm_request)).lower(),
+            original_dm_text=original_dm_text or "",
         )
 
     def prompt_hash(self, prompt: str) -> str:
