@@ -87,18 +87,23 @@ class Responder:
             pause_minutes=config["claude"]["degraded_pause_minutes"],
         )
 
-    async def generate(self, prompt: str, use_reply_model: bool = False, is_verification: bool = False) -> dict | None:
+    async def generate(
+        self,
+        prompt: str,
+        use_reply_model: bool = False,
+        is_verification: bool = False,
+    ) -> tuple[dict | None, list[dict]]:
         self.last_error = None
         self.last_error_detail = None
 
         if self.health.auth_locked:
             self.last_error = "auth_locked"
-            return None
+            return None, []
         if self.health.is_degraded:
             remaining = round(self.health.degraded_until - monotonic())
             self.last_error = f"degraded_mode ({remaining}s remaining)"
             log.warning("claude_degraded, resume_in=%d", remaining)
-            return None
+            return None, []
 
         if is_verification:
             model, effort = self._model_verification, self._effort_verification
@@ -106,14 +111,17 @@ class Responder:
             model, effort = self._model_reply, self._effort_reply
         else:
             model, effort = self._model, self._effort
+
+        last_tool_calls: list[dict] = []
         for attempt in range(2):
-            result = await self._invoke(prompt, model=model, effort=effort)
-            if result is not None:
+            parsed, tool_calls = await self._invoke(prompt, model=model, effort=effort)
+            last_tool_calls = tool_calls
+            if parsed is not None:
                 self.health.record_success()
-                return result
+                return parsed, tool_calls
             if self.health.auth_locked:
                 self.last_error = "auth_error"
-                return None
+                return None, tool_calls
             if attempt == 0:
                 log.info("claude_retry, delay=5")
                 await asyncio.sleep(5)
@@ -124,73 +132,146 @@ class Responder:
             log.critical("claude_degraded_mode_entered, pause_minutes=%d", self.health.pause_minutes)
         else:
             self.last_error = "consecutive_failure"
-        return None
+        return None, last_tool_calls
 
-    async def _invoke(self, prompt: str, model: str | None = None, effort: str | None = None) -> dict | None:
+    async def _invoke(
+        self,
+        prompt: str,
+        model: str | None = None,
+        effort: str | None = None,
+    ) -> tuple[dict | None, list[dict]]:
         model = model or self._model
         effort = effort or self._effort
+        tool_calls: list[dict] = []
+
         async with self._semaphore:
             try:
                 proc = await asyncio.create_subprocess_exec(
                     self._claude_bin, "-p", prompt,
                     "--model", model,
                     "--effort", effort,
-                    "--output-format", "text",
+                    "--output-format", "stream-json",
+                    "--verbose",
                     "--dangerously-skip-permissions",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=self._cwd,
                 )
-
-                try:
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(), timeout=self._timeout
-                    )
-                except asyncio.TimeoutError:
-                    proc.terminate()
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=5)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                    self.last_error = f"timeout ({self._timeout}s)"
-                    log.error("claude_timeout, timeout=%d", self._timeout)
-                    return None
-
-                stderr_text = stderr.decode(errors="replace")
-
-                if proc.returncode != 0:
-                    stdout_text = stdout.decode(errors="replace")[:500] if stdout else ""
-                    combined = (stderr_text + " " + stdout_text).lower()
-                    if any(kw in combined for kw in ("auth", "unauthorized", "token expired", "login")):
-                        self.last_error = "auth_error"
-                        if not self.health.auth_locked:
-                            log.critical("claude_auth_error, stderr=%s, stdout=%s", stderr_text[:500], stdout_text)
-                        self.health.mark_auth_failure(stderr_text[:500] or stdout_text[:500] or "auth error")
-                        return None
-                    if any(kw in combined for kw in ("rate limit", "too many", "429", "hit your limit", "resets")):
-                        self.last_error = "rate_limit"
-                        self.last_error_detail = stdout_text.strip() or stderr_text.strip()
-                    else:
-                        self.last_error = f"exit_code_{proc.returncode}"
-                    log.error("claude_exit_error, returncode=%d, stderr=%s, stdout=%s", proc.returncode, stderr_text[:500], stdout_text)
-                    return None
-
-                raw = stdout.decode(errors="replace").strip()
-                parsed = _extract_json(raw)
-                if parsed is None:
-                    self.last_error = "parse_error"
-                    log.error("claude_parse_error, raw_preview=%s", raw[:200])
-                    return None
-
-                return parsed
-
             except FileNotFoundError:
                 if not self.health.auth_locked:
                     log.critical("claude_not_found, msg=claude CLI not installed")
                 self.health.mark_auth_failure("claude CLI not installed")
-                return None
+                return None, tool_calls
 
-    def make_prompt(self, group_name: str, language: str, recent_messages: str,
+            pending: dict[str, dict] = {}
+            final_text_holder: list[str | None] = [None]
+            stderr_buf = bytearray()
+
+            async def drain_stdout():
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        return
+                    try:
+                        evt = json.loads(line.decode("utf-8", errors="replace").strip())
+                    except json.JSONDecodeError:
+                        continue
+                    etype = evt.get("type")
+                    if etype == "assistant":
+                        msg = evt.get("message") or {}
+                        for block in msg.get("content") or []:
+                            if not isinstance(block, dict):
+                                continue
+                            if block.get("type") == "tool_use":
+                                tu_id = block.get("id") or ""
+                                pending[tu_id] = {
+                                    "tool_name": block.get("name", ""),
+                                    "tool_input": json.dumps(block.get("input") or {}, ensure_ascii=False),
+                                    "started_at": monotonic(),
+                                }
+                    elif etype == "user":
+                        msg = evt.get("message") or {}
+                        for block in msg.get("content") or []:
+                            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                                continue
+                            tu_id = block.get("tool_use_id")
+                            info = pending.pop(tu_id, None)
+                            if info is None:
+                                continue
+                            output = block.get("content", "")
+                            if not isinstance(output, str):
+                                try:
+                                    output = json.dumps(output, ensure_ascii=False)
+                                except (TypeError, ValueError):
+                                    output = str(output)
+                            tool_calls.append({
+                                "tool_name": info["tool_name"],
+                                "tool_input": info["tool_input"],
+                                "tool_output": output,
+                                "latency_ms": int((monotonic() - info["started_at"]) * 1000),
+                                "sequence": len(tool_calls),
+                            })
+                    elif etype == "result":
+                        result_text = evt.get("result")
+                        if isinstance(result_text, str):
+                            final_text_holder[0] = result_text
+
+            async def drain_stderr():
+                while True:
+                    chunk = await proc.stderr.read(4096)
+                    if not chunk:
+                        return
+                    stderr_buf.extend(chunk)
+
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(drain_stdout(), drain_stderr(), proc.wait()),
+                    timeout=self._timeout,
+                )
+            except asyncio.TimeoutError:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                self.last_error = f"timeout ({self._timeout}s)"
+                log.error("claude_timeout, timeout=%d", self._timeout)
+                return None, tool_calls
+
+            stderr_text = stderr_buf.decode("utf-8", errors="replace")
+            final_text = final_text_holder[0]
+
+            if proc.returncode != 0:
+                stdout_preview = (final_text or "")[:500]
+                combined = (stderr_text + " " + stdout_preview).lower()
+                if any(kw in combined for kw in ("auth", "unauthorized", "token expired", "login")):
+                    self.last_error = "auth_error"
+                    if not self.health.auth_locked:
+                        log.critical("claude_auth_error, stderr=%s, stdout=%s", stderr_text[:500], stdout_preview)
+                    self.health.mark_auth_failure(stderr_text[:500] or stdout_preview or "auth error")
+                    return None, tool_calls
+                if any(kw in combined for kw in ("rate limit", "too many", "429", "hit your limit", "resets")):
+                    self.last_error = "rate_limit"
+                    self.last_error_detail = stdout_preview.strip() or stderr_text.strip()
+                else:
+                    self.last_error = f"exit_code_{proc.returncode}"
+                log.error("claude_exit_error, returncode=%d, stderr=%s", proc.returncode, stderr_text[:500])
+                return None, tool_calls
+
+            if not final_text:
+                self.last_error = "no_result_event"
+                log.error("claude_no_result, stderr=%s", stderr_text[:200])
+                return None, tool_calls
+
+            parsed = _extract_json(final_text)
+            if parsed is None:
+                self.last_error = "parse_error"
+                log.error("claude_parse_error, raw_preview=%s", final_text[:200])
+                return None, tool_calls
+
+            return parsed, tool_calls
+
+    def make_prompt(self, group_name: str, recent_messages: str,
                     sender_name: str, message_text: str,
                     is_reply_to_us: bool = False,
                     dm_already_sent: dict | None = None) -> str:
@@ -198,7 +279,6 @@ class Responder:
             render_prompt(
                 "responder_main",
                 group_name=group_name,
-                language=language,
                 recent_messages=recent_messages,
                 is_reply_to_us=str(bool(is_reply_to_us)).lower(),
             )
@@ -228,23 +308,18 @@ class Responder:
         community_chat = self.config.get("target", {}).get("community_chat", "https://t.me/web_3_society")
         parts.append(render_prompt(
             "snippets/closing_instructions",
-            language=language,
             community_chat=community_chat,
         ))
         return "\n\n".join(parts)
 
-    def make_verification_prompt(self, language: str, original_question: str,
-                                    draft_response: str, initial_confidence: float,
-                                    original_dm_request: bool = False,
-                                    original_dm_text: str = "") -> str:
+    def make_verification_prompt(self, original_question: str,
+                                    draft_response: str,
+                                    initial_confidence: float) -> str:
         return render_prompt(
             "responder_verification",
-            language=language,
             original_question=original_question,
             draft_response=draft_response,
             initial_confidence=f"{initial_confidence:.2f}",
-            original_dm_request=str(bool(original_dm_request)).lower(),
-            original_dm_text=original_dm_text or "",
         )
 
     def prompt_hash(self, prompt: str) -> str:
@@ -253,9 +328,9 @@ class Responder:
     async def health_check(self) -> bool:
         if self.health.auth_locked:
             return False
-        result = await self._invoke(
+        parsed, _ = await self._invoke(
             'Respond as JSON: {"ok": true, "action": "skip", "confidence": 0, "reason": "health check"}',
             model=self._model_health,
             effort=self._effort_health,
         )
-        return result is not None and not self.health.auth_locked
+        return parsed is not None and not self.health.auth_locked

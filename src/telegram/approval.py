@@ -467,7 +467,17 @@ class ApprovalBot:
 
         # DM responses go to user DM, group responses go to group
         if resp.get("response_type") == "dm" and resp.get("target_user_id"):
-            dm_text = resp.get("dm_text") or text or "https://t.me/web_3_society"
+            dm_text = resp.get("dm_text") or ""
+            if not dm_text:
+                log.error("DM response %s has no dm_text (pipeline contract violation); aborting send", response_id)
+                await self.db.update_response_status(
+                    response_id, "failed", failed_at=_now(), send_error="missing dm_text"
+                )
+                ctx = await self._build_context(resp)
+                fb = self._format_feedback("❌", "DM aborted", resp, ctx,
+                                           extra="missing dm_text")
+                await self._update_feedback(resp, fb, feedback_message)
+                return
             result = await self.sender.send_dm(resp["target_user_id"], dm_text)
             if result.success:
                 log.info("DM sent to user %s", resp["target_user_id"])

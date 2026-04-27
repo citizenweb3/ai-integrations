@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     chat_id INTEGER NOT NULL,
     sender_id INTEGER,
     message_id INTEGER,
+    status TEXT,
     original_text TEXT,
     topic TEXT,
     rag_query TEXT,
@@ -109,6 +110,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
     final_text TEXT,
     sent_at TEXT,
     error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id TEXT NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE,
+    phase TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    tool_name TEXT NOT NULL,
+    tool_input TEXT,
+    tool_output TEXT,
+    output_truncated INTEGER DEFAULT 0,
+    latency_ms INTEGER,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS llm_filter_log (
@@ -149,6 +163,9 @@ CREATE INDEX IF NOT EXISTS idx_contacts_relevance ON contacts(relevance_score DE
 CREATE INDEX IF NOT EXISTS idx_contacts_last_seen ON contacts(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_audit_chat ON audit_log(chat_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_status ON audit_log(status);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_audit ON tool_calls(audit_id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_phase ON tool_calls(audit_id, phase, sequence);
 CREATE INDEX IF NOT EXISTS idx_llm_filter_log_created ON llm_filter_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_filter_log_message ON llm_filter_log(chat_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_llm_filter_log_sender ON llm_filter_log(sender_id);
@@ -205,6 +222,9 @@ COLUMN_MIGRATIONS = {
     ],
     "audit_log": [
         ("sender_id", "INTEGER"),
+        ("status", "TEXT"),
+        ("original_text", "TEXT"),
+        ("topic", "TEXT"),
         ("rag_query", "TEXT"),
         ("rag_results", "TEXT"),
         ("claude_prompt", "TEXT"),
@@ -235,6 +255,7 @@ class Database:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA busy_timeout=10000")
+        await self._db.execute("PRAGMA foreign_keys=ON")
         await self._db.executescript(SCHEMA)
         await self._apply_migrations()
         await self._db.executescript(INDEX_SCHEMA)
@@ -612,6 +633,49 @@ class Database:
 
     # ── Audit ───────────────────────────────────────────────
 
+    _AUDIT_UPDATABLE = {
+        "status", "original_text", "topic", "rag_query", "rag_results",
+        "claude_prompt", "claude_raw", "claude_parsed", "claude_duration_ms",
+        "approval_decision", "approval_edit", "final_text", "sent_at", "error",
+    }
+
+    _TOOL_OUTPUT_MAX_BYTES = 10 * 1024
+
+    async def init_audit_log(
+        self,
+        audit_id: str,
+        chat_id: int,
+        message_id: int | None = None,
+        sender_id: int | None = None,
+        original_text: str | None = None,
+        topic: str | None = None,
+        status: str = "generating",
+    ):
+        await self.db.execute(
+            """INSERT INTO audit_log
+                 (id, created_at, chat_id, message_id, sender_id, status, original_text, topic)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO NOTHING""",
+            (audit_id, _now(), chat_id, message_id, sender_id, status, original_text, topic),
+        )
+        await self.db.commit()
+
+    async def update_audit_log(self, audit_id: str, **fields):
+        sets = []
+        vals: list = []
+        for key, val in fields.items():
+            if key in self._AUDIT_UPDATABLE:
+                sets.append(f"{key} = ?")
+                vals.append(val)
+        if not sets:
+            return
+        vals.append(audit_id)
+        await self.db.execute(
+            f"UPDATE audit_log SET {', '.join(sets)} WHERE id = ?",
+            vals,
+        )
+        await self.db.commit()
+
     async def save_audit_log(
         self,
         audit_id: str,
@@ -622,11 +686,7 @@ class Database:
     ):
         cols = ["id", "created_at", "chat_id", "message_id", "sender_id"]
         vals = [audit_id, _now(), chat_id, message_id, sender_id]
-        allowed = {
-            "original_text", "topic", "rag_query", "rag_results",
-            "claude_prompt", "claude_raw", "claude_parsed", "claude_duration_ms",
-            "approval_decision", "approval_edit", "final_text", "sent_at", "error",
-        }
+        allowed = self._AUDIT_UPDATABLE
         for key, val in kwargs.items():
             if key in allowed:
                 cols.append(key)
@@ -639,6 +699,37 @@ class Database:
         )
         await self.db.commit()
 
+    async def save_tool_call(
+        self,
+        audit_id: str,
+        phase: str,
+        sequence: int,
+        tool_name: str,
+        tool_input: str | None = None,
+        tool_output: str | None = None,
+        latency_ms: int | None = None,
+    ):
+        truncated = 0
+        capped_input = tool_input
+        capped_output = tool_output
+        if capped_input is not None and len(capped_input.encode("utf-8")) > self._TOOL_OUTPUT_MAX_BYTES:
+            capped_input = capped_input.encode("utf-8")[: self._TOOL_OUTPUT_MAX_BYTES].decode("utf-8", "ignore")
+            truncated = 1
+        if capped_output is not None and len(capped_output.encode("utf-8")) > self._TOOL_OUTPUT_MAX_BYTES:
+            capped_output = capped_output.encode("utf-8")[: self._TOOL_OUTPUT_MAX_BYTES].decode("utf-8", "ignore")
+            truncated = 1
+        await self.db.execute(
+            """INSERT INTO tool_calls
+                 (audit_id, phase, sequence, tool_name, tool_input, tool_output,
+                  output_truncated, latency_ms, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                audit_id, phase, sequence, tool_name,
+                capped_input, capped_output, truncated, latency_ms, _now(),
+            ),
+        )
+        await self.db.commit()
+
     async def redact_old_audit_logs(self, days: int = 90):
         await self.db.execute(
             """UPDATE audit_log SET
@@ -646,6 +737,13 @@ class Database:
                  claude_raw = NULL, claude_parsed = NULL,
                  rag_results = NULL
                WHERE created_at < datetime('now', ?)""",
+            (f"-{days} days",),
+        )
+        await self.db.execute(
+            """UPDATE tool_calls SET tool_input = NULL, tool_output = NULL
+               WHERE audit_id IN (
+                 SELECT id FROM audit_log WHERE created_at < datetime('now', ?)
+               )""",
             (f"-{days} days",),
         )
         await self.db.commit()
@@ -659,6 +757,13 @@ class Database:
                  claude_parsed = NULL,
                  rag_results = NULL
                WHERE sender_id = ?""",
+            (sender_id,),
+        )
+        await self.db.execute(
+            """UPDATE tool_calls SET tool_input = NULL, tool_output = NULL
+               WHERE audit_id IN (
+                 SELECT id FROM audit_log WHERE sender_id = ?
+               )""",
             (sender_id,),
         )
         await self.db.commit()
