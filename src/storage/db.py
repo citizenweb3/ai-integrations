@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS responses (
     contains_link BOOLEAN DEFAULT FALSE,
     target_user_id INTEGER,
     dm_text TEXT,
-    approval_message_id INTEGER
+    approval_message_id INTEGER,
+    audit_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS contacts (
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     approval_decision TEXT,
     approval_edit TEXT,
     final_text TEXT,
+    final_dm_text TEXT,
     sent_at TEXT,
     error TEXT
 );
@@ -206,6 +208,7 @@ COLUMN_MIGRATIONS = {
         ("target_user_id", "INTEGER"),
         ("dm_text", "TEXT"),
         ("approval_message_id", "INTEGER"),
+        ("audit_id", "TEXT"),
     ],
     "contacts": [
         ("display_name", "TEXT"),
@@ -234,6 +237,7 @@ COLUMN_MIGRATIONS = {
         ("approval_decision", "TEXT"),
         ("approval_edit", "TEXT"),
         ("final_text", "TEXT"),
+        ("final_dm_text", "TEXT"),
         ("sent_at", "TEXT"),
         ("error", "TEXT"),
     ],
@@ -464,17 +468,18 @@ class Database:
         contains_link: bool = False,
         target_user_id: int | None = None,
         dm_text: str | None = None,
+        audit_id: str | None = None,
     ) -> int:
         async with self.db.execute(
             """INSERT INTO responses
                (chat_id, in_reply_to, draft_text, response_type, confidence, reason,
                 rag_results, db_data, model_name, prompt_hash,
-                contains_link, target_user_id, dm_text, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                contains_link, target_user_id, dm_text, audit_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 chat_id, in_reply_to, draft_text, response_type, confidence, reason,
                 rag_results, db_data, model_name, prompt_hash,
-                contains_link, target_user_id, dm_text, _now(),
+                contains_link, target_user_id, dm_text, audit_id, _now(),
             ),
         ) as cur:
             await self.db.commit()
@@ -636,7 +641,8 @@ class Database:
     _AUDIT_UPDATABLE = {
         "status", "original_text", "topic", "rag_query", "rag_results",
         "claude_prompt", "claude_raw", "claude_parsed", "claude_duration_ms",
-        "approval_decision", "approval_edit", "final_text", "sent_at", "error",
+        "approval_decision", "approval_edit", "final_text", "final_dm_text",
+        "sent_at", "error",
     }
 
     _TOOL_OUTPUT_MAX_BYTES = 10 * 1024
@@ -672,29 +678,6 @@ class Database:
         vals.append(audit_id)
         await self.db.execute(
             f"UPDATE audit_log SET {', '.join(sets)} WHERE id = ?",
-            vals,
-        )
-        await self.db.commit()
-
-    async def save_audit_log(
-        self,
-        audit_id: str,
-        chat_id: int,
-        message_id: int | None = None,
-        sender_id: int | None = None,
-        **kwargs,
-    ):
-        cols = ["id", "created_at", "chat_id", "message_id", "sender_id"]
-        vals = [audit_id, _now(), chat_id, message_id, sender_id]
-        allowed = self._AUDIT_UPDATABLE
-        for key, val in kwargs.items():
-            if key in allowed:
-                cols.append(key)
-                vals.append(val)
-        placeholders = ", ".join("?" for _ in vals)
-        col_names = ", ".join(cols)
-        await self.db.execute(
-            f"INSERT OR REPLACE INTO audit_log ({col_names}) VALUES ({placeholders})",
             vals,
         )
         await self.db.commit()
@@ -736,13 +719,14 @@ class Database:
                  original_text = NULL, claude_prompt = NULL,
                  claude_raw = NULL, claude_parsed = NULL,
                  rag_results = NULL
-               WHERE created_at < datetime('now', ?)""",
+               WHERE datetime(created_at) < datetime('now', ?)""",
             (f"-{days} days",),
         )
         await self.db.execute(
             """UPDATE tool_calls SET tool_input = NULL, tool_output = NULL
                WHERE audit_id IN (
-                 SELECT id FROM audit_log WHERE created_at < datetime('now', ?)
+                 SELECT id FROM audit_log
+                 WHERE datetime(created_at) < datetime('now', ?)
                )""",
             (f"-{days} days",),
         )

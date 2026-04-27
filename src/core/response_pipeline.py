@@ -16,6 +16,20 @@ _ALLOWED_DOMAIN_SUFFIXES = (
     "bvc.citizenweb3.com",
 )
 
+# Catch text containing any link form: http(s) URLs, www.* hosts, or bare
+# hostnames ending in a known TLD. Used to enforce the "no URLs in group
+# text" rule from CLAUDE.md (anti-link bots delete such posts).
+_LINK_RE = re.compile(
+    r'\b(?:'
+    r'https?://[^\s)\]\>]+'
+    r'|www\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?:/\S*)?'
+    r'|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*'
+    r'\.(?:com|net|org|io|me|co|ai|app|dev|xyz|info|biz|gg|ly|so|pro|to|cc|tv|tech|news|finance|eth|crypto|wtf|fi|exchange|cloud|tools|cool|chat)'
+    r'\b(?:/\S*)?'
+    r')',
+    re.IGNORECASE,
+)
+
 
 def detect_language(text: str) -> str:
     ru, en = 0, 0
@@ -202,6 +216,15 @@ async def generate_response(
     original_dm_request = bool(result1.get("dm_request", False))
     original_dm_text = result1.get("dm_text", "") or ""
 
+    # H2: ungrounded high confidence in Phase 1 must go through Phase 2.
+    # Identity facts listed in CLAUDE.md section 6 are exempt by prompt-level
+    # carve-out (closing_instructions): the model self-judges those without
+    # a tool call. Pipeline only nudges Phase 2; no post-Phase 2 hard gate.
+    if not tool_calls1 and confidence >= 0.9:
+        log.info("[%s] H2: no Phase 1 tools at conf=%.2f, clamping to 0.85 (force verification)",
+                 group_name, confidence)
+        confidence = 0.85
+
     # Phase 2: verification for confidence in [0.7, 0.9). >=0.9 sends directly.
     final_result = result1
     verified = False
@@ -251,20 +274,6 @@ async def generate_response(
         confidence = new_conf
         verified = True
 
-    # H2 deterministic gate: no tool grounding in either phase AND high
-    # confidence → clamp to 0.85 (below send threshold) and skip.
-    if not tool_calls1 and not tool_calls2 and confidence >= 0.9:
-        log.info("[%s] H2 clamp: no tool grounding in either phase, conf %.2f → 0.85", group_name, confidence)
-        confidence = 0.85
-        log.info("[%s] After H2 clamp, below send threshold, skipping", group_name)
-        await db.update_audit_log(
-            audit_id, status="skipped_h2_clamp",
-            claude_prompt=prompt,
-            claude_raw=json.dumps(result1),
-            claude_parsed=json.dumps(final_result),
-        )
-        return None
-
     # Post-processing: dashes
     reply_text = reply_text.replace("—", ",").replace("–", ",")
 
@@ -276,16 +285,16 @@ async def generate_response(
     if validation_msg:
         log.info("[%s] DM validation: dropped (%s)", group_name, validation_msg)
 
-    contains_link = bool(re.search(r'https?://', reply_text))
+    contains_link = bool(_LINK_RE.search(reply_text))
     dm_request = bool(final_result.get("dm_request", False))
     dm_text = (final_result.get("dm_text", "") or "").replace("—", ",").replace("–", ",")
     dm_text_to_send = dm_text if dm_request else None
 
     group_info = await db.get_group(chat_id)
-    if contains_link and group_info and group_info.get("link_tolerance") == "forbidden":
-        log.info("[%s] Skipping: link_tolerance=forbidden", group_name)
+    if contains_link:
+        log.info("[%s] Skipping: link in group text (anti-link policy)", group_name)
         await db.update_audit_log(
-            audit_id, status="blocked_link_tolerance",
+            audit_id, status="blocked_link_in_text",
             claude_prompt=prompt,
             claude_raw=json.dumps(result1),
             claude_parsed=json.dumps(final_result),
@@ -308,6 +317,7 @@ async def generate_response(
         model_name=model_used,
         prompt_hash=responder.prompt_hash(prompt),
         contains_link=contains_link,
+        audit_id=audit_id,
     )
 
     await db.update_audit_log(
@@ -346,6 +356,7 @@ async def generate_response(
             contains_link=True,
             target_user_id=sender_id,
             dm_text=dm_text_to_send,
+            audit_id=audit_id,
         )
         await approval.send_approval(
             response_id=dm_response_id, chat_id=chat_id,

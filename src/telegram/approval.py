@@ -145,6 +145,7 @@ class ApprovalBot:
         if resp and resp["status"] == "pending_approval":
             await self.db.update_response_status(response_id, "expired",
                                                   expired_at=_now())
+            await self._audit_event(resp, status="expired")
             ctx = await self._build_context(resp)
             draft = resp.get("draft_text") or ""
             fb = self._format_feedback("\u23f0", f"Expired ({int(ttl/60)} min)", resp, ctx, text=draft)
@@ -161,6 +162,7 @@ class ApprovalBot:
             response_id, "approved", approved_at=_now(), approved_by="ivan",
             final_text=resp["draft_text"],
         )
+        await self._audit_event(resp, status="approved", approval_decision="approved")
 
         # Cancel TTL
         if response_id in self._ttl_tasks:
@@ -171,10 +173,11 @@ class ApprovalBot:
 
     async def _on_reject(self, callback: CallbackQuery):
         response_id = int(callback.data.split(":")[1])
+        resp = await self.db.get_response(response_id)
         await self.db.update_response_status(response_id, "rejected")
+        await self._audit_event(resp, status="rejected", approval_decision="rejected")
         if response_id in self._ttl_tasks:
             self._ttl_tasks[response_id].cancel()
-        resp = await self.db.get_response(response_id)
         if resp:
             ctx = await self._build_context(resp)
             draft = resp.get("draft_text") or ""
@@ -199,9 +202,17 @@ class ApprovalBot:
         data = await state.get_data()
         response_id = data["response_id"]
 
-        await self.db.update_response_status(
-            response_id, "edited", approved_at=_now(), approved_by="ivan",
+        existing = await self.db.get_response(response_id)
+        update_fields = dict(
+            approved_at=_now(), approved_by="ivan",
             edited_text=message.text, final_text=message.text, edited_at=_now(),
+        )
+        if existing and existing.get("response_type") == "dm":
+            update_fields["dm_text"] = message.text
+        await self.db.update_response_status(response_id, "edited", **update_fields)
+        await self._audit_event(
+            existing, status="edited",
+            approval_decision="edited", approval_edit=message.text,
         )
 
         if response_id in self._ttl_tasks:
@@ -433,6 +444,11 @@ class ApprovalBot:
 
         return "\n".join(lines)
 
+    async def _audit_event(self, resp: dict | None, **fields) -> None:
+        audit_id = resp.get("audit_id") if resp else None
+        if audit_id:
+            await self.db.update_audit_log(audit_id, **fields)
+
     async def _attempt_delivery(self, response_id: int, feedback_message: Message | None = None):
         resp = await self.db.get_response(response_id)
         if not resp or resp["status"] not in {"approved", "edited", "queued", "sending"}:
@@ -447,6 +463,7 @@ class ApprovalBot:
                     send_error=reason,
                     failed_at=_now(),
                 )
+                await self._audit_event(resp, status="rejected_original_deleted", error=reason)
                 ctx = await self._build_context(resp)
                 fb = self._format_feedback("\u274c", "Original deleted", resp, ctx,
                                            extra=f"Error: {reason}")
@@ -473,6 +490,7 @@ class ApprovalBot:
                 await self.db.update_response_status(
                     response_id, "failed", failed_at=_now(), send_error="missing dm_text"
                 )
+                await self._audit_event(resp, status="aborted", error="missing dm_text")
                 ctx = await self._build_context(resp)
                 fb = self._format_feedback("❌", "DM aborted", resp, ctx,
                                            extra="missing dm_text")
@@ -487,12 +505,19 @@ class ApprovalBot:
             result = await self.sender.send(resp["chat_id"], text, reply_to=resp["in_reply_to"])
 
         if result.success:
+            sent_at = _now()
             await self.db.update_response_status(
                 response_id,
                 "sent",
-                sent_at=_now(),
+                sent_at=sent_at,
                 send_error=None,
             )
+            audit_fields = {"status": "sent", "sent_at": sent_at}
+            if resp.get("response_type") == "dm":
+                audit_fields["final_dm_text"] = resp.get("dm_text") or ""
+            else:
+                audit_fields["final_text"] = text
+            await self._audit_event(resp, **audit_fields)
             await self.db.increment_responses_today(resp["chat_id"])
             if resp.get("in_reply_to"):
                 await self.db.mark_responded(resp["chat_id"], resp["in_reply_to"])
@@ -509,6 +534,7 @@ class ApprovalBot:
                 failed_at=_now(),
                 send_error=result.error,
             )
+            await self._audit_event(resp, status="banned", error=result.error)
             await self.db.update_group_status(resp["chat_id"], "banned")
             ctx = await self._build_context(resp)
             fb = self._format_feedback("\U0001f6ab", f"BANNED from {ctx['group_name']}!", resp, ctx,
@@ -561,6 +587,7 @@ class ApprovalBot:
             retry_count=retry_count,
             send_error=reason,
         )
+        await self._audit_event(resp, status="queued", error=reason)
 
         approval_message_id = resp.get("approval_message_id")
         if approval_message_id:
@@ -576,6 +603,7 @@ class ApprovalBot:
                 failed_at=_now(),
                 send_error=reason,
             )
+            await self._audit_event(resp, status="failed", error=reason)
 
     def _seconds_until_retry(self, resp: dict) -> float:
         failed_at = resp.get("failed_at")

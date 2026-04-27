@@ -31,9 +31,10 @@ def load_prompt(name: str) -> Template:
 
 
 def render(name: str, **vars: object) -> str:
-    rendered = load_prompt(name).safe_substitute(vars)
-    missing = _PLACEHOLDER_RE.findall(rendered)
+    template = load_prompt(name)
+    expected = set(_PLACEHOLDER_RE.findall(template.template))
+    missing = expected - vars.keys()
     if missing:
-        log.error("prompt_missing_vars name=%s vars=%s", name, missing)
-        raise KeyError(f"Prompt '{name}' missing variables: {sorted(set(missing))}")
-    return rendered
+        log.error("prompt_missing_vars name=%s vars=%s", name, sorted(missing))
+        raise KeyError(f"Prompt '{name}' missing variables: {sorted(missing)}")
+    return template.safe_substitute(vars)
