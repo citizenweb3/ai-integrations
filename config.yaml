@@ -218,7 +218,7 @@ ollama:
   proactive_context_tokens: 5500
   max_message_tokens: 700
 
-  reactive_timeout_seconds: 120
+  reactive_timeout_seconds: 240
   proactive_timeout_seconds: 240
 
   reactive_max_concurrent: 2
