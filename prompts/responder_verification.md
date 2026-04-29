@@ -16,6 +16,19 @@ DO THIS:
    events that could change the answer.
 3) python src/tools/search-rag.py — if a podcast quote, attributed
    opinion, or CW3 position is involved.
+4) Self-check the draft against the tool results. Before returning,
+   answer these explicitly to yourself:
+   - Topic: does the draft address the actual question, or does it
+     pivot to a CW3 product / generic Web3 commentary the asker
+     didn't request?
+   - Grounding: is every concrete claim (number, status, attribution,
+     current state) backed by a tool result in this session? If not,
+     name which sentence is unverified.
+   - Edge: could anyone write this draft, or does it carry something
+     only Aida adds — on-chain figure, podcast quote, operator
+     insight, philosophical position?
+   If any answer is bad: narrow the claim, call another tool, or
+   action: "skip". Do not ship a draft that fails its own self-check.
 
 You MUST call at least one tool. Skipping verification is not allowed
 at this phase. If you do not call any tool, your final `confidence`
