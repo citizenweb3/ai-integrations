@@ -40,6 +40,9 @@ class ApprovalBot:
         self.dp = Dispatcher()
         self.dp.include_router(router)
         self.chat_id = config["telegram"]["approval_chat_id"]
+        approval_cfg = config.get("approval", {})
+        self._ttl_reactive = int(approval_cfg.get("ttl_reactive_seconds", 7200))
+        self._ttl_proactive = int(approval_cfg.get("ttl_proactive_seconds", 14400))
         self._ttl_tasks: dict[int, asyncio.Task] = {}  # response_id -> ttl task
 
     async def start(self):
@@ -120,8 +123,8 @@ class ApprovalBot:
         await self.db.update_response_status(response_id, "pending_approval",
                                               approval_message_id=msg.message_id)
 
-        # Start TTL watchdog
-        ttl = 1800 if not is_proactive else 7200  # 30min reactive, 2h proactive
+        # Start TTL watchdog (configurable via approval.ttl_*_seconds in config.yaml)
+        ttl = self._ttl_proactive if is_proactive else self._ttl_reactive
         self._ttl_tasks[response_id] = asyncio.create_task(
             self._ttl_watchdog(response_id, msg.message_id, ttl)
         )

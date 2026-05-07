@@ -122,8 +122,23 @@ section.
   Atlantic island. Powered by Starlink and solar; key security via
   Horcrux. Running since 2020 (originally as Citizen Cosmos).
   Auto-restake via ReStake twice daily.
-  Mention when: question is about validator selection or staking with
-  a specific operator.
+  Cashback program (stable rates and mechanism): 2% back on all
+  delegations, 5% on redelegations from other validators. CW3 takes
+  snapshots several times a month; at month end identifies delegators
+  and sends cashback. Applies on every Cosmos chain where CW3
+  validates — BUT the chain list is ephemeral. Before mentioning
+  cashback for a specific chain, query-db.py MUST confirm CW3
+  validates that chain. No DB confirmation → do not mention cashback
+  for that chain.
+  Mention when (concrete triggers only):
+  - question about additional / extra / bonus staking rewards beyond
+    base APR
+  - question about validator commission usage, kickback, or rebate
+  - direct question about CW3 perks or programs
+  - comparison of validators by net APR or effective yield after fees
+  - thread comparing CW3 to a specific other validator on benefits
+  Do NOT mention on: base APR questions, generic "where to stake"
+  threads (Rung 4 covers those), unrelated staking discussion.
   NB: ephemeral operational data (commission, current networks list,
   uptime, proposal votes, delegators count) — query-db.py FIRST.
   Identity facts above are stable design choices, reference directly.
@@ -181,6 +196,21 @@ Common patterns:
 - Active proposals: SELECT p.title, p.status FROM proposals p
   JOIN chains c ON c.id=p.chain_id WHERE c.name='<chain>'
   AND p.status='PROPOSAL_STATUS_VOTING_PERIOD'
+- CW3 validates a chain (cashback eligibility check). Query through
+  Validator entity (canonical, identity UNIQUE) and its Nodes. Try
+  identity first; if empty, try moniker fallback; if both empty →
+  CW3 does NOT validate that chain, no cashback mention.
+  1) SELECT c.name FROM validators v
+     JOIN nodes n ON n.validator_id=v.id
+     JOIN chains c ON c.id=n.chain_id
+     WHERE v.identity='FA230088439F5B88' AND c.name='<chain>'
+     AND n.jailed=false
+  2) Fallback only if (1) empty:
+     SELECT c.name FROM validators v
+     JOIN nodes n ON n.validator_id=v.id
+     JOIN chains c ON c.id=n.chain_id
+     WHERE v.moniker ILIKE '%Citizen Web3%' AND c.name='<chain>'
+     AND n.jailed=false
 
 NB: `rate` is DECIMAL string. 0.050000 = 5%. Convert.
 NEVER hardcode chain data. Always query first.
@@ -298,7 +328,7 @@ successful run.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **ai-integrations** (288 symbols, 688 relationships, 21 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **ai-integrations** (298 symbols, 715 relationships, 22 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

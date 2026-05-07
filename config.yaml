@@ -164,6 +164,10 @@ limits:
   warmup_hours_min: 3                    # min warmup period after joining a group (hours)
   warmup_hours_max: 6                    # max warmup period after joining a group (hours)
 
+approval:
+  ttl_reactive_seconds: 7200             # 2h window to approve a reactive draft before it expires
+  ttl_proactive_seconds: 14400           # 4h window to approve a proactive draft before it expires
+
 proactive:
   interval_minutes: 30                   # run proactive scan every 30 minutes
   window_minutes: 45                     # analyze messages from the last 45 minutes
