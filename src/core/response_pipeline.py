@@ -10,6 +10,40 @@ log = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r'https?://[^\s)\]\>]+')
 _URL_PARSE_RE = re.compile(r'^(https?)://([^/?#]+)([/?#].*)?$')
+
+# Pre-draft hostility guard: short jabs accusing Aida of being AI/bot/slop.
+# Defending these burns trust. Skip before Phase 1 to save LLM cost.
+_HOSTILITY_RE = re.compile(
+    r"(?ix)"
+    r"(?:"
+    r"\bai\s+slop\b|\bslop\b|"
+    r"\bshill\w*\b|\bastroturf\w*\b|"
+    r"you(?:'re|\s+are)\s+(?:an?\s+)?(?:ai|bot|llm|chatbot|slop)\b|"
+    r"\bfake\s+(?:account|user|bot)\b|"
+    r"\bchatgpt\b|\bgpt[-\s]?\d|"
+    r"\bjust\s+an?\s+(?:ai|bot|llm)\b|"
+    r"\byou\s+ais?\b"
+    r")"
+)
+_HOSTILITY_MAX_LEN = 220
+
+# Post-draft defensive guard: Aida's own draft betrays defensiveness.
+# Either an opener that signals "I'm proving myself" or a claim of
+# verifiability without any tool grounding from this session.
+_DEFENSIVE_OPENER_RE = re.compile(
+    r"(?ix)"
+    r"(?:"
+    r"\b(?:call\s+it\s+what|say\s+what|believe\s+what|think\s+what)\s+you\s+want\b|"
+    r"\bjust\s+saying\b|"
+    r"\btrust\s+me\b|"
+    r"\bi'?m\s+not\s+(?:an?\s+)?(?:ai|bot|llm|chatbot)\b|"
+    r"\bi\s+am\s+not\s+(?:an?\s+)?(?:ai|bot|llm|chatbot)\b"
+    r")"
+)
+_UNGROUNDED_VERIFIABILITY_RE = re.compile(
+    r"(?ix)"
+    r"\b(?:verifiable|provable|on[-\s]chain\s+verifiable|check\s+(?:it|the\s+chain))\b"
+)
 _ALLOWED_DOMAIN_SUFFIXES = (
     "validatorinfo.com",
     "podcast.citizenweb3.com",
@@ -169,6 +203,16 @@ async def generate_response(
         status="generating",
     )
 
+    # Rule 3: pre-draft hostility guard. Short jab + AI/bot/slop accusation
+    # → silent skip. No LLM call, no defensive reply. Cuts off bait traps.
+    if len(text) <= _HOSTILITY_MAX_LEN and _HOSTILITY_RE.search(text):
+        log.info("[%s] Pre-draft hostility guard: skipping (text=%r)", group_name, text[:120])
+        await db.update_audit_log(
+            audit_id, status="skipped_hostility",
+            original_text=text,
+        )
+        return None
+
     recent = await db.get_recent_messages(chat_id, limit=10)
     formatted_messages = await format_messages_with_ours(db, recent, chat_id)
     dm_sent = await get_dm_already_sent(db, chat_id, sender_id)
@@ -216,63 +260,86 @@ async def generate_response(
     original_dm_request = bool(result1.get("dm_request", False))
     original_dm_text = result1.get("dm_text", "") or ""
 
-    # H2: ungrounded high confidence in Phase 1 must go through Phase 2.
-    # Identity facts listed in CLAUDE.md section 6 are exempt by prompt-level
-    # carve-out (closing_instructions): the model self-judges those without
-    # a tool call. Pipeline only nudges Phase 2; no post-Phase 2 hard gate.
-    if not tool_calls1 and confidence >= 0.9:
-        log.info("[%s] H2: no Phase 1 tools at conf=%.2f, clamping to 0.85 (force verification)",
-                 group_name, confidence)
-        confidence = 0.85
-
-    # Phase 2: verification for confidence in [0.7, 0.9). >=0.9 sends directly.
-    final_result = result1
-    verified = False
-    tool_calls2: list[dict] = []
-    if confidence < 0.9:
-        log.info("[%s] Phase 2: verifying response (conf=%.2f)", group_name, confidence)
-        verify_prompt = responder.make_verification_prompt(
-            original_question=text,
-            draft_response=reply_text,
-            initial_confidence=confidence,
+    # Rule 4: post-draft defensive guard. The draft itself betrays
+    # defensiveness — either an opener like "call it what you want" /
+    # "trust me" / "I'm not a bot", or a verifiability claim made without
+    # any tool grounding in Phase 1. Either way, skip.
+    defensive_opener = _DEFENSIVE_OPENER_RE.search(reply_text)
+    ungrounded_verifiability = (
+        _UNGROUNDED_VERIFIABILITY_RE.search(reply_text) and not tool_calls1
+    )
+    if defensive_opener or ungrounded_verifiability:
+        reason = "defensive_opener" if defensive_opener else "ungrounded_verifiability"
+        log.info("[%s] Post-draft defensive guard: skipping (%s, draft=%r)",
+                 group_name, reason, reply_text[:160])
+        await db.update_audit_log(
+            audit_id, status=f"skipped_post_draft_{reason}",
+            claude_prompt=prompt,
+            claude_raw=json.dumps(result1),
+            claude_parsed=json.dumps(result1),
         )
-        result2, tool_calls2 = await responder.generate(
-            verify_prompt, use_reply_model=use_reply_model, is_verification=True
+        return None
+
+    # Rule 1: always run Phase 2. The previous "conf >= 0.9 sends directly"
+    # shortcut allowed Phase 1 confidence from training data alone (no
+    # tool grounding) to ship as fact. Verification is now mandatory.
+    log.info("[%s] Phase 2: verifying response (Phase 1 conf=%.2f)", group_name, confidence)
+    verify_prompt = responder.make_verification_prompt(
+        original_question=text,
+        draft_response=reply_text,
+        initial_confidence=confidence,
+    )
+    result2, tool_calls2 = await responder.generate(
+        verify_prompt, use_reply_model=use_reply_model, is_verification=True
+    )
+    await _persist_tool_calls(db, audit_id, "verification", tool_calls2)
+
+    if result2 is None:
+        log.info("[%s] Phase 2: verification call failed, skipping", group_name)
+        await db.update_audit_log(
+            audit_id, status="error",
+            claude_prompt=prompt,
+            claude_raw=json.dumps(result1),
+            claude_parsed=json.dumps(result1),
+            error=responder.last_error or "verification_failed",
         )
-        await _persist_tool_calls(db, audit_id, "verification", tool_calls2)
+        return None
 
-        if result2 is None:
-            log.info("[%s] Phase 2: verification call failed, skipping", group_name)
-            await db.update_audit_log(
-                audit_id, status="error",
-                claude_prompt=prompt,
-                claude_raw=json.dumps(result1),
-                claude_parsed=json.dumps(result1),
-                error=responder.last_error or "verification_failed",
-            )
-            return None
+    # Rule 2: hard gate — Phase 2 must call at least one tool. Pipeline-
+    # enforced, not model-trusted. The verification prompt asks for a tool
+    # call but the model can ignore that; this gate makes it deterministic.
+    if not tool_calls2:
+        log.info("[%s] Phase 2 hard gate: zero tool calls in verification, skipping",
+                 group_name)
+        await db.update_audit_log(
+            audit_id, status="skipped_phase2_no_tools",
+            claude_prompt=prompt,
+            claude_raw=json.dumps(result1),
+            claude_parsed=json.dumps(result2),
+        )
+        return None
 
-        new_conf = float(result2.get("confidence", 0) or 0)
-        new_action = result2.get("action")
-        new_text = result2.get("text", "")
-        if new_action != "respond" or new_conf < 0.9 or not new_text:
-            log.info("[%s] Phase 2: not verified (action=%s, conf=%.2f→%.2f), skipping",
-                     group_name, new_action, confidence, new_conf)
-            await db.update_audit_log(
-                audit_id, status="skipped_phase2",
-                claude_prompt=prompt,
-                claude_raw=json.dumps(result1),
-                claude_parsed=json.dumps(result2),
-            )
-            return None
-        log.info("[%s] Phase 2: verified (conf=%.2f→%.2f)", group_name, confidence, new_conf)
-        # Merge: keep result2 text/conf/action/reason, restore DM from result1.
-        final_result = dict(result2)
-        final_result["dm_request"] = original_dm_request
-        final_result["dm_text"] = original_dm_text
-        reply_text = new_text
-        confidence = new_conf
-        verified = True
+    new_conf = float(result2.get("confidence", 0) or 0)
+    new_action = result2.get("action")
+    new_text = result2.get("text", "")
+    if new_action != "respond" or new_conf < 0.9 or not new_text:
+        log.info("[%s] Phase 2: not verified (action=%s, conf=%.2f→%.2f), skipping",
+                 group_name, new_action, confidence, new_conf)
+        await db.update_audit_log(
+            audit_id, status="skipped_phase2",
+            claude_prompt=prompt,
+            claude_raw=json.dumps(result1),
+            claude_parsed=json.dumps(result2),
+        )
+        return None
+    log.info("[%s] Phase 2: verified (conf=%.2f→%.2f)", group_name, confidence, new_conf)
+    # Merge: keep result2 text/conf/action/reason, restore DM from result1.
+    final_result = dict(result2)
+    final_result["dm_request"] = original_dm_request
+    final_result["dm_text"] = original_dm_text
+    reply_text = new_text
+    confidence = new_conf
+    verified = True
 
     # Post-processing: dashes
     reply_text = reply_text.replace("—", ",").replace("–", ",")

@@ -31,11 +31,13 @@ DO THIS:
    action: "skip". Do not ship a draft that fails its own self-check.
 
 You MUST call at least one tool. Skipping verification is not allowed
-at this phase. If you do not call any tool, your final `confidence`
-MUST be ≤ 0.85. Identity facts listed in CLAUDE.md section 6 (off-grid
-bare-metal, Atlantic island, Starlink + solar, Horcrux, since 2020,
-auto-restake via ReStake) are stable design facts and do not require
-a tool call.
+at this phase. The pipeline enforces this: if zero tool calls happen
+in Phase 2, the response is auto-skipped regardless of confidence.
+Even for §6 identity facts (off-grid bare-metal, Atlantic island,
+Starlink + solar, Horcrux, since 2020, auto-restake via ReStake),
+back the reply with at least one supporting tool call (WebSearch for
+public mention, query-db for chain presence, search-rag for podcast
+context). No tool call → automatic skip.
 
 After verification:
 - If tools confirmed your draft, return the same `text` with the new
