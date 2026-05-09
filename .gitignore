@@ -1,0 +1,14 @@
+.env
+.env*.local
+.next/
+node_modules/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+.DS_Store
+.gitnexus/
+.playwright-mcp/
+ticket*-scaffold.png
+data/runtime/
+data/*.db

@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: logos-chatbot-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-logos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logos}
+      POSTGRES_DB: ${POSTGRES_DB:-logos_chatbot}
+    ports:
+      - '55433:5432'
+    volumes:
+      - logos_pg_data:/var/lib/postgresql/data
+      - ./docker/postgres-init.sh:/docker-entrypoint-initdb.d/001-init-vector.sh:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: logos-chatbot-redis
+    ports:
+      - '56379:6379'
+    volumes:
+      - logos_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrations:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.app
+    container_name: logos-chatbot-migrations
+    command: yarn db:migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-logos}:${POSTGRES_PASSWORD:-logos}@postgres:5432/${POSTGRES_DB:-logos_chatbot}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.app
+    container_name: logos-chatbot-app
+    command: yarn dev
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-logos}:${POSTGRES_PASSWORD:-logos}@postgres:5432/${POSTGRES_DB:-logos_chatbot}
+      REDIS_URL: redis://redis:6379
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      ANSWER_MODEL: ${ANSWER_MODEL:-gemini-3-pro-preview}
+      REWRITE_MODEL: ${REWRITE_MODEL:-gemini-2.5-flash}
+      RERANK_MODEL: ${RERANK_MODEL:-gemini-2.5-flash}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-001}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3010}
+      NODE_ENV: development
+    ports:
+      - '${APP_HOST_PORT:-3010}:3000'
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  indexer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.indexer
+    container_name: logos-chatbot-indexer
+    command: yarn indexer:start
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-logos}:${POSTGRES_PASSWORD:-logos}@postgres:5432/${POSTGRES_DB:-logos_chatbot}
+      REDIS_URL: redis://redis:6379
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-001}
+      NODE_ENV: development
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  logos_pg_data:
+  logos_redis_data:
