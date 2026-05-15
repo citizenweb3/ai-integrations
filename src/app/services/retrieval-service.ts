@@ -14,6 +14,7 @@ type SearchOptions = {
   skipRewrite?: boolean;
   skipRerank?: boolean;
   finalK?: number;
+  history?: string;
 };
 
 export type RetrievalStepTimings = {
@@ -35,21 +36,38 @@ export type RetrievalResult = {
 
 type RewriteOutcome = { rewritten: string; cacheHit: boolean };
 
-const rewriteQuery = async (query: string, skipRewrite?: boolean): Promise<RewriteOutcome> => {
+const buildRewritePrompt = (query: string, history?: string): string => {
+  if (!history) {
+    return `Rewrite this user question as a concise technical search query for Logos documentation. Return only the query.\n\n${query}`;
+  }
+  return `Rewrite the user's latest question as a standalone, concise technical search query for Logos documentation. Use the prior conversation to resolve pronouns and implicit references ("that", "it", "more about it"). Return only the rewritten query, no explanations.\n\nConversation so far:\n${history}\n\nLatest question: ${query}`;
+};
+
+const rewriteQuery = async (
+  query: string,
+  history?: string,
+  skipRewrite?: boolean,
+): Promise<RewriteOutcome> => {
   if (skipRewrite || !hasVertexConfig()) return { rewritten: query, cacheHit: false };
 
-  const cached = await retrievalCacheService.getRewrite(query);
-  if (cached) return { rewritten: cached, cacheHit: true };
+  const hasHistory = Boolean(history);
+
+  if (!hasHistory) {
+    const cached = await retrievalCacheService.getRewrite(query);
+    if (cached) return { rewritten: cached, cacheHit: true };
+  }
 
   try {
     const result = await generateText({
       model: rewriteLanguageModel(),
       temperature: 0,
-      prompt: `Rewrite this user question as a concise technical search query for Logos documentation. Return only the query.\n\n${query}`,
+      prompt: buildRewritePrompt(query, history),
     });
 
     const rewritten = result.text.trim() || query;
-    void retrievalCacheService.setRewrite(query, rewritten);
+    if (!hasHistory) {
+      void retrievalCacheService.setRewrite(query, rewritten);
+    }
     return { rewritten, cacheHit: false };
   } catch (error) {
     console.warn('[retrieval] query rewrite failed; using original query', {
@@ -67,7 +85,7 @@ const search = async (query: string, options: SearchOptions = {}): Promise<Retri
   const startedAt = Date.now();
 
   const rewriteStartedAt = Date.now();
-  const { rewritten, cacheHit: rewriteCacheHit } = await rewriteQuery(query, options.skipRewrite);
+  const { rewritten, cacheHit: rewriteCacheHit } = await rewriteQuery(query, options.history, options.skipRewrite);
   const rewriteMs = Date.now() - rewriteStartedAt;
 
   const mockRetrievalEmbeddings = shouldUseMockRetrievalEmbeddings();

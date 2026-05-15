@@ -2,7 +2,7 @@
 
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import {
   activateChatSession,
@@ -62,10 +62,37 @@ const LogosChat = () => {
 
   const isBusy = status === 'submitted' || status === 'streaming';
 
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const lastMessageCountRef = useRef(messages.length);
+  const lastSessionIdRef = useRef(activeSession.id);
+
   useEffect(() => {
     if (isBusy) return;
     replaceChatSessionMessages(activeSession.id, messages);
   }, [activeSession.id, isBusy, messages]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const sessionChanged = lastSessionIdRef.current !== activeSession.id;
+    lastSessionIdRef.current = activeSession.id;
+
+    if (sessionChanged) {
+      lastMessageCountRef.current = messages.length;
+      container.scrollTo({ top: container.scrollHeight });
+      return;
+    }
+
+    const lastMessage = messages[messages.length - 1];
+    const isNewMessage = messages.length > lastMessageCountRef.current;
+    const shouldScroll = isNewMessage || (isBusy && lastMessage?.role === 'assistant');
+
+    lastMessageCountRef.current = messages.length;
+    if (!shouldScroll) return;
+
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+  }, [messages, isBusy, activeSession.id]);
 
   const submitText = (text: string) => {
     const value = text.trim();
@@ -133,7 +160,10 @@ const LogosChat = () => {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-6 md:px-8">
+        <div
+          ref={scrollContainerRef}
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-6 md:px-8"
+        >
           {messages.length === 0 ? (
             <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col justify-center">
               <WelcomeMessage />

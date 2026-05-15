@@ -8,6 +8,7 @@ import type { RerankedChunk } from '@/app/services/rerank-service';
 import type chatLogServiceType from '@/app/services/chat-log-service';
 import type retrievalServiceType from '@/app/services/retrieval-service';
 import { fallbackAnswer } from '@/lib/chat/fallback-answer';
+import { buildWeightedHistory } from '@/lib/history';
 import { hasVertexConfig, modelConfig } from '@/lib/model-config';
 import { buildSystemPrompt } from '@/lib/prompts/system-prompt';
 import { hashIp, isLocalRequest, requestAddress, sanitizeUserText } from '@/lib/security';
@@ -199,7 +200,8 @@ export async function POST(request: NextRequest) {
     chatLogService = services.chatLogService;
     const activeChatLogService = services.chatLogService;
 
-    const retrieval = await services.retrievalService.search(query);
+    const history = buildWeightedHistory(messages) ?? undefined;
+    const retrieval = await services.retrievalService.search(query, { history });
     const sources = sourcesForChunks(retrieval.chunks);
 
     if (!hasVertexConfig()) {
