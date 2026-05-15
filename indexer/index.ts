@@ -1,4 +1,4 @@
-import cron from 'node-cron';
+import { CronJob, CronTime } from 'cron';
 
 import databaseService from '../src/app/services/database-service';
 import sourceService from '../src/app/services/source-service';
@@ -20,10 +20,10 @@ const log = (level: LogLevel, event: string, fields: Record<string, unknown> = {
 };
 
 const activeJobs = new Map<string, Promise<SourceJobResult>>();
-const shutdownGraceMs = Number(process.env.INDEXER_SHUTDOWN_GRACE_MS ?? 25_000);
+const SHUTDOWN_GRACE_MS = 25_000;
 const localDatabaseHosts = new Set(['localhost', '127.0.0.1', '::1', 'postgres']);
 
-const runJob = async (source: IndexerSource, trigger: 'cron' | 'once'): Promise<SourceJobResult | null> => {
+const runJob = async (source: IndexerSource, trigger: 'cron' | 'once' | 'startup'): Promise<SourceJobResult | null> => {
   if (activeJobs.has(source.id)) {
     log('warn', 'job_skipped_already_running', { sourceId: source.id, trigger });
     return null;
@@ -105,18 +105,43 @@ const runOnce = async (): Promise<void> => {
   }
 };
 
+const runStartupPass = async (): Promise<void> => {
+  const sources = enabledSources();
+  log('info', 'startup_pass_started', { sources: sources.map((source) => source.id) });
+  let failureCount = 0;
+
+  for (const source of sources) {
+    try {
+      const result = await runJob(source, 'startup');
+      failureCount += result?.failed ?? 0;
+    } catch {
+      failureCount += 1;
+    }
+  }
+
+  log('info', 'startup_pass_completed', { sourceCount: sources.length, failureCount });
+};
+
 const startCron = () => {
   const sources = enabledSources();
   const tasks = sources.map((source) => {
-    if (!cron.validate(source.schedule)) {
+    try {
+      new CronTime(source.schedule, 'UTC');
+    } catch {
       throw new Error(`Invalid cron schedule for ${source.id}: ${source.schedule}`);
     }
 
-    const task = cron.schedule(source.schedule, () => {
-      void runJob(source, 'cron').catch(() => {
-        // runJob already logs the failure; keep the cron process alive for future schedules.
-      });
-    });
+    const task = new CronJob(
+      source.schedule,
+      () => {
+        void runJob(source, 'cron').catch(() => {
+          // runJob already logs the failure; keep the cron process alive for future schedules.
+        });
+      },
+      null,
+      true,
+      'UTC',
+    );
 
     log('info', 'job_scheduled', {
       sourceId: source.id,
@@ -144,19 +169,19 @@ const startCron = () => {
 
     log('info', 'shutdown_waiting_for_jobs', {
       activeJobs: Array.from(activeJobs.keys()),
-      graceMs: shutdownGraceMs,
+      graceMs: SHUTDOWN_GRACE_MS,
     });
 
     const jobsFinished = Promise.allSettled(Array.from(activeJobs.values()));
     const timeout = new Promise<'timeout'>((resolve) => {
-      setTimeout(() => resolve('timeout'), shutdownGraceMs);
+      setTimeout(() => resolve('timeout'), SHUTDOWN_GRACE_MS);
     });
 
     const result = await Promise.race([jobsFinished, timeout]);
     if (result === 'timeout') {
       log('warn', 'shutdown_grace_timeout', {
         activeJobs: Array.from(activeJobs.keys()),
-        graceMs: shutdownGraceMs,
+        graceMs: SHUTDOWN_GRACE_MS,
       });
     }
   };
@@ -194,4 +219,9 @@ if (process.env.INDEXER_RUN_ONCE === '1') {
   assertLocalDatabaseIfRequired();
   log('info', 'started', { mode: 'cron' });
   startCron();
+  void runStartupPass().catch((error) => {
+    log('error', 'startup_pass_failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }

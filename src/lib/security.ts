@@ -1,10 +1,11 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
+
+const ipHashSalt = randomBytes(32).toString('hex');
 
 const dailySalt = (): string => new Date().toISOString().slice(0, 10);
 
 export const hashIp = (ip: string): string => {
-  const salt = process.env.IP_HASH_SALT || 'development-only-ip-salt';
-  return createHash('sha256').update(`${salt}:${dailySalt()}:${ip}`).digest('hex');
+  return createHash('sha256').update(`${ipHashSalt}:${dailySalt()}:${ip}`).digest('hex');
 };
 
 export const sanitizeUserText = (text: string): string => {

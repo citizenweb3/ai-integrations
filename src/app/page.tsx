@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import LogosChat from '@/components/chat/logos-chat';
 
 export const metadata: Metadata = {
-  title: 'Logos Onboarding Chatbot | Context-grounded Logos AI assistant',
+  title: 'Logos Onboarding Assistant | Context-grounded Logos AI assistant',
   description:
     'Ask questions about Logos nodes, LIPs, Cryptarchia consensus, Waku messaging, storage, GitHub repositories, and builder documentation with cited source links.',
   keywords: [
@@ -27,15 +27,15 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: 'website',
-    title: 'Logos Onboarding Chatbot',
+    title: 'Logos Onboarding Assistant',
     description:
       'Context-grounded Logos assistant for node operators, builders, and newcomers. Answers include citations to indexed Logos source material.',
     url: '/',
-    siteName: 'Logos Onboarding Chatbot',
+    siteName: 'Logos Onboarding Assistant',
   },
   twitter: {
     card: 'summary',
-    title: 'Logos Onboarding Chatbot',
+    title: 'Logos Onboarding Assistant',
     description:
       'Ask Logos onboarding questions and get cited answers from docs, GitHub repositories, and official web sources.',
   },
@@ -67,7 +67,7 @@ const Page = () => {
             Context-grounded AI
           </p>
           <h1 id="main-heading" className="text-2xl font-bold leading-tight tracking-[0.04em] md:text-3xl">
-            Logos Onboarding Chatbot
+            Logos Onboarding Assistant
           </h1>
           <p className="mx-auto mt-2 max-w-3xl text-sm leading-6 text-white/62">
             Ask about running nodes, LIPs, Cryptarchia consensus, Waku messaging, storage, the Logos Execution Zone, and

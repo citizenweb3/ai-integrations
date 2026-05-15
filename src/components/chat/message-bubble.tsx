@@ -24,8 +24,8 @@ const MessageBubble = ({ message }: MessageBubbleProps) => {
             : 'max-w-[88%] rounded-[10px] border border-white/10 bg-[#1A1A1B]/80 px-4 py-3 text-sm text-white/90'
         }
       >
-        {text && (isUser ? <div className="whitespace-pre-wrap leading-6">{text}</div> : <MarkdownMessage text={text} sources={sources} />)}
-        {!isUser && <SourceChips sources={sources} />}
+        {text && (isUser ? <div className="whitespace-pre-wrap leading-6">{text}</div> : <MarkdownMessage text={text} />)}
+        {!isUser && <SourceChips sources={sources} text={text} />}
       </div>
     </article>
   );

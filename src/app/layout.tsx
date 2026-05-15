@@ -6,9 +6,9 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.PUBLIC_URL ?? 'http://localhost:3010'),
+  metadataBase: new URL('https://logos.staking.citizenweb3.com'),
   title: {
-    default: 'Logos Onboarding Chatbot',
+    default: 'Logos Onboarding Assistant',
     template: '%s',
   },
   description: 'Context-grounded onboarding assistant for the Logos network.',

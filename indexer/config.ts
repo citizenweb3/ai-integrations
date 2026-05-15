@@ -4,32 +4,16 @@ import { fetchRawGitHubDocs, type RawGitHubDocumentConfig } from './sources/raw-
 import { fetchWebDocs, type WebSourceConfig } from './sources/web-docs';
 import type { IndexerSource } from './types';
 
-const envFlag = (name: string, defaultValue: boolean): boolean => {
-  const value = process.env[name];
-  if (value === undefined || value === '') return defaultValue;
-  return value === '1' || value.toLowerCase() === 'true';
-};
+const STATIC_CRON = '17 3 * * *';
+const RAW_GITHUB_CRON = '37 3 * * *';
+const WEB_CRON = '23 4 * * *';
+const GITHUB_CRON = '41 3 * * *';
 
-const envNumber = (name: string, defaultValue: number): number => {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value > 0 ? value : defaultValue;
-};
-
-const envCsv = (name: string): string[] => {
-  return (process.env[name] ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-};
-
-const webMaxPages = envNumber('INDEXER_WEB_MAX_PAGES_PER_SOURCE', 30);
-const webCron = process.env.INDEXER_WEB_CRON ?? '23 4 * * *';
-const githubCron = process.env.INDEXER_GITHUB_CRON ?? '41 3 * * *';
-const githubMaxRepos = envNumber('INDEXER_GITHUB_MAX_REPOS_PER_ORG', 120);
-const githubMaxFilesPerRepo = envNumber('INDEXER_GITHUB_MAX_FILES_PER_REPO', 60);
-const githubMaxFileBytes = envNumber('INDEXER_GITHUB_MAX_FILE_BYTES', 1_000_000);
-const githubRepoAllowlist = envCsv('INDEXER_GITHUB_REPO_ALLOWLIST');
-const rawGitHubCron = process.env.INDEXER_RAW_GITHUB_CRON ?? '37 3 * * *';
+const WEB_MAX_PAGES_PER_SOURCE = 40;
+const GITHUB_MAX_REPOS_PER_ORG = 120;
+const GITHUB_MAX_FILES_PER_REPO = 60;
+const GITHUB_MAX_FILE_BYTES = 1_000_000;
+const GITHUB_REPO_ALLOWLIST: string[] = [];
 
 const webSources: WebSourceConfig[] = [
   {
@@ -40,7 +24,7 @@ const webSources: WebSourceConfig[] = [
     sitemapUrls: ['https://logos.co/sitemap.xml'],
     fallbackUrls: ['https://logos.co'],
     allowedHosts: ['logos.co'],
-    maxPages: webMaxPages,
+    maxPages: WEB_MAX_PAGES_PER_SOURCE,
   },
   {
     id: 'build-logos-co',
@@ -50,7 +34,7 @@ const webSources: WebSourceConfig[] = [
     sitemapUrls: [],
     fallbackUrls: ['https://build.logos.co'],
     allowedHosts: ['build.logos.co'],
-    maxPages: webMaxPages,
+    maxPages: WEB_MAX_PAGES_PER_SOURCE,
   },
   {
     id: 'docs-waku-org',
@@ -60,7 +44,7 @@ const webSources: WebSourceConfig[] = [
     sitemapUrls: ['https://docs.waku.org/sitemap.xml'],
     fallbackUrls: ['https://docs.waku.org'],
     allowedHosts: ['docs.waku.org'],
-    maxPages: webMaxPages,
+    maxPages: WEB_MAX_PAGES_PER_SOURCE,
   },
   {
     id: 'press-logos-co',
@@ -70,7 +54,7 @@ const webSources: WebSourceConfig[] = [
     sitemapUrls: ['https://press.logos.co/sitemap.xml'],
     fallbackUrls: ['https://press.logos.co'],
     allowedHosts: ['press.logos.co'],
-    maxPages: webMaxPages,
+    maxPages: WEB_MAX_PAGES_PER_SOURCE,
   },
   {
     id: 'blog-nomos-tech',
@@ -80,7 +64,7 @@ const webSources: WebSourceConfig[] = [
     sitemapUrls: ['https://blog.nomos.tech/sitemap.xml'],
     fallbackUrls: ['https://blog.nomos.tech'],
     allowedHosts: ['blog.nomos.tech'],
-    maxPages: webMaxPages,
+    maxPages: WEB_MAX_PAGES_PER_SOURCE,
   },
 ];
 
@@ -91,10 +75,10 @@ const githubSources: GitHubSourceConfig[] = [
     org: 'logos-co',
     includeArchived: false,
     includeForks: false,
-    maxRepos: githubMaxRepos,
-    maxFilesPerRepo: githubMaxFilesPerRepo,
-    maxFileBytes: githubMaxFileBytes,
-    repoAllowlist: githubRepoAllowlist,
+    maxRepos: GITHUB_MAX_REPOS_PER_ORG,
+    maxFilesPerRepo: GITHUB_MAX_FILES_PER_REPO,
+    maxFileBytes: GITHUB_MAX_FILE_BYTES,
+    repoAllowlist: GITHUB_REPO_ALLOWLIST,
   },
   {
     id: 'github-logos-blockchain',
@@ -102,10 +86,10 @@ const githubSources: GitHubSourceConfig[] = [
     org: 'logos-blockchain',
     includeArchived: false,
     includeForks: false,
-    maxRepos: githubMaxRepos,
-    maxFilesPerRepo: githubMaxFilesPerRepo,
-    maxFileBytes: githubMaxFileBytes,
-    repoAllowlist: githubRepoAllowlist,
+    maxRepos: GITHUB_MAX_REPOS_PER_ORG,
+    maxFilesPerRepo: GITHUB_MAX_FILES_PER_REPO,
+    maxFileBytes: GITHUB_MAX_FILE_BYTES,
+    repoAllowlist: GITHUB_REPO_ALLOWLIST,
   },
 ];
 
@@ -164,15 +148,15 @@ export const indexerSources: IndexerSource[] = [
   {
     id: 'static-docs',
     title: 'Static Logos seed documents',
-    schedule: process.env.INDEXER_STATIC_CRON ?? '17 3 * * *',
-    enabled: envFlag('INDEXER_ENABLE_STATIC_SOURCE', true),
+    schedule: STATIC_CRON,
+    enabled: true,
     fetch: fetchStaticDocs,
   },
   {
     id: 'raw-github-docs',
     title: 'Curated raw Logos GitHub documents',
-    schedule: rawGitHubCron,
-    enabled: envFlag('INDEXER_ENABLE_RAW_GITHUB_SOURCES', true),
+    schedule: RAW_GITHUB_CRON,
+    enabled: true,
     fetch: () => fetchRawGitHubDocs(rawGitHubDocuments),
     pruneIdentifierPrefix: 'github-raw:',
     errorRecord: {
@@ -185,8 +169,8 @@ export const indexerSources: IndexerSource[] = [
   ...webSources.map((source) => ({
     id: source.id,
     title: source.title,
-    schedule: webCron,
-    enabled: envFlag('INDEXER_ENABLE_WEB_SOURCES', true),
+    schedule: WEB_CRON,
+    enabled: true,
     fetch: () => fetchWebDocs(source),
     pruneIdentifierPrefix: `web:${source.id}:`,
     errorRecord: {
@@ -199,8 +183,8 @@ export const indexerSources: IndexerSource[] = [
   ...githubSources.map((source) => ({
     id: source.id,
     title: source.title,
-    schedule: githubCron,
-    enabled: envFlag('INDEXER_ENABLE_GITHUB_SOURCES', true),
+    schedule: GITHUB_CRON,
+    enabled: true,
     fetch: () => fetchGitHubDocs(source),
     errorRecord: {
       identifier: `github-org:${source.org}`,

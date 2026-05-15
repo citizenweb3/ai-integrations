@@ -5,8 +5,6 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 
-import type { ChatSource } from './types';
-
 const CodeBlock = ({ children }: { children: ReactNode }) => {
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
@@ -44,7 +42,6 @@ const CodeBlock = ({ children }: { children: ReactNode }) => {
 };
 
 type MarkdownMessageProps = {
-  sources: ChatSource[];
   text: string;
 };
 
@@ -84,20 +81,18 @@ const normalizeCodeFences = (text: string): string => {
   return out.join('\n');
 };
 
-const replaceCitationsInSegment = (
-  segment: string,
-  sourceByCitationId: Map<number, ChatSource>,
-): string => {
-  return segment.replace(citationPattern, (match, citationId: string, offset: number, fullText: string) => {
-    const source = sourceByCitationId.get(Number(citationId));
-    if (!source || fullText[offset + match.length] === '(') return match;
-
-    return `[\\[${citationId}\\]](${source.url})`;
-  });
+const stripCitationsInSegment = (segment: string): string => {
+  return segment
+    .replace(citationPattern, (match, _id: string, offset: number, fullText: string) => {
+      if (fullText[offset + match.length] === '(') return match;
+      return '';
+    })
+    .replace(/[ \t]+([.,;:!?])/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+\n/g, '\n');
 };
 
-const linkCitations = (text: string, sources: ChatSource[]): string => {
-  const sourceByCitationId = new Map(sources.map((source) => [source.citationId, source]));
+const stripCitations = (text: string): string => {
   let result = '';
   let cursor = 0;
 
@@ -120,7 +115,7 @@ const linkCitations = (text: string, sources: ChatSource[]): string => {
 
     let plainEnd = cursor;
     while (plainEnd < text.length && text[plainEnd] !== '`') plainEnd++;
-    result += replaceCitationsInSegment(text.slice(cursor, plainEnd), sourceByCitationId);
+    result += stripCitationsInSegment(text.slice(cursor, plainEnd));
     cursor = plainEnd;
   }
 
@@ -195,7 +190,7 @@ const markdownComponents: Components = {
   ul: ({ children }) => <ul className="my-3 list-disc space-y-1.5 pl-5">{children}</ul>,
 };
 
-const MarkdownMessage = ({ sources, text }: MarkdownMessageProps) => {
+const MarkdownMessage = ({ text }: MarkdownMessageProps) => {
   return (
     <div className="leading-6">
       <ReactMarkdown
@@ -203,7 +198,7 @@ const MarkdownMessage = ({ sources, text }: MarkdownMessageProps) => {
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         remarkPlugins={[remarkGfm]}
       >
-        {linkCitations(normalizeCodeFences(text), sources)}
+        {stripCitations(normalizeCodeFences(text))}
       </ReactMarkdown>
     </div>
   );

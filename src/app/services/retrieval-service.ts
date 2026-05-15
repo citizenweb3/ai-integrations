@@ -61,7 +61,7 @@ const rewriteQuery = async (query: string, skipRewrite?: boolean): Promise<Rewri
 
 const shouldUseMockRetrievalEmbeddings = (): boolean => process.env.RETRIEVAL_MOCK_EMBEDDINGS === '1';
 
-const isRerankEnvEnabled = (): boolean => process.env.RERANK_ENABLED === '1';
+const RERANK_ENABLED_DEFAULT = true;
 
 const search = async (query: string, options: SearchOptions = {}): Promise<RetrievalResult> => {
   const startedAt = Date.now();
@@ -101,7 +101,7 @@ const search = async (query: string, options: SearchOptions = {}): Promise<Retri
 
   const finalK = options.finalK ?? 8;
   const rerankEnabled =
-    options.skipRerank !== undefined ? !options.skipRerank : isRerankEnvEnabled();
+    options.skipRerank !== undefined ? !options.skipRerank : RERANK_ENABLED_DEFAULT;
   const rerankStartedAt = Date.now();
   const chunks = rerankEnabled
     ? await rerankService.rerank(rewritten, candidates, finalK)

@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
     }
 
     const limit = await rateLimitService.check(ipHash, {
-      max: Number(process.env.RATE_LIMIT_PER_IP_PER_MINUTE ?? 20),
+      max: 30,
       windowSec: 60,
     });
 
