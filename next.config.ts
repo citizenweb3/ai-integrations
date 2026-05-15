@@ -1,7 +1,7 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ['127.0.0.1'],
+  allowedDevOrigins: ['127.0.0.1', 'logos.staking.citizenweb3.com'],
   cacheComponents: true,
   turbopack: {},
   async headers() {
