@@ -10,7 +10,7 @@ import type retrievalServiceType from '@/app/services/retrieval-service';
 import { fallbackAnswer } from '@/lib/chat/fallback-answer';
 import { hasVertexConfig, modelConfig } from '@/lib/model-config';
 import { buildSystemPrompt } from '@/lib/prompts/system-prompt';
-import { hashIp, sanitizeUserText } from '@/lib/security';
+import { hashIp, isLocalRequest, requestAddress, sanitizeUserText } from '@/lib/security';
 import { answerLanguageModel } from '@/lib/vertex-provider';
 
 export const maxDuration = 60;
@@ -43,14 +43,6 @@ const extractText = (message: ChatUIMessage): string => {
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join(' ')
     .trim();
-};
-
-const clientIp = (request: NextRequest): string => {
-  return (
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    request.headers.get('x-real-ip')?.trim() ||
-    'unknown'
-  );
 };
 
 const sourcesForChunks = (chunks: RerankedChunk[]): ChatSource[] => {
@@ -151,7 +143,7 @@ const createMockResponse = async (input: {
 
 export async function POST(request: NextRequest) {
   const startedAt = Date.now();
-  const ip = clientIp(request);
+  const ip = requestAddress(request);
   const ipHash = hashIp(ip);
 
   let sessionId = 'unknown';
@@ -159,6 +151,17 @@ export async function POST(request: NextRequest) {
   let chatLogService: ChatLogService | null = null;
 
   try {
+    if (!isLocalRequest(request)) {
+      console.warn(
+        JSON.stringify({
+          event: 'chat_request_rejected_non_local',
+          clientAddress: ip,
+          host: request.nextUrl.hostname,
+        }),
+      );
+      return Response.json({ error: 'Local requests only.' }, { status: 403 });
+    }
+
     const body = chatRequestSchema.parse(await request.json());
     sessionId = body.sessionId ?? body.id ?? crypto.randomUUID();
 

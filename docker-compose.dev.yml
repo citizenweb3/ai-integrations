@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logos}
       POSTGRES_DB: logos_chatbot
     ports:
-      - '55433:5432'
+      - '127.0.0.1:55433:5432'
     volumes:
       - logos_pg_data:/var/lib/postgresql/data
       - ./docker/postgres-init.sh:/docker-entrypoint-initdb.d/001-init-vector.sh:ro
@@ -21,7 +21,7 @@ services:
     image: redis:7-alpine
     container_name: logos-chatbot-redis
     ports:
-      - '56379:6379'
+      - '127.0.0.1:56379:6379'
     volumes:
       - logos_redis_data:/data
     healthcheck:
@@ -36,6 +36,12 @@ services:
       dockerfile: docker/Dockerfile.app
     container_name: logos-chatbot-migrations
     command: yarn db:migrate
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
     environment:
       DATABASE_URL: postgresql://logos:${POSTGRES_PASSWORD:-logos}@postgres:5432/logos_chatbot
     depends_on:
@@ -48,6 +54,12 @@ services:
       dockerfile: docker/Dockerfile.app
     container_name: logos-chatbot-app
     command: yarn dev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
     environment:
       DATABASE_URL: postgresql://logos:${POSTGRES_PASSWORD:-logos}@postgres:5432/logos_chatbot
       REDIS_URL: redis://redis:6379
@@ -55,7 +67,7 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-sa.json
       RETRIEVAL_MOCK_EMBEDDINGS: ${RETRIEVAL_MOCK_EMBEDDINGS:-0}
     ports:
-      - '3010:3000'
+      - '127.0.0.1:3010:3000'
     volumes:
       - ./secrets/gcp-sa.json:/secrets/gcp-sa.json:ro
     depends_on:
@@ -72,6 +84,12 @@ services:
       dockerfile: docker/Dockerfile.indexer
     container_name: logos-chatbot-indexer
     command: yarn indexer:start
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
     environment:
       DATABASE_URL: postgresql://logos:${POSTGRES_PASSWORD:-logos}@postgres:5432/logos_chatbot
       REDIS_URL: redis://redis:6379
