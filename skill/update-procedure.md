@@ -17,16 +17,34 @@ If the release does NOT say breaking, you may be able to just swap the binary (c
 
 ---
 
-## Step 0 — Fetch the new release
+## Step 0 — Fetch the latest stable release
 
+Fetch the full release list and pick the first **non-prerelease** entry.
+`/releases/latest` may return an RC — always filter explicitly:
+
+```bash
+curl -s https://api.github.com/repos/logos-blockchain/logos-blockchain/releases \
+  | python3 -c "
+import sys, json
+releases = [r for r in json.load(sys.stdin) if not r['prerelease'] and not r['draft']]
+r = releases[0]
+print('tag:', r['tag_name'])
+for a in r['assets']:
+    print('asset:', a['name'], '->', a['browser_download_url'])
+print()
+print(r['body'][:2000])
+"
 ```
-!`curl -s https://api.github.com/repos/logos-blockchain/logos-blockchain/releases/latest`
-```
+
+Ignore any tag containing `-rc`, `-dev`, or `-beta`.
+If the API is unreachable, check the official quickstart:
+`https://github.com/logos-co/logos-docs/blob/main/docs/blockchain/quickstart-guide-for-the-logos-blockchain-node.md`
 
 Note from the response:
-- `tag_name` — new version string
-- asset URLs for the binary tarball and circuits tarball
-- `body` — new bootstrap peers (peer list may change between releases)
+- Stable version tag
+- Asset URLs for the `linux-x86_64` binary tarball and circuits tarball
+- New bootstrap peers (may differ from previous release)
+- Whether this is a breaking release
 
 ---
 

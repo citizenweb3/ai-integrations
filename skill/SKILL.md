@@ -35,17 +35,24 @@ If `$ARGUMENTS` is empty, ask the user which operation they want: install / upda
 
 ## ALWAYS do this first
 
-Before taking any action, fetch the latest release information so you have the
-current version tag, binary URLs, circuits archive URL, and breaking-change notes:
+Before taking any action, fetch the **latest stable** release — filtering out pre-releases and
+release candidates (RC). `/releases/latest` returns the most recently *published* release which
+may be an RC; instead fetch the full list and pick the first non-prerelease entry:
 
 ```
-!`curl -s https://api.github.com/repos/logos-blockchain/logos-blockchain/releases/latest`
+!`curl -s https://api.github.com/repos/logos-blockchain/logos-blockchain/releases | python3 -c "import sys,json; releases=[r for r in json.load(sys.stdin) if not r['prerelease'] and not r['draft']]; r=releases[0]; print(json.dumps({'tag':r['tag_name'],'assets':[{'name':a['name'],'url':a['browser_download_url']} for a in r['assets']],'body':r['body'][:2000]}))" 2>/dev/null`
 ```
 
-From the JSON response extract:
-- `tag_name` — current version (e.g. `0.1.2`)
-- `assets[].browser_download_url` — binary tarball and circuits tarball URLs
-- `body` — bootstrap peers and breaking-change notes
+From the response extract:
+- `tag` — stable version (e.g. `0.1.2`) — **ignore any tag containing `-rc`, `-dev`, or `-beta`**
+- `assets[].url` — filter for `linux-x86_64` binary tarball and circuits tarball
+- `body` — breaking-change notice and bootstrap peers
+
+If the API call fails or returns no stable release, fall back to the official quickstart docs:
+
+```
+!`curl -s https://raw.githubusercontent.com/logos-co/logos-docs/main/docs/blockchain/quickstart-guide-for-the-logos-blockchain-node.md | head -120`
+```
 
 Also check [sharp-edges.md](./sharp-edges.md) before every install or update.
 
