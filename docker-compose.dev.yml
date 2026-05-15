@@ -67,7 +67,7 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-sa.json
       RETRIEVAL_MOCK_EMBEDDINGS: ${RETRIEVAL_MOCK_EMBEDDINGS:-0}
     ports:
-      - '127.0.0.1:3010:3000'
+      - '3010:3000'
     volumes:
       - ./secrets/gcp-sa.json:/secrets/gcp-sa.json:ro
     depends_on:
