@@ -59,6 +59,7 @@ services:
       ANSWER_MODEL: ${ANSWER_MODEL:-gemini-3-flash-preview}
       REWRITE_MODEL: ${REWRITE_MODEL:-gemini-2.5-flash}
       RERANK_MODEL: ${RERANK_MODEL:-gemini-2.5-flash}
+      RERANK_ENABLED: ${RERANK_ENABLED:-0}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-001}
       RETRIEVAL_MOCK_EMBEDDINGS: ${RETRIEVAL_MOCK_EMBEDDINGS:-1}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3010}

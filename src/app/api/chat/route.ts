@@ -262,6 +262,19 @@ export async function POST(request: NextRequest) {
       messages: modelMessages,
       temperature: 0.2,
       onFinish: async (event) => {
+        const generationMs = Date.now() - generationStartedAt;
+        console.info(
+          JSON.stringify({
+            event: 'chat_timing',
+            sessionId,
+            totalMs: Date.now() - startedAt,
+            retrievalMs: retrieval.retrievalLatencyMs,
+            generationMs,
+            ...retrieval.stepTimings,
+            promptTokens: event.totalUsage.inputTokens,
+            completionTokens: event.totalUsage.outputTokens,
+          }),
+        );
         await logOnce({
           answer: event.text,
           finishReason: event.finishReason,
