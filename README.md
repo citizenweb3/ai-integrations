@@ -189,4 +189,4 @@ yarn indexer:once
 
 ## License
 
-[MIT](./LICENSE) © citizenweb3
+[MIT](./LICENSE) © Citizen Web3
