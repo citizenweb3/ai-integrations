@@ -1,0 +1,51 @@
+{
+  "name": "@citizenweb3/ai-integrations",
+  "version": "1.0.0",
+  "description": "AI agent skills for blockchain node operators — install, update, and manage nodes with Claude Code, Copilot, Gemini, Codex, opencode, and OpenClaw",
+  "type": "module",
+  "bin": {
+    "ai-integrations": "installer/dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc --project installer/tsconfig.json",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "blockchain",
+    "logos",
+    "logos-blockchain",
+    "ai-agent",
+    "skill",
+    "claude",
+    "claude-code",
+    "github-copilot",
+    "gemini",
+    "codex",
+    "opencode",
+    "openclaw",
+    "agentskills",
+    "node-operator",
+    "validator"
+  ],
+  "author": "citizenweb3",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/citizenweb3/ai-integrations"
+  },
+  "homepage": "https://github.com/citizenweb3/ai-integrations#readme",
+  "bugs": {
+    "url": "https://github.com/citizenweb3/ai-integrations/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "tar": "^7.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/tar": "^6.1.13",
+    "typescript": "^5.7.3"
+  }
+}
