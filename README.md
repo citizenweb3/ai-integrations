@@ -8,7 +8,9 @@ Index of CitizenWeb3 AI agents. This `main` branch carries only this README; eac
 |---|---|---|---|---|
 | **Aida** — Telegram Growth Agent | this repo, branch [`aida-trust-first-rewrite`](https://github.com/citizenweb3/ai-integrations/tree/aida-trust-first-rewrite) | Autonomous Telegram agent: joins Web3/staking/privacy groups, answers via ValidatorInfo + CW3 podcast RAG, grows community | Python 3.12, Telethon, aiogram, Postgres, Claude Code CLI, Docker | Active |
 | **AI Tools Landing** | this repo, branch [`ai-landing`](https://github.com/citizenweb3/ai-integrations/tree/ai-landing) | Public landing for CW3 AI tools | Next.js, TypeScript, Framer Motion, Tailwind | Active |
-| **Logos Chatbot** | this repo — local branch `logos-chatbot` (not pushed yet) | RAG chatbot for the Logos network — onboarding assistant for users, developers, and validators | Next.js 16, AI SDK, Drizzle, Postgres, Redis | WIP (local) |
+| **Logos Chatbot** | this repo, branch [`logos-onboarding-assistant`](https://github.com/citizenweb3/ai-integrations/tree/logos-onboarding-assistant) · [logos.staking.citizenweb3.com](https://logos.staking.citizenweb3.com) | RAG chatbot for the Logos network — onboarding assistant for users, developers, and validators | Next.js 16, AI SDK, Drizzle, Postgres, Redis, Vertex AI | Active |
+| **Logos Node Skill** | this repo, branch [`logos-node`](https://github.com/citizenweb3/ai-integrations/tree/logos-node) | AI agent skill: install, update, and operate a Logos Blockchain testnet validator node from natural language | Node.js, bash, systemd, npx | Active |
+| **AI Integrations CLI** | this repo, branch [`installer`](https://github.com/citizenweb3/ai-integrations/tree/installer) | npm CLI (`@citizenweb3/ai-integrations`) that installs agent skills into Claude Code, GitHub Copilot, Gemini CLI, Codex CLI, opencode, OpenClaw | Node.js, npm | Active |
 | **Upwork Agent** | [citizenweb3/upwork-agent](https://github.com/citizenweb3/upwork-agent) | Autonomous Upwork job search + scoring + proposal drafting + submission, human-in-the-loop via Telegram | Node.js, Chrome DevTools Protocol, Claude Code CLI, Telegram bot, Docker | Active |
 | **ValidatorInfo — RAG Assistant** | [citizenweb3/validatorinfo](https://github.com/citizenweb3/validatorinfo) | In-product RAG endpoint over CW3 podcasts + on-chain validator data; serves `/api/rag/search` consumed by Aida, Content Creator, Bizdev Email Agent | Next.js API route, Postgres, Prisma | Active |
 | **ValidatorInfo — Fullstack Developer** | [citizenweb3/validatorinfo](https://github.com/citizenweb3/validatorinfo) (`agents-infrastructure/`) | Self-hosted GitHub Actions runner that ships features/fixes against the ValidatorInfo codebase via Claude Code | Docker, GitHub self-hosted runner, Claude Code CLI, DeepContext MCP, GitNexus MCP, Figma MCP | Active |
@@ -51,11 +53,64 @@ Public-facing landing page presenting CitizenWeb3 AI tools/agents.
 
 ## Logos Chatbot
 
-Status: **WIP, local-only** branch `logos-chatbot` (not yet pushed to origin).
+Live: **[logos.staking.citizenweb3.com](https://logos.staking.citizenweb3.com)** · Branch: [`logos-onboarding-assistant`](https://github.com/citizenweb3/ai-integrations/tree/logos-onboarding-assistant)
 
 RAG chatbot for the [Logos](https://logos.co) network. Onboarding assistant for three audiences: end users (network basics, getting started), developers (building on Logos), and validators (running infrastructure). Answers grounded in indexed Logos documentation and ecosystem sources.
 
-**Architecture**: Next.js 16 App Router + Vercel AI SDK (`@ai-sdk/google`, Gemini provider). Drizzle ORM over Postgres for chat logs, sources, chunks. Redis (ioredis) for rate limiting. Background `indexer/` job ingests sources → chunks → embeddings. Services in `src/app/services/`: `chat-log-service`, `chunk-service`, `rate-limit-service`, `source-service`.
+**Architecture**: Next.js 16 App Router + AI SDK v6 (`@ai-sdk/google-vertex`, Gemini provider). Drizzle ORM over Postgres (pgvector) for chat logs, sources, chunks. Redis (ioredis) for caching and rate limiting. Background `indexer/` process ingests sources → chunks → embeddings on a cron schedule. Services in `src/app/services/`: `chat-log-service`, `chunk-service`, `rate-limit-service`, `source-service`, `retrieval-service`, `rerank-service`. Fully containerised via Docker Compose (`app`, `indexer`, `postgres`, `redis`).
+
+**Data sources indexed**: logos.co, build.logos.co, docs.waku.org, press.logos.co, blog.nomos.tech; GitHub orgs `logos-co` and `logos-blockchain`; curated raw GitHub docs (logos-docs, logos-lips, logos-blockchain-specs).
+
+---
+
+## Agent Skills
+
+### Logos Node Skill
+
+Branch: [`logos-node`](https://github.com/citizenweb3/ai-integrations/tree/logos-node)
+
+AI agent skill that lets you install, update, and operate a Logos Blockchain testnet validator node using natural language inside any supported AI agent.
+
+**Commands**:
+
+| Command | Action |
+|---|---|
+| `/logos-node install` | Fresh node installation: binary, circuits, systemd service, faucet |
+| `/logos-node update` | Breaking upgrade: wipe state, re-init, restart with new binary |
+| `/logos-node status` | Check sync mode, peers, block height, wallet balance |
+
+**Install**:
+
+```bash
+npx @citizenweb3/ai-integrations logos-node
+```
+
+**Requirements**: Linux x86_64, glibc ≥ 2.39 (Ubuntu 24.04+ / Debian 12+), ≥ 64 GB free storage, root/sudo.
+
+### AI Integrations CLI (installer)
+
+Branch: [`installer`](https://github.com/citizenweb3/ai-integrations/tree/installer) · npm: [`@citizenweb3/ai-integrations`](https://www.npmjs.com/package/@citizenweb3/ai-integrations)
+
+npm package + CLI that installs Citizen Web3 agent skills into any supported AI coding agent. Auto-detects installed agents and asks before writing to each.
+
+**Supported agents**:
+
+| Agent | Skill path |
+|---|---|
+| Claude Code | `~/.claude/skills/<network>/` |
+| GitHub Copilot | `.agents/skills/<network>/` |
+| Gemini CLI | `.gemini/skills/<network>/` |
+| OpenAI Codex CLI | `.agents/skills/<network>/` |
+| opencode | `.opencode/skills/<network>/` |
+| OpenClaw | `~/.openclaw/skills/<network>/` |
+
+**Available skills**:
+
+| Skill | Status |
+|---|---|
+| `logos-node` | ✅ Available |
+| `darkfi-node` | 🔜 Planned |
+| `genlayer-node` | 🔜 Planned |
 
 ---
 
@@ -110,6 +165,12 @@ Autonomous outbound campaign agent for CitizenWeb3. End-to-end pipeline: prospec
 - **Warm** — agent drafts replies to inbound responses; operator approves via Telegram.
 - **Direct** — operator's manual replies routed through Telegram bot → Resend, thread stays on `partner@citizenweb3.com`.
 - Roadmap: follow-up sequences (5/12/20-day), warm-reply automation, multi-channel (Twitter/TG/Discord/LinkedIn DMs).
+
+---
+
+## License
+
+[MIT](./LICENSE) © Citizen Web3
 
 ---
 
