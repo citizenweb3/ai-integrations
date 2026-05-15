@@ -7,8 +7,10 @@ coverage/
 *.log
 *.tsbuildinfo
 .DS_Store
+.idea/
 .gitnexus/
 .playwright-mcp/
 ticket*-scaffold.png
 data/runtime/
 data/*.db
+secrets/

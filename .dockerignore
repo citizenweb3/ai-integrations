@@ -1,9 +1,17 @@
 .git
 .gitnexus
+.idea
+.playwright-mcp
 .next
 node_modules
 data
+secrets
 coverage
+*.tsbuildinfo
 *.log
+*.png
+*.jpg
+*.jpeg
+*.webp
 .env
 .env*.local

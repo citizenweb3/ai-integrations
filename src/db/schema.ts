@@ -12,7 +12,9 @@ import {
   vector,
 } from 'drizzle-orm/pg-core';
 
-export const LOGOS_EMBEDDING_DIMENSIONS = 768;
+import { LOGOS_EMBEDDING_DIMENSIONS } from '@/lib/constants';
+
+export { LOGOS_EMBEDDING_DIMENSIONS };
 
 const tsvector = customType<{ data: string; driverData: string }>({
   dataType: () => 'tsvector',

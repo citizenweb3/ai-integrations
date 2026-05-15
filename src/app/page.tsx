@@ -1,57 +1,84 @@
-const starterQuestions = [
-  'How do I run a Logos node?',
-  'What is Cryptarchia consensus?',
-  'How does the Logos Execution Zone work?',
-  'How is Waku used in Logos?',
-];
+import type { Metadata } from 'next';
 
-export default function HomePage() {
+import LogosChat from '@/components/chat/logos-chat';
+
+export const metadata: Metadata = {
+  title: 'Logos Onboarding Chatbot | Context-grounded Logos AI assistant',
+  description:
+    'Ask questions about Logos nodes, LIPs, Cryptarchia consensus, Waku messaging, storage, GitHub repositories, and builder documentation with cited source links.',
+  keywords: [
+    'Logos chatbot',
+    'Logos onboarding',
+    'Logos node',
+    'Logos Improvement Proposals',
+    'LIPs',
+    'Cryptarchia consensus',
+    'Waku messaging',
+    'Logos Execution Zone',
+    'Logos developer docs',
+    'Logos GitHub',
+  ],
+  alternates: {
+    canonical: '/',
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+  openGraph: {
+    type: 'website',
+    title: 'Logos Onboarding Chatbot',
+    description:
+      'Context-grounded Logos assistant for node operators, builders, and newcomers. Answers include citations to indexed Logos source material.',
+    url: '/',
+    siteName: 'Logos Onboarding Chatbot',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Logos Onboarding Chatbot',
+    description:
+      'Ask Logos onboarding questions and get cited answers from docs, GitHub repositories, and official web sources.',
+  },
+};
+
+const Page = () => {
   return (
-    <main className="min-h-screen bg-[var(--background)] px-6 py-8 text-[var(--foreground)]">
-      <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col">
-        <header className="flex items-center justify-between border-b border-[var(--panel-border)] pb-5">
-          <div>
-            <p className="text-sm font-medium uppercase tracking-[0.18em] text-[var(--accent)]">Logos</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal">Onboarding Chatbot</h1>
-          </div>
-          <div className="rounded border border-[var(--panel-border)] px-3 py-2 text-sm text-[var(--muted)]">
-            Docker scaffold ready
-          </div>
+    <main className="flex h-dvh flex-col bg-black text-white">
+      <section className="mx-auto flex h-full w-full max-w-[96rem] min-h-0 flex-col px-5 py-5 md:px-8">
+        <header className="flex items-center justify-between border-b border-white/15 pb-4">
+          <a href="https://logos.co" className="text-xl font-bold tracking-[0.12em] hover:no-underline">
+            LOGOS
+          </a>
+          <nav aria-label="Primary" className="flex items-center gap-5 text-sm text-white/65">
+            <a href="https://logos.co" target="_blank" rel="noreferrer">
+              Website
+            </a>
+            <a href="https://build.logos.co" target="_blank" rel="noreferrer">
+              Builders
+            </a>
+            <a href="https://github.com/logos-co" target="_blank" rel="noreferrer">
+              GitHub
+            </a>
+          </nav>
         </header>
 
-        <div className="grid flex-1 gap-6 py-8 lg:grid-cols-[1fr_320px]">
-          <section className="flex min-h-[520px] flex-col rounded border border-[var(--panel-border)] bg-[var(--panel)]">
-            <div className="border-b border-[var(--panel-border)] px-5 py-4">
-              <h2 className="text-lg font-semibold">Chat</h2>
-              <p className="mt-1 text-sm text-[var(--muted)]">
-                The streaming RAG endpoint will replace this placeholder in a later ticket.
-              </p>
-            </div>
-            <div className="flex flex-1 items-center justify-center px-6 text-center text-[var(--muted)]">
-              Ask about Logos nodes, architecture, Waku messaging, LEZ, governance, and docs.
-            </div>
-            <div className="border-t border-[var(--panel-border)] p-4">
-              <div className="h-12 rounded border border-[var(--panel-border)] bg-[#0b1017] px-4 py-3 text-sm text-[var(--muted)]">
-                Composer placeholder
-              </div>
-            </div>
-          </section>
+        <section aria-labelledby="main-heading" className="relative border-b border-white/10 py-4 text-center">
+          <p className="absolute left-0 top-1/2 -translate-y-1/2 text-xs font-semibold uppercase tracking-[0.18em] text-[#2FFBF7]">
+            Context-grounded AI
+          </p>
+          <h1 id="main-heading" className="text-2xl font-bold leading-tight tracking-[0.04em] md:text-3xl">
+            Logos Onboarding Chatbot
+          </h1>
+          <p className="mx-auto mt-2 max-w-3xl text-sm leading-6 text-white/62">
+            Ask about running nodes, LIPs, Cryptarchia consensus, Waku messaging, storage, the Logos Execution Zone, and
+            project repositories with cited source links.
+          </p>
+        </section>
 
-          <aside className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-5">
-            <h2 className="text-base font-semibold">Starter Questions</h2>
-            <div className="mt-4 flex flex-col gap-3">
-              {starterQuestions.map((question) => (
-                <div
-                  key={question}
-                  className="rounded border border-[var(--panel-border)] px-3 py-3 text-sm text-[var(--foreground)]"
-                >
-                  {question}
-                </div>
-              ))}
-            </div>
-          </aside>
-        </div>
+        <LogosChat />
       </section>
     </main>
   );
-}
+};
+
+export default Page;

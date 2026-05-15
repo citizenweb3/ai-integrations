@@ -1,9 +1,10 @@
 FROM node:22-alpine
 
 WORKDIR /app
+ENV YARN_CACHE_FOLDER=/tmp/yarn-cache
 
 COPY package.json yarn.lock* ./
-RUN yarn install --frozen-lockfile
+RUN yarn install --frozen-lockfile && yarn cache clean
 
 COPY . .
 

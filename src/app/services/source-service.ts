@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, like, not, sql } from 'drizzle-orm';
 
 import db from '@/db';
 import { logosSources, type LogosSource, type NewLogosSource } from '@/db/schema';
@@ -68,6 +68,31 @@ const markFetched = async (
     .where(eq(logosSources.id, id));
 };
 
+const markFetchErrorByIdentifier = async (
+  identifier: string,
+  input: Pick<NewLogosSource, 'sourceType' | 'title' | 'url'> & { error: string },
+): Promise<void> => {
+  await db
+    .insert(logosSources)
+    .values({
+      sourceType: input.sourceType,
+      identifier,
+      title: input.title,
+      url: input.url,
+      fetchError: input.error,
+      lastFetchedAt: now(),
+      updatedAt: now(),
+    })
+    .onConflictDoUpdate({
+      target: logosSources.identifier,
+      set: {
+        fetchError: input.error,
+        lastFetchedAt: now(),
+        updatedAt: now(),
+      },
+    });
+};
+
 const countChunks = async (id: number): Promise<number> => {
   const [row] = await db.execute<{ count: string }>(
     sql`SELECT COUNT(*)::text AS count FROM logos_chunks WHERE source_id = ${id}`,
@@ -76,13 +101,28 @@ const countChunks = async (id: number): Promise<number> => {
   return Number(row?.count ?? 0);
 };
 
+const deleteByIdentifiers = async (identifiers: string[]): Promise<void> => {
+  if (identifiers.length === 0) return;
+  await db.delete(logosSources).where(inArray(logosSources.identifier, identifiers));
+};
+
+const deleteByIdentifierPrefixExcept = async (prefix: string, identifiers: string[]): Promise<void> => {
+  if (identifiers.length === 0) return;
+  await db
+    .delete(logosSources)
+    .where(and(like(logosSources.identifier, `${prefix}%`), not(inArray(logosSources.identifier, identifiers))));
+};
+
 const sourceService = {
   list,
   findById,
   findByIdentifier,
   upsert,
   markFetched,
+  markFetchErrorByIdentifier,
   countChunks,
+  deleteByIdentifiers,
+  deleteByIdentifierPrefixExcept,
 };
 
 export default sourceService;

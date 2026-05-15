@@ -1,0 +1,1 @@
+export const LOGOS_EMBEDDING_DIMENSIONS = 768;
