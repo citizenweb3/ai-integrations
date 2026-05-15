@@ -53,7 +53,6 @@ services:
       context: .
       dockerfile: docker/Dockerfile.app
     container_name: logos-chatbot-app
-    command: yarn dev
     security_opt:
       - no-new-privileges:true
     cap_drop:

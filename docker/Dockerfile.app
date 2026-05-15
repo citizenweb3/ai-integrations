@@ -12,6 +12,8 @@ RUN yarn install --frozen-lockfile && yarn cache clean
 
 COPY --chown=node:node . .
 
+RUN yarn build
+
 EXPOSE 3000
 
-CMD ["yarn", "dev"]
+CMD ["yarn", "start"]
