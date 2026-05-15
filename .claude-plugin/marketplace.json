@@ -1,0 +1,16 @@
+{
+  "name": "citizenweb3",
+  "owner": {
+    "name": "CitizenWeb3",
+    "url": "https://github.com/citizenweb3"
+  },
+  "plugins": [
+    {
+      "name": "logos-node",
+      "source": "./plugins/logos-node",
+      "description": "Install, update, or check the status of a Logos Blockchain testnet validator node on Linux x86_64.",
+      "branch": "logos-node",
+      "repository": "https://github.com/citizenweb3/ai-integrations/tree/logos-node"
+    }
+  ]
+}

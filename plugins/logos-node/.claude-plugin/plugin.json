@@ -1,0 +1,8 @@
+{
+  "name": "logos-node",
+  "version": "1.0.0",
+  "description": "Install, update, or check the status of a Logos Blockchain testnet validator node on Linux x86_64.",
+  "homepage": "https://github.com/citizenweb3/ai-integrations/tree/logos-node",
+  "author": "citizenweb3",
+  "category": "infrastructure"
+}
