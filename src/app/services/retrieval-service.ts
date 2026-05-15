@@ -3,6 +3,7 @@ import { generateText } from 'ai';
 import chunkService from '@/app/services/chunk-service';
 import embeddingService from '@/app/services/embedding-service';
 import rerankService, { type RerankedChunk } from '@/app/services/rerank-service';
+import retrievalCacheService from '@/app/services/retrieval-cache-service';
 import { hasVertexConfig, modelConfig } from '@/lib/model-config';
 import { mockEmbedding } from '@/lib/vector';
 import { rewriteLanguageModel } from '@/lib/vertex-provider';
@@ -20,6 +21,8 @@ export type RetrievalStepTimings = {
   embedMs: number;
   searchMs: number;
   rerankMs: number;
+  rewriteCacheHit: boolean;
+  embedCacheHit: boolean;
 };
 
 export type RetrievalResult = {
@@ -30,8 +33,13 @@ export type RetrievalResult = {
   stepTimings: RetrievalStepTimings;
 };
 
-const rewriteQuery = async (query: string, skipRewrite?: boolean): Promise<string> => {
-  if (skipRewrite || !hasVertexConfig()) return query;
+type RewriteOutcome = { rewritten: string; cacheHit: boolean };
+
+const rewriteQuery = async (query: string, skipRewrite?: boolean): Promise<RewriteOutcome> => {
+  if (skipRewrite || !hasVertexConfig()) return { rewritten: query, cacheHit: false };
+
+  const cached = await retrievalCacheService.getRewrite(query);
+  if (cached) return { rewritten: cached, cacheHit: true };
 
   try {
     const result = await generateText({
@@ -40,12 +48,14 @@ const rewriteQuery = async (query: string, skipRewrite?: boolean): Promise<strin
       prompt: `Rewrite this user question as a concise technical search query for Logos documentation. Return only the query.\n\n${query}`,
     });
 
-    return result.text.trim() || query;
+    const rewritten = result.text.trim() || query;
+    void retrievalCacheService.setRewrite(query, rewritten);
+    return { rewritten, cacheHit: false };
   } catch (error) {
     console.warn('[retrieval] query rewrite failed; using original query', {
       error: error instanceof Error ? error.message : String(error),
     });
-    return query;
+    return { rewritten: query, cacheHit: false };
   }
 };
 
@@ -57,20 +67,33 @@ const search = async (query: string, options: SearchOptions = {}): Promise<Retri
   const startedAt = Date.now();
 
   const rewriteStartedAt = Date.now();
-  const rewritten = await rewriteQuery(query, options.skipRewrite);
+  const { rewritten, cacheHit: rewriteCacheHit } = await rewriteQuery(query, options.skipRewrite);
   const rewriteMs = Date.now() - rewriteStartedAt;
 
   const mockRetrievalEmbeddings = shouldUseMockRetrievalEmbeddings();
   const hasExplicitQueryEmbedding = options.queryEmbedding !== undefined;
+  const resolvedEmbeddingModel = mockRetrievalEmbeddings ? 'mock-embedding-768' : modelConfig.embeddingModel;
 
   const embedStartedAt = Date.now();
-  const queryEmbedding =
-    options.queryEmbedding ?? (mockRetrievalEmbeddings ? mockEmbedding(rewritten) : await embeddingService.embedQuery(rewritten));
+  let embedCacheHit = false;
+  let queryEmbedding: number[];
+  if (options.queryEmbedding) {
+    queryEmbedding = options.queryEmbedding;
+  } else if (mockRetrievalEmbeddings) {
+    queryEmbedding = mockEmbedding(rewritten);
+  } else {
+    const cachedEmbedding = await retrievalCacheService.getEmbedding(rewritten, resolvedEmbeddingModel);
+    if (cachedEmbedding) {
+      queryEmbedding = cachedEmbedding;
+      embedCacheHit = true;
+    } else {
+      queryEmbedding = await embeddingService.embedQuery(rewritten);
+      void retrievalCacheService.setEmbedding(rewritten, resolvedEmbeddingModel, queryEmbedding);
+    }
+  }
   const embedMs = hasExplicitQueryEmbedding ? 0 : Date.now() - embedStartedAt;
 
-  const embeddingModel =
-    options.embeddingModel ??
-    (hasExplicitQueryEmbedding ? modelConfig.embeddingModel : mockRetrievalEmbeddings ? 'mock-embedding-768' : modelConfig.embeddingModel);
+  const embeddingModel = options.embeddingModel ?? resolvedEmbeddingModel;
 
   const searchStartedAt = Date.now();
   const candidates = await chunkService.hybridSearch(rewritten, queryEmbedding, 40, embeddingModel);
@@ -89,7 +112,14 @@ const search = async (query: string, options: SearchOptions = {}): Promise<Retri
   const rerankMs = rerankEnabled ? Date.now() - rerankStartedAt : 0;
 
   const retrievalLatencyMs = Date.now() - startedAt;
-  const stepTimings: RetrievalStepTimings = { rewriteMs, embedMs, searchMs, rerankMs };
+  const stepTimings: RetrievalStepTimings = {
+    rewriteMs,
+    embedMs,
+    searchMs,
+    rerankMs,
+    rewriteCacheHit,
+    embedCacheHit,
+  };
 
   console.info(
     JSON.stringify({

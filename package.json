@@ -23,6 +23,7 @@
     "audit:rag": "TSX_DISABLE_IPC=1 DATABASE_URL=${DATABASE_URL:-postgresql://logos:logos@localhost:55433/logos_chatbot} CHAT_API_URL=${CHAT_API_URL:-http://127.0.0.1:3010/api/chat} tsx scripts/rag-audit.ts",
     "rag:wipe": "TSX_DISABLE_IPC=1 DATABASE_URL=${DATABASE_URL:-postgresql://logos:logos@localhost:55433/logos_chatbot} tsx scripts/wipe-rag.ts",
     "rag:verify": "TSX_DISABLE_IPC=1 DATABASE_URL=${DATABASE_URL:-postgresql://logos:logos@localhost:55433/logos_chatbot} tsx scripts/rag-verify.ts",
+    "rag:warm-starter": "TSX_DISABLE_IPC=1 DATABASE_URL=${DATABASE_URL:-postgresql://logos:logos@localhost:55433/logos_chatbot} REDIS_URL=${REDIS_URL:-redis://localhost:56379} tsx scripts/warm-starter-cache.ts",
     "indexer:start": "TSX_DISABLE_IPC=1 tsx indexer/index.ts",
     "indexer:once": "TSX_DISABLE_IPC=1 INDEXER_RUN_ONCE=1 INDEXER_ENABLE_STATIC_SOURCE=${INDEXER_ENABLE_STATIC_SOURCE:-1} INDEXER_MOCK_EMBEDDINGS=${INDEXER_MOCK_EMBEDDINGS:-1} DATABASE_URL=${DATABASE_URL:-postgresql://logos:logos@localhost:55433/logos_chatbot} tsx indexer/index.ts"
   },
