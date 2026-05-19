@@ -54,7 +54,7 @@ Sync this file with every state change. One row per ticket. Update the **state**
 | T-014 | Step 8 critical path: pre-send guardrails depth + audit ordering | merged | codex | local merge | Scoped to Step 8 critical-path subset: campaign paused/closed guardrails, override audit before outbound reservation, deterministic approve idempotency, deferred approve feedback until `outbound_sent`, pending/failed post-approve draft statuses, non-retryable send-failure terminal jobs, and `thread_active_send` semantics. GitNexus MCP unavailable (`Transport closed`); CLI impact could not resolve large `repositories.ts` symbols, so scope was checked manually against approve tx, guardrail engine, worker send completion, shared guardrail schema, and tests. `test:db` now runs with `--test-concurrency=1` because the DB suite shares global state such as `system_state.sends_paused`. Verified with focused T-014 DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
 | T-015 | Step 9 critical path: classifier + attach-inbound + warm dedup | merged | codex | local merge | GitNexus MCP impact unavailable (`Transport closed`); CLI impact resolved `buildGenerateWarmDraftIdempotencyKey` LOW / 0 direct callers / 0 affected processes, while `buildClassifyReplyPrompt` and `attachInboundToThreadCommand` were not indexed as symbols, so repository/test scope was checked manually. Verified with focused T-015 DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
 | T-016 | Telegram `/approve` soft-blocker override flow | merged | codex | local merge | GitNexus MCP unavailable (`Transport closed`); CLI impact could not resolve `processTelegramInboundUpdate`, `approveDraftForSendCommand`, `parseApproveCommand`, or `repositories.ts`, so scope was checked manually against Telegram inbound command flow, approve guardrail result, and focused tests. Verified with focused `approve-draft-trust` DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
-| T-017 | Telegram pool isolation | todo |  |  |  |
+| T-017 | Telegram pool isolation | merged | codex | local merge | GitNexus MCP unavailable (`Transport closed`); CLI impact could not resolve private `enqueueTelegramNotificationJob`, and worker `main` impact returned no usable output. CLI query identified worker `main` and Telegram webhook POST as relevant flows; scope was manually limited to worker pool config, Telegram notification enqueue, Compose service split, docs, and tests. Verified with focused queue/heartbeat watchdog DB tests, `docker compose config`, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
 | T-018 | Event-log retention + cost rollup + nightly suite | todo |  |  |  |
 
 # P3 — UX / scale headroom
@@ -194,9 +194,9 @@ Each section mirrors the acceptance criteria from `TICKETS.md`. Tick boxes as ea
 
 ## T-017 — Telegram pool isolation
 
-- [ ] `telegram` pool present in `WORKER_POOLS` default
-- [ ] `enqueueTelegramNotificationJob` writes `workerPool='telegram'`
-- [ ] Compose service `worker-telegram` runs and reads only the `telegram` pool
+- [x] `telegram` pool present in `WORKER_POOLS` default
+- [x] `enqueueTelegramNotificationJob` writes `workerPool='telegram'`
+- [x] Compose service `worker-telegram` runs and reads only the `telegram` pool
 
 ## T-018 — Event-log retention + cost rollup + nightly suite
 

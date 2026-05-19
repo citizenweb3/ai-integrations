@@ -79,6 +79,39 @@ services:
       retries: 20
       start_period: 10s
 
+  worker-telegram:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    environment:
+      DATABASE_URL: postgres://bizdev:bizdev@postgres:5432/bizdev
+      WORKER_ID: docker-worker-telegram
+      WORKER_POLL_INTERVAL_MS: 1000
+      WORKER_LEASE_SECONDS: 60
+      WORKER_HEARTBEAT_INTERVAL_MS: 5000
+      WORKER_HEALTH_MAX_AGE_SECONDS: 30
+      WORKER_POOLS: telegram
+      AGENT_BASE_URL: http://agent:8000
+      RAG_EMBED_PROVIDER: ${RAG_EMBED_PROVIDER:-stub}
+      VERTEX_PROJECT_ID: ${GOOGLE_CLOUD_PROJECT:-}
+      VERTEX_LOCATION: ${GOOGLE_CLOUD_LOCATION:-us-central1}
+      VERTEX_RAG_EMBED_MODEL: ${VERTEX_RAG_EMBED_MODEL:-text-embedding-004}
+      VERTEX_RAG_EMBED_DIMENSIONS: ${VERTEX_RAG_EMBED_DIMENSIONS:-1536}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/secrets/gcp-sa.json}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    volumes:
+      - ${HOST_GCP_SA_JSON:-/dev/null}:/secrets/gcp-sa.json:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "--import", "tsx", "apps/worker/src/healthcheck.ts"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
   agent:
     build:
       context: .

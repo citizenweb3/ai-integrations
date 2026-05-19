@@ -61,7 +61,7 @@ test("queue depth watchdog uses per-jobType threshold and hourly dedup", async (
     .from(jobs)
     .where(eq(jobs.concurrencyKey, concurrencyKey));
   assert.equal(notificationRows.length, 1);
-  assert.equal(notificationRows[0]?.workerPool, "urgent");
+  assert.equal(notificationRows[0]?.workerPool, "telegram");
   assert.equal(notificationRows[0]?.priority, 95);
   assert.equal(notificationRows[0]?.payloadJson.entityType, "job_queue");
   assert.equal(notificationRows[0]?.payloadJson.entityId, BACKLOG_JOB_TYPE);

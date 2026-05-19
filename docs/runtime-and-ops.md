@@ -4,7 +4,7 @@ End-to-end notes for running the BizDev Outreach MVP locally and in a Docker Com
 
 ## Process topology
 
-Four long-running processes plus one one-shot:
+Five long-running processes plus one one-shot:
 
 | Process | Image / source | Purpose |
 | --- | --- | --- |
@@ -12,9 +12,10 @@ Four long-running processes plus one one-shot:
 | `migrate` | `docker/worker.Dockerfile` (one-shot) | Runs `yarn db:migrate` on boot, blocks `dashboard` + `worker` until `service_completed_successfully`. |
 | `dashboard` | `docker/dashboard.Dockerfile` | Next.js App Router. Operator UI + `POST /api/commands` + `POST /webhooks/resend/events` + `GET /health`. |
 | `worker` | `docker/worker.Dockerfile` | TS leaser. Polls `jobs`, leases by `WORKER_POOLS`, dispatches per-type handler, writes `job_runs` + `event_log`. Owns RAG indexing + retrieval-side embedder. |
+| `worker-telegram` | `docker/worker.Dockerfile` | Dedicated Telegram notification worker. Leases only the `telegram` pool so bot API latency/rate limits do not consume `urgent` send capacity. |
 | `agent` | `docker/agent.Dockerfile` | Python ADK runtime (Vertex Gemini). Worker calls it over HTTP at `AGENT_BASE_URL`. Stages: `research`, `draft_email`, `draft_warm_email`, `revise_draft`, `revalidate_draft_claims`. |
 
-The worker pool string (`urgent,drafting,background`) determines which job classes a given worker leases. Splitting pools across multiple worker processes is supported — the leaser is `FOR UPDATE SKIP LOCKED` on `jobs`, so two workers in the same pool race safely.
+The worker pool string (`urgent,drafting,background,telegram`) determines which job classes a given worker leases. Splitting pools across multiple worker processes is supported — the leaser is `FOR UPDATE SKIP LOCKED` on `jobs`, so two workers in the same pool race safely.
 
 ## Env contract
 
@@ -30,7 +31,7 @@ The worker pool string (`urgent,drafting,background`) determines which job class
 
 ### Worker
 - `WORKER_ID` — distinct per worker process. Rendered in `/operations` heartbeat table. Default `worker-<uuid>` keeps replicas from colliding.
-- `WORKER_POOLS` — comma list of `urgent`, `drafting`, `background`. Job-class → pool mapping lives in `packages/shared/src/index.ts`.
+- `WORKER_POOLS` — comma list of `urgent`, `drafting`, `background`, `telegram`. Job-class → pool mapping lives in `packages/shared/src/index.ts`; `job.send_telegram_notification` is intentionally isolated in `telegram`.
 - `WORKER_POLL_INTERVAL_MS`, `WORKER_LEASE_SECONDS`, `WORKER_HEARTBEAT_INTERVAL_MS`, `WORKER_HEALTH_MAX_AGE_SECONDS` — leasing/heartbeat tuning. Defaults are tuned for local dev; production workloads should bump `WORKER_LEASE_SECONDS` to cover the longest expected stage runtime (currently `draft_warm_email`, ~30s p95).
 
 ### Agent (ADK / Vertex)
