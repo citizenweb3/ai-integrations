@@ -53,7 +53,7 @@ Sync this file with every state change. One row per ticket. Update the **state**
 | T-013 | Step 7 critical path: operator review + claim safety | merged | codex | local merge | Scoped to Step 7 critical-path subset: readiness approval gate, claim resolution, minor-edit validation preservation, non-overridable no-org-context, and discard flow. GitNexus MCP unavailable (`Transport closed`); CLI impact could not resolve large `repositories.ts` symbols, so scope was checked manually against command route/repository/draft-detail flows. Verified with focused T-013 DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
 | T-014 | Step 8 critical path: pre-send guardrails depth + audit ordering | merged | codex | local merge | Scoped to Step 8 critical-path subset: campaign paused/closed guardrails, override audit before outbound reservation, deterministic approve idempotency, deferred approve feedback until `outbound_sent`, pending/failed post-approve draft statuses, non-retryable send-failure terminal jobs, and `thread_active_send` semantics. GitNexus MCP unavailable (`Transport closed`); CLI impact could not resolve large `repositories.ts` symbols, so scope was checked manually against approve tx, guardrail engine, worker send completion, shared guardrail schema, and tests. `test:db` now runs with `--test-concurrency=1` because the DB suite shares global state such as `system_state.sends_paused`. Verified with focused T-014 DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
 | T-015 | Step 9 critical path: classifier + attach-inbound + warm dedup | merged | codex | local merge | GitNexus MCP impact unavailable (`Transport closed`); CLI impact resolved `buildGenerateWarmDraftIdempotencyKey` LOW / 0 direct callers / 0 affected processes, while `buildClassifyReplyPrompt` and `attachInboundToThreadCommand` were not indexed as symbols, so repository/test scope was checked manually. Verified with focused T-015 DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
-| T-016 | Telegram `/approve` soft-blocker override flow | todo |  |  |  |
+| T-016 | Telegram `/approve` soft-blocker override flow | merged | codex | local merge | GitNexus MCP unavailable (`Transport closed`); CLI impact could not resolve `processTelegramInboundUpdate`, `approveDraftForSendCommand`, `parseApproveCommand`, or `repositories.ts`, so scope was checked manually against Telegram inbound command flow, approve guardrail result, and focused tests. Verified with focused `approve-draft-trust` DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
 | T-017 | Telegram pool isolation | todo |  |  |  |
 | T-018 | Event-log retention + cost rollup + nightly suite | todo |  |  |  |
 
@@ -188,9 +188,9 @@ Each section mirrors the acceptance criteria from `TICKETS.md`. Tick boxes as ea
 
 ## T-016 — Telegram `/approve` soft-blocker override flow
 
-- [ ] `/approve` with soft blockers replies with `Soft blockers: <codes>\nReply with /confirm <draftId> <reason>`
-- [ ] `/confirm` re-enters `approveDraftForSendCommand` with `acknowledgedCodes` + `overrideReason`
-- [ ] Same actor + idempotency rules apply
+- [x] `/approve` with soft blockers replies with `Soft blockers: <codes>\nReply with /confirm <draftId> <reason>`
+- [x] `/confirm` re-enters `approveDraftForSendCommand` with `acknowledgedCodes` + `overrideReason`
+- [x] Same actor + idempotency rules apply
 
 ## T-017 — Telegram pool isolation
 

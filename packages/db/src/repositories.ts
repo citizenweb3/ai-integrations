@@ -36,6 +36,7 @@ import {
   type GenerateWarmDraftPayload,
   type MarkClaimResolvedPayload,
   type OutboundMessageStatus,
+  type OverridableGuardrailCode,
   type PauseAllSendsPayload,
   type RecomputeQualityScorePayload,
   type RecordDraftFeedbackPayload,
@@ -1479,7 +1480,7 @@ export type ApproveDraftForSendResult =
       idempotencyKey: string;
       deduplicated: boolean;
     }
-  | { ok: false; failure: PreSendGuardrailFailure };
+  | { ok: false; failure: PreSendGuardrailFailure; failures?: PreSendGuardrailFailure[] };
 
 export async function approveDraftForSendCommand(input: {
   payload: ApproveDraftForSendPayload;
@@ -1665,7 +1666,7 @@ export async function approveDraftForSendCommand(input: {
               }
             });
           }
-          return { ok: false as const, failure: primary };
+          return { ok: false as const, failure: primary, failures: guardrailEvaluation.failures };
         }
 
         // Soft failures only. Allow only if operator acknowledged ALL of
@@ -1701,7 +1702,7 @@ export async function approveDraftForSendCommand(input: {
               }
             });
           }
-          return { ok: false as const, failure: primary };
+          return { ok: false as const, failure: primary, failures: guardrailEvaluation.failures };
         }
 
         // Override accepted — operator acknowledged every soft blocker by
@@ -13342,10 +13343,9 @@ function truncateForTelegram(text: string, max = 500): string {
 // (read-only), and bridge `/snooze`, `/dismiss`, `/resolve` to the existing
 // `applyWorkItemActionCommand` with `commands.source = "telegram"`. The
 // operator-id mapping is supplied by the caller (env-derived allowlist), so
-// the repository stays pure — no env reads here. Approval (`/approve`) is
-// not yet wired since it requires synthesizing the full ApproveDraftForSend
-// payload (recipient/from/subject/body) from draft + contact + campaign;
-// tracked as T3c.
+// the repository stays pure — no env reads here. Approval (`/approve`) uses
+// the same server-resolved payload as the dashboard; `/confirm` is the
+// explicit soft-blocker override path for Telegram.
 //
 // Idempotency: Telegram retries deliveries with the same update_id when the
 // webhook doesn't 200 fast enough. The dedup is enforced by the partial
@@ -13461,7 +13461,8 @@ export async function processTelegramInboundUpdate(input: {
       `/snooze <workItemId> [hours] — snooze a work item (default 24h)\n` +
       `/dismiss <workItemId> — dismiss a work item\n` +
       `/resolve <workItemId> — mark a work item resolved\n` +
-      `/approve <draftId> [version] — approve and send draft (no soft-blocker override; use dashboard for that)\n` +
+      `/approve <draftId> [version] — approve and send draft\n` +
+      `/confirm <draftId> <reason> — confirm soft blockers after /approve asks\n` +
       `(state-change commands require operator allowlist mapping)`;
     await db.transaction(async (tx) => {
       await enqueueTelegramNotificationJob(tx, {
@@ -13501,12 +13502,176 @@ export async function processTelegramInboundUpdate(input: {
     return { kind: "acknowledged", command: "/queue" };
   }
 
-  // /approve <draftId> [version] — single-step send via Telegram. Same
-  // allowlist gate as state-change commands; recipient/from resolved from the
-  // draft + contact rows + dashboard env. Manual-override path is NOT
-  // supported here (soft blockers route the operator back to the dashboard
-  // override panel — chat-typed acknowledgement of N codes by name is a
-  // typo trap and the dashboard already renders the per-code checkbox grid).
+  // /confirm <draftId> <reason> — second step for Telegram soft-blocker
+  // override. It only uses blocker codes captured from a prior /approve by
+  // the same mapped actor in the same chat.
+  if (command === "/confirm") {
+    const confirmation = parseConfirmCommand(args);
+    const actorId = typeof fromId === "number" ? operatorAllowlist.get(fromId) : undefined;
+    if (!actorId) {
+      const reply = `Unauthorized: your Telegram user id is not mapped to an operator.\nContact ops to be added to TELEGRAM_OPERATOR_MAP.`;
+      await db.transaction(async (tx) => {
+        await enqueueTelegramNotificationJob(tx, {
+          text: reply, entityType: "telegram_update", entityId: String(updateId),
+          notificationKey, correlationId: input.correlationId, priority: 80, chatId: chatIdStr
+        });
+        await tx.insert(eventLog).values({
+          eventType: "telegram_command_unauthorized",
+          correlationId: input.correlationId,
+          payloadJson: { updateId, command, fromId: fromId ?? null, chatId: chatIdStr }
+        });
+      });
+      return { kind: "unauthorized", command, telegramUserId: fromId ?? null };
+    }
+    if (!confirmation) {
+      const reply = `Usage: /confirm <draftId> <reason>\nDraft id must be a UUID. Reason must be 10-2000 characters.`;
+      await db.transaction(async (tx) => {
+        await enqueueTelegramNotificationJob(tx, {
+          text: reply, entityType: "telegram_update", entityId: String(updateId),
+          notificationKey, correlationId: input.correlationId, priority: 80, chatId: chatIdStr
+        });
+        await tx.insert(eventLog).values({
+          eventType: "telegram_command_failed",
+          correlationId: input.correlationId,
+          payloadJson: { updateId, command, chatId: chatIdStr, reason: "invalid_arguments" }
+        });
+      });
+      return { kind: "command_failed", command, reason: "invalid_arguments" };
+    }
+
+    const pending = await findPendingTelegramApproveConfirmation({
+      draftId: confirmation.draftId,
+      actorId,
+      chatId: chatIdStr
+    });
+    if (!pending) {
+      const reply = `No pending soft-blocker confirmation for draft ${confirmation.draftId}.\nRun /approve ${confirmation.draftId} first.`;
+      await db.transaction(async (tx) => {
+        await enqueueTelegramNotificationJob(tx, {
+          text: reply, entityType: "telegram_update", entityId: String(updateId),
+          notificationKey, correlationId: input.correlationId, priority: 80, chatId: chatIdStr
+        });
+        await tx.insert(eventLog).values({
+          eventType: "telegram_command_failed",
+          correlationId: input.correlationId,
+          payloadJson: {
+            updateId, command, chatId: chatIdStr, draftId: confirmation.draftId,
+            actorId, reason: "no_pending_confirmation"
+          }
+        });
+      });
+      return { kind: "command_failed", command, reason: "no_pending_confirmation" };
+    }
+
+    const fromEmailValue = input.defaultFromEmail?.trim();
+    if (!fromEmailValue) {
+      const reply = `Cannot send: TELEGRAM_DEFAULT_FROM_EMAIL (or RESEND_FROM_EMAIL) is not configured on the dashboard.`;
+      await db.transaction(async (tx) => {
+        await enqueueTelegramNotificationJob(tx, {
+          text: reply, entityType: "telegram_update", entityId: String(updateId),
+          notificationKey, correlationId: input.correlationId, priority: 80, chatId: chatIdStr
+        });
+        await tx.insert(eventLog).values({
+          eventType: "telegram_command_failed",
+          correlationId: input.correlationId,
+          payloadJson: { updateId, command, chatId: chatIdStr, draftId: confirmation.draftId, reason: "from_email_not_configured" }
+        });
+      });
+      return { kind: "command_failed", command, reason: "from_email_not_configured" };
+    }
+
+    const idempotencyKey = `approve_draft:telegram_confirm:${actorId}:${updateId}`;
+    // The first failed /approve creates a policy_blocker work item, which can
+    // make readiness `blocked_by_policy` on the confirm pass. It is the same
+    // operator-confirmed blocker, so include that derived soft code too.
+    const acknowledgedCodes = uniqueOverridableCodes([
+      ...pending.softFailureCodes.map((code) => ({ code, message: "" } as PreSendGuardrailFailure)),
+      { code: "autosend_readiness_blocked_by_policy", message: "" }
+    ]);
+    try {
+      const result = await approveDraftForSendCommand({
+        actorId,
+        source: "telegram",
+        fromEmail: fromEmailValue.toLowerCase(),
+        idempotencyKey,
+        payload: {
+          draftId: confirmation.draftId,
+          draftVersion: pending.draftVersion,
+          manualOverride: {
+            acknowledgedCodes,
+            reason: confirmation.reason
+          }
+        }
+      });
+
+      if (result.ok) {
+        const replyLines = [
+          `✅ Confirmed and approved draft ${confirmation.draftId} v${pending.draftVersion}`,
+          `soft blockers: ${pending.softFailureCodes.join(", ")}`,
+          `outbound: ${result.outboundMessageId}`,
+          result.deduplicated ? `(deduplicated)` : null
+        ].filter(Boolean);
+        await db.transaction(async (tx) => {
+          await enqueueTelegramNotificationJob(tx, {
+            text: replyLines.join("\n"), entityType: "telegram_update", entityId: String(updateId),
+            notificationKey, correlationId: input.correlationId, priority: 80, chatId: chatIdStr
+          });
+          await tx.insert(eventLog).values({
+            eventType: "telegram_command_acknowledged",
+            correlationId: input.correlationId,
+            payloadJson: {
+              updateId, command, chatId: chatIdStr, draftId: confirmation.draftId,
+              draftVersion: pending.draftVersion, actorId,
+              confirmedApproveUpdateId: pending.updateId,
+              acknowledgedCodes,
+              outboundMessageId: result.outboundMessageId,
+              commandId: result.command.id,
+              deduplicated: result.deduplicated
+            }
+          });
+        });
+        return { kind: "acknowledged", command };
+      }
+
+      const reply = `❌ Confirm rejected: ${result.failure.code}\n${truncateForTelegram(result.failure.message, 300)}`;
+      await db.transaction(async (tx) => {
+        await enqueueTelegramNotificationJob(tx, {
+          text: reply, entityType: "telegram_update", entityId: String(updateId),
+          notificationKey, correlationId: input.correlationId, priority: 80, chatId: chatIdStr
+        });
+        await tx.insert(eventLog).values({
+          eventType: "telegram_command_failed",
+          correlationId: input.correlationId,
+          payloadJson: {
+            updateId, command, chatId: chatIdStr, draftId: confirmation.draftId,
+            draftVersion: pending.draftVersion, actorId,
+            acknowledgedCodes,
+            reason: result.failure.code,
+            failureMessage: truncateForTelegram(result.failure.message, 500)
+          }
+        });
+      });
+      return { kind: "command_failed", command, reason: result.failure.code };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const reply = `Command failed: ${command}\n${truncateForTelegram(reason, 300)}`;
+      await db.transaction(async (tx) => {
+        await enqueueTelegramNotificationJob(tx, {
+          text: reply, entityType: "telegram_update", entityId: String(updateId),
+          notificationKey, correlationId: input.correlationId, priority: 80, chatId: chatIdStr
+        });
+        await tx.insert(eventLog).values({
+          eventType: "telegram_command_failed",
+          correlationId: input.correlationId,
+          payloadJson: { updateId, command, chatId: chatIdStr, draftId: confirmation.draftId, reason }
+        });
+      });
+      return { kind: "command_failed", command, reason };
+    }
+  }
+
+  // /approve <draftId> [version] — first step. Hard blockers fail; soft
+  // blockers prompt the same actor to reply with /confirm and a reason.
   if (command === "/approve") {
     const approve = parseApproveCommand(args);
     const actorId = typeof fromId === "number" ? operatorAllowlist.get(fromId) : undefined;
@@ -13662,11 +13827,44 @@ export async function processTelegramInboundUpdate(input: {
         return { kind: "acknowledged", command };
       }
 
-      const isHardBlocker = (nonOverridableGuardrailCodes as readonly string[]).includes(result.failure.code);
-      const guidance = isHardBlocker
-        ? `Hard blocker — must be cleared at the source (no operator override path).`
-        : `Use the dashboard override panel to acknowledge soft blockers + supply a written reason.`;
-      const reply = `❌ Approve rejected: ${result.failure.code}\n${truncateForTelegram(result.failure.message, 300)}\n${guidance}`;
+      const failureList = result.failures ?? [result.failure];
+      const hardFailures = failureList.filter((failure) =>
+        (nonOverridableGuardrailCodes as readonly string[]).includes(failure.code)
+      );
+      const softFailureCodes = uniqueOverridableCodes(failureList);
+      if (hardFailures.length === 0 && softFailureCodes.length > 0) {
+        const reply =
+          `Soft blockers: ${softFailureCodes.join(", ")}\n` +
+          `Reply with /confirm ${draft.id} <reason>\n` +
+          `${truncateForTelegram(result.failure.message, 300)}`;
+        await db.transaction(async (tx) => {
+          await enqueueTelegramNotificationJob(tx, {
+            text: reply, entityType: "telegram_update", entityId: String(updateId),
+            notificationKey, correlationId: input.correlationId, priority: 80, chatId: chatIdStr
+          });
+          await tx.insert(eventLog).values({
+            eventType: "telegram_command_failed",
+            correlationId: input.correlationId,
+            payloadJson: {
+              updateId, command, chatId: chatIdStr, draftId: draft.id, draftVersion,
+              actorId,
+              reason: "soft_blockers_pending_confirmation",
+              softFailureCodes,
+              failureMessage: truncateForTelegram(result.failure.message, 500),
+              failures: failureList.map((failure) => ({
+                code: failure.code,
+                message: failure.message,
+                metadata: failure.metadata
+              })),
+              requiresConfirm: true
+            }
+          });
+        });
+        return { kind: "command_failed", command, reason: "soft_blockers_pending_confirmation" };
+      }
+
+      const primaryHardFailure = hardFailures[0] ?? result.failure;
+      const reply = `❌ Approve rejected: ${primaryHardFailure.code}\n${truncateForTelegram(primaryHardFailure.message, 300)}\nHard blocker — must be cleared at the source (no operator override path).`;
       await db.transaction(async (tx) => {
         await enqueueTelegramNotificationJob(tx, {
           text: reply, entityType: "telegram_update", entityId: String(updateId),
@@ -13677,12 +13875,14 @@ export async function processTelegramInboundUpdate(input: {
           correlationId: input.correlationId,
           payloadJson: {
             updateId, command, chatId: chatIdStr, draftId: draft.id, draftVersion,
-            reason: result.failure.code,
-            failureMessage: truncateForTelegram(result.failure.message, 500)
+            actorId,
+            reason: primaryHardFailure.code,
+            failureCodes: failureList.map((failure) => failure.code),
+            failureMessage: truncateForTelegram(primaryHardFailure.message, 500)
           }
         });
       });
-      return { kind: "command_failed", command, reason: result.failure.code };
+      return { kind: "command_failed", command, reason: primaryHardFailure.code };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       const reply = `Command failed: ${command}\n${truncateForTelegram(reason, 300)}`;
@@ -13790,6 +13990,64 @@ export async function processTelegramInboundUpdate(input: {
 
 const uuidPatternForTelegram = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function uniqueOverridableCodes(failures: PreSendGuardrailFailure[]): OverridableGuardrailCode[] {
+  const valid = new Set<string>(overridableGuardrailCodes);
+  const seen = new Set<string>();
+  const codes: OverridableGuardrailCode[] = [];
+  for (const failure of failures) {
+    if (!valid.has(failure.code) || seen.has(failure.code)) continue;
+    seen.add(failure.code);
+    codes.push(failure.code as OverridableGuardrailCode);
+  }
+  return codes;
+}
+
+async function findPendingTelegramApproveConfirmation(input: {
+  draftId: string;
+  actorId: string;
+  chatId: string;
+}): Promise<{
+  draftVersion: number;
+  softFailureCodes: OverridableGuardrailCode[];
+  updateId: number | null;
+} | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({ payloadJson: eventLog.payloadJson })
+    .from(eventLog)
+    .where(sql`
+      ${eventLog.eventType} = 'telegram_command_failed'
+      and ${eventLog.payloadJson}->>'command' = '/approve'
+      and ${eventLog.payloadJson}->>'draftId' = ${input.draftId}
+      and ${eventLog.payloadJson}->>'actorId' = ${input.actorId}
+      and ${eventLog.payloadJson}->>'chatId' = ${input.chatId}
+      and ${eventLog.payloadJson}->>'requiresConfirm' = 'true'
+    `)
+    .orderBy(desc(eventLog.createdAt))
+    .limit(1);
+  if (!row) return null;
+
+  const draftVersion = typeof row.payloadJson["draftVersion"] === "number"
+    ? row.payloadJson["draftVersion"]
+    : Number.parseInt(String(row.payloadJson["draftVersion"] ?? ""), 10);
+  if (!Number.isFinite(draftVersion) || draftVersion <= 0) return null;
+
+  const softFailureCodesRaw = row.payloadJson["softFailureCodes"];
+  if (!Array.isArray(softFailureCodesRaw)) return null;
+  const softFailureCodes = uniqueOverridableCodes(
+    softFailureCodesRaw
+      .filter((code): code is string => typeof code === "string")
+      .map((code) => ({ code, message: "" } as PreSendGuardrailFailure))
+  );
+  if (softFailureCodes.length === 0) return null;
+
+  const updateId = typeof row.payloadJson["updateId"] === "number"
+    ? row.payloadJson["updateId"]
+    : null;
+
+  return { draftVersion, softFailureCodes, updateId };
+}
+
 function parseStateChangeCommand(
   command: string,
   args: string[]
@@ -13816,6 +14074,14 @@ function parseApproveCommand(args: string[]): { draftId: string; expectedVersion
   const version = Number.parseInt(versionRaw, 10);
   if (!Number.isFinite(version) || version <= 0) return null;
   return { draftId, expectedVersion: version };
+}
+
+function parseConfirmCommand(args: string[]): { draftId: string; reason: string } | null {
+  const draftId = args[0]?.trim();
+  if (!draftId || !uuidPatternForTelegram.test(draftId)) return null;
+  const reason = args.slice(1).join(" ").trim();
+  if (reason.length < 10 || reason.length > 2000) return null;
+  return { draftId, reason };
 }
 
 // =============================================================================
