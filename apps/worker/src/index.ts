@@ -53,7 +53,7 @@ const workerId = process.env.WORKER_ID ?? `worker-${randomUUID()}`;
 const pollIntervalMs = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 1000);
 const leaseSeconds = Number(process.env.WORKER_LEASE_SECONDS ?? 60);
 const heartbeatIntervalMs = Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS ?? 5000);
-const workerPools = (process.env.WORKER_POOLS ?? "urgent,drafting,background")
+const workerPools = (process.env.WORKER_POOLS ?? "urgent,drafting,background,telegram")
   .split(",")
   .map((pool) => pool.trim())
   .filter(Boolean);

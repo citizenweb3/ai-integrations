@@ -13185,7 +13185,7 @@ async function createWorkItem(
 }
 
 // Side-channel notification trigger. Inserts a `job.send_telegram_notification`
-// row into the urgent pool. The worker handler dedup-skips when the bot
+// row into the dedicated telegram pool. The worker handler dedup-skips when the bot
 // is unconfigured (clean local-dev / CI behavior). Source-side dedup is
 // the caller's responsibility — typically the work-item dedupeKey or
 // the dead-letter event already runs once per source, so we don't add
@@ -13205,7 +13205,7 @@ async function enqueueTelegramNotificationJob(
   await tx.insert(jobs).values({
     jobType: "job.send_telegram_notification",
     status: "queued",
-    workerPool: "urgent",
+    workerPool: "telegram",
     priority: input.priority ?? 80,
     payloadJson: {
       text: input.text,

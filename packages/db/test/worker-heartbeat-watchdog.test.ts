@@ -58,7 +58,7 @@ test("worker heartbeat watchdog emits one event and one telegram job per worker 
     .from(jobs)
     .where(eq(jobs.concurrencyKey, concurrencyKey));
   assert.equal(notificationRows.length, 1);
-  assert.equal(notificationRows[0]?.workerPool, "urgent");
+  assert.equal(notificationRows[0]?.workerPool, "telegram");
   assert.equal(notificationRows[0]?.priority, 95);
   assert.equal(notificationRows[0]?.payloadJson.entityType, "worker_heartbeat");
   assert.equal(notificationRows[0]?.payloadJson.entityId, staleWorkerId);
