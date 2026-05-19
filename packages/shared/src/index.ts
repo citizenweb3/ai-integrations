@@ -157,9 +157,12 @@ export const jobTypes = [
   "job.recompute_readiness_label",
   "job.send_email",
   "job.send_telegram_notification",
+  "job.resurface_policy_states",
   "job.cron_recover_stale_jobs",
   "job.cron_worker_heartbeat_watchdog",
   "job.cron_queue_depth_watchdog",
+  "job.cron_rotate_event_log",
+  "job.cron_rollup_agent_costs",
   "job.run_campaign_discovery"
 ] as const;
 
@@ -188,6 +191,9 @@ export const eventTypes = [
   "stale_jobs_recovered",
   "worker_unhealthy",
   "queue_backlog_detected",
+  "event_log_rotated",
+  "agent_costs_rolled_up",
+  "agent_cost_spike",
   "webhook_event_received",
   "webhook_event_duplicate_ignored",
   "webhook_event_queued_for_processing",
@@ -266,6 +272,15 @@ export const eventTypes = [
   "discovery_candidate_auto_linked",
   "organization_dedupe_review_needed"
 ] as const;
+
+export const agentTokenUsageSchema = z.object({
+  promptTokens: z.number().int().min(0).default(0),
+  completionTokens: z.number().int().min(0).default(0),
+  totalTokens: z.number().int().min(0).default(0),
+  modelId: z.string().trim().min(1).max(200),
+  costUsd: z.number().min(0).optional(),
+  latencyMs: z.number().int().min(0).optional()
+}).strict();
 
 // Per canonical §11.657-662 + §12.710-713: cold (campaign outreach) and warm
 // (in-thread reply) drafts have different policy buckets and operator flows;
@@ -1099,6 +1114,7 @@ export type OperatorCommandType = (typeof operatorCommandTypes)[number];
 export type JobType = (typeof jobTypes)[number];
 export type JobStatus = (typeof jobStatuses)[number];
 export type EventType = (typeof eventTypes)[number];
+export type AgentTokenUsage = z.infer<typeof agentTokenUsageSchema>;
 export type WorkItemAction = (typeof workItemActions)[number];
 export type OutboundMessageStatus = (typeof outboundMessageStatuses)[number];
 export type SuppressionReason = (typeof suppressionReasons)[number];
@@ -1447,6 +1463,8 @@ const jobTypeToClass: Record<string, JobClass> = {
   "job.cron_recover_stale_jobs": "C_internal",
   "job.cron_worker_heartbeat_watchdog": "C_internal",
   "job.cron_queue_depth_watchdog": "C_internal",
+  "job.cron_rotate_event_log": "C_internal",
+  "job.cron_rollup_agent_costs": "C_internal",
   "job.resurface_policy_states": "C_internal",
   "job.run_campaign_discovery": "B_external_compute"
 };

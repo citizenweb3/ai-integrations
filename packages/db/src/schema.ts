@@ -4,6 +4,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   text,
@@ -403,6 +404,23 @@ export const eventLog = pgTable("event_log", {
   correlationIdx: index("event_log_correlation_idx").on(table.correlationId)
 }));
 
+export const eventLogArchive = pgTable("event_log_archive", {
+  id: uuid("id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  entityType: text("entity_type"),
+  entityId: uuid("entity_id"),
+  commandId: uuid("command_id"),
+  jobId: uuid("job_id"),
+  correlationId: uuid("correlation_id").notNull(),
+  payloadJson: jsonb("payload_json").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => ({
+  entityIdx: index("event_log_archive_entity_idx").on(table.entityType, table.entityId),
+  correlationIdx: index("event_log_archive_correlation_idx").on(table.correlationId),
+  createdAtIdx: index("event_log_archive_created_at_idx").on(table.createdAt)
+}));
+
 export const systemState = pgTable("system_state", {
   key: text("key").primaryKey(),
   valueJson: jsonb("value").$type<Record<string, unknown>>().notNull().default({}),
@@ -486,10 +504,29 @@ export const agentRuns = pgTable("agent_runs", {
   status: agentRunStatus("status").notNull().default("queued"),
   jobId: uuid("job_id").references(() => jobs.id),
   inputSnapshotJson: jsonb("input_snapshot_json").$type<Record<string, unknown>>().notNull().default({}),
+  tokenUsageJson: jsonb("token_usage_json").$type<Record<string, unknown>>().notNull().default({}),
   outputJson: jsonb("output_json").$type<Record<string, unknown>>(),
   createdAt: createdAt(),
   updatedAt: updatedAt()
 });
+
+export const agentCostDaily = pgTable("agent_cost_daily", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  usageDay: timestamp("usage_day", { withTimezone: true }).notNull(),
+  stage: text("stage").notNull(),
+  campaignId: uuid("campaign_id").references(() => campaigns.id),
+  promptTokens: integer("prompt_tokens").notNull().default(0),
+  completionTokens: integer("completion_tokens").notNull().default(0),
+  totalTokens: integer("total_tokens").notNull().default(0),
+  estimatedUsd: numeric("estimated_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+  runCount: integer("run_count").notNull().default(0),
+  createdAt: createdAt(),
+  updatedAt: updatedAt()
+}, (table) => ({
+  usageDayIdx: index("agent_cost_daily_usage_day_idx").on(table.usageDay),
+  stageIdx: index("agent_cost_daily_stage_idx").on(table.stage, table.usageDay),
+  campaignIdx: index("agent_cost_daily_campaign_idx").on(table.campaignId, table.usageDay)
+}));
 
 export const agentRunEvents = pgTable("agent_run_events", {
   id: uuid("id").primaryKey().defaultRandom(),

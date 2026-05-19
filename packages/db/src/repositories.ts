@@ -66,14 +66,17 @@ import {
   type ReplyClass,
   type ReplyClassConfidence,
   type DedupeResult,
-  type DiscoveryCandidateStatus
+  type DiscoveryCandidateStatus,
+  agentTokenUsageSchema,
+  type AgentTokenUsage
 } from "@bizdev/shared";
 import { dedupeOrganization, type DedupeDb } from "./dedupe";
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "./client";
 import { getSchemaCompatibility, type SchemaCompatibilitySnapshot } from "./schema-compatibility";
 import {
+  agentCostDaily,
   agentRunArtifacts,
   agentRunEvents,
   agentRuns,
@@ -91,6 +94,7 @@ import {
   draftFeedback,
   draftVersions,
   organizations,
+  eventLogArchive,
   outboundMessages,
   outreachRecords,
   policyStateEntries,
@@ -14205,6 +14209,18 @@ const WORKER_HEARTBEAT_WATCHDOG_DEFAULT_INTERVAL_SECONDS = 60;
 const QUEUE_DEPTH_WATCHDOG_JOB_TYPE = "job.cron_queue_depth_watchdog";
 const QUEUE_DEPTH_WATCHDOG_CONCURRENCY_KEY = "cron_queue_depth_watchdog:singleton";
 const QUEUE_DEPTH_WATCHDOG_DEFAULT_INTERVAL_SECONDS = 300;
+const ROTATE_EVENT_LOG_CRON_TYPE = "job.cron_rotate_event_log";
+const ROTATE_EVENT_LOG_CONCURRENCY_KEY = "cron_rotate_event_log:singleton";
+const ROTATE_EVENT_LOG_DEFAULT_INTERVAL_SECONDS = 24 * 60 * 60;
+const ROTATE_EVENT_LOG_DEFAULT_RETENTION_DAYS = 90;
+const ROTATE_EVENT_LOG_DEFAULT_BATCH_SIZE = 10_000;
+const ROLLUP_AGENT_COSTS_CRON_TYPE = "job.cron_rollup_agent_costs";
+const ROLLUP_AGENT_COSTS_CONCURRENCY_KEY = "cron_rollup_agent_costs:singleton";
+const ROLLUP_AGENT_COSTS_DEFAULT_INTERVAL_SECONDS = 24 * 60 * 60;
+const AGENT_COST_SPIKE_DEFAULT_LOOKBACK_DAYS = 7;
+const AGENT_COST_SPIKE_DEFAULT_MULTIPLIER = 3;
+const DEFAULT_PROMPT_TOKEN_COST_USD = 0.00000015;
+const DEFAULT_COMPLETION_TOKEN_COST_USD = 0.0000006;
 
 function minuteBucketRange(date: Date): { start: Date; end: Date } {
   const start = new Date(date);
@@ -14396,6 +14412,525 @@ export async function completeQueueDepthWatchdogJob(input: {
     availableAt: new Date(Date.now() + intervalSeconds * 1000)
   });
   return result;
+}
+
+export type RotateEventLogResult = {
+  cutoff: string;
+  archivedRows: number;
+  policyReferencesCleared: number;
+};
+
+export async function rotateEventLog(input: {
+  now?: Date;
+  retentionDays?: number;
+  batchSize?: number;
+  correlationId?: string;
+} = {}): Promise<RotateEventLogResult> {
+  const db = getDb();
+  const now = input.now ?? new Date();
+  const retentionDays = input.retentionDays ?? ROTATE_EVENT_LOG_DEFAULT_RETENTION_DAYS;
+  const batchSize = input.batchSize ?? ROTATE_EVENT_LOG_DEFAULT_BATCH_SIZE;
+  const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60_000);
+  const archivedAt = new Date(now);
+  const correlationId = input.correlationId ?? randomUUID();
+
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        id: eventLog.id,
+        eventType: eventLog.eventType,
+        entityType: eventLog.entityType,
+        entityId: eventLog.entityId,
+        commandId: eventLog.commandId,
+        jobId: eventLog.jobId,
+        correlationId: eventLog.correlationId,
+        payloadJson: eventLog.payloadJson,
+        createdAt: eventLog.createdAt
+      })
+      .from(eventLog)
+      .where(lt(eventLog.createdAt, cutoff))
+      .orderBy(asc(eventLog.createdAt))
+      .limit(batchSize);
+
+    if (rows.length === 0) {
+      await tx.insert(eventLog).values({
+        eventType: "event_log_rotated",
+        entityType: "system_state",
+        correlationId,
+        payloadJson: {
+          cutoff: cutoff.toISOString(),
+          retentionDays,
+          archivedRows: 0,
+          policyReferencesCleared: 0
+        }
+      });
+      return {
+        cutoff: cutoff.toISOString(),
+        archivedRows: 0,
+        policyReferencesCleared: 0
+      };
+    }
+
+    await tx
+      .insert(eventLogArchive)
+      .values(rows.map((row) => ({
+        id: row.id,
+        eventType: row.eventType,
+        entityType: row.entityType,
+        entityId: row.entityId,
+        commandId: row.commandId,
+        jobId: row.jobId,
+        correlationId: row.correlationId,
+        payloadJson: row.payloadJson,
+        createdAt: row.createdAt,
+        archivedAt
+      })))
+      .onConflictDoNothing();
+
+    const ids = rows.map((row) => row.id);
+    const referencedRows = await tx
+      .select({ id: policyStateEntries.id })
+      .from(policyStateEntries)
+      .where(inArray(policyStateEntries.sourceEventId, ids));
+    const policyReferencesCleared = referencedRows.length;
+    if (policyReferencesCleared > 0) {
+      await tx
+        .update(policyStateEntries)
+        .set({ sourceEventId: null, updatedAt: archivedAt })
+        .where(inArray(policyStateEntries.sourceEventId, ids));
+    }
+
+    await tx.delete(eventLog).where(inArray(eventLog.id, ids));
+    await tx.insert(eventLog).values({
+      eventType: "event_log_rotated",
+      entityType: "system_state",
+      correlationId,
+      payloadJson: {
+        cutoff: cutoff.toISOString(),
+        retentionDays,
+        archivedRows: rows.length,
+        policyReferencesCleared
+      }
+    });
+
+    return {
+      cutoff: cutoff.toISOString(),
+      archivedRows: rows.length,
+      policyReferencesCleared
+    };
+  });
+}
+
+export type AgentCostRollupGroup = {
+  usageDay: string;
+  stage: string;
+  campaignId: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  estimatedUsd: number;
+  runCount: number;
+};
+
+export type RollupAgentCostsResult = {
+  usageDay: string;
+  rolledUpRows: number;
+  totalEstimatedUsd: number;
+  spikeAlerts: number;
+  groups: AgentCostRollupGroup[];
+};
+
+export async function rollupAgentCosts(input: {
+  usageDay?: Date;
+  now?: Date;
+  lookbackDays?: number;
+  spikeMultiplier?: number;
+  correlationId?: string;
+} = {}): Promise<RollupAgentCostsResult> {
+  const db = getDb();
+  const usageDay = startOfUtcDay(input.usageDay ?? new Date((input.now ?? new Date()).getTime() - 24 * 60 * 60_000));
+  const nextDay = addDaysUtc(usageDay, 1);
+  const lookbackDays = input.lookbackDays ?? AGENT_COST_SPIKE_DEFAULT_LOOKBACK_DAYS;
+  const spikeMultiplier = input.spikeMultiplier ?? AGENT_COST_SPIKE_DEFAULT_MULTIPLIER;
+  const correlationId = input.correlationId ?? randomUUID();
+
+  const runRows = await db
+    .select({
+      stage: agentRuns.stage,
+      inputSnapshotJson: agentRuns.inputSnapshotJson,
+      outputJson: agentRuns.outputJson,
+      tokenUsageJson: agentRuns.tokenUsageJson
+    })
+    .from(agentRuns)
+    .where(and(
+      gte(agentRuns.createdAt, usageDay),
+      lt(agentRuns.createdAt, nextDay)
+    ));
+
+  const groupsByKey = new Map<string, AgentCostRollupGroup>();
+  for (const row of runRows) {
+    const usage = normalizeAgentTokenUsage(row.tokenUsageJson)
+      ?? normalizeAgentTokenUsage((row.outputJson as JsonRecord | null)?.["tokenUsageJson"]);
+    if (!usage) continue;
+
+    const campaignId = readCampaignId(row.inputSnapshotJson)
+      ?? readCampaignId(row.outputJson as JsonRecord | null);
+    const key = agentCostGroupKey(row.stage, campaignId);
+    const existing = groupsByKey.get(key) ?? {
+      usageDay: usageDay.toISOString(),
+      stage: row.stage,
+      campaignId,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      estimatedUsd: 0,
+      runCount: 0
+    };
+    existing.promptTokens += usage.promptTokens;
+    existing.completionTokens += usage.completionTokens;
+    existing.totalTokens += usage.totalTokens;
+    existing.estimatedUsd += estimateAgentRunCostUsd(usage);
+    existing.runCount += 1;
+    groupsByKey.set(key, existing);
+  }
+
+  const groups = [...groupsByKey.values()]
+    .sort((a, b) => a.stage.localeCompare(b.stage) || (a.campaignId ?? "").localeCompare(b.campaignId ?? ""));
+  const totalEstimatedUsd = groups.reduce((sum, group) => sum + group.estimatedUsd, 0);
+
+  return db.transaction(async (tx) => {
+    const priorRows = await tx
+      .select({
+        stage: agentCostDaily.stage,
+        campaignId: agentCostDaily.campaignId,
+        estimatedUsd: agentCostDaily.estimatedUsd
+      })
+      .from(agentCostDaily)
+      .where(and(
+        gte(agentCostDaily.usageDay, addDaysUtc(usageDay, -lookbackDays)),
+        lt(agentCostDaily.usageDay, usageDay)
+      ));
+    const priorAverages = averagePriorCosts(priorRows);
+
+    await tx.delete(agentCostDaily).where(eq(agentCostDaily.usageDay, usageDay));
+    if (groups.length > 0) {
+      await tx.insert(agentCostDaily).values(groups.map((group) => ({
+        usageDay,
+        stage: group.stage,
+        campaignId: group.campaignId,
+        promptTokens: group.promptTokens,
+        completionTokens: group.completionTokens,
+        totalTokens: group.totalTokens,
+        estimatedUsd: formatUsd(group.estimatedUsd),
+        runCount: group.runCount,
+        updatedAt: new Date()
+      })));
+    }
+
+    await tx.insert(eventLog).values({
+      eventType: "agent_costs_rolled_up",
+      entityType: "system_state",
+      correlationId,
+      payloadJson: {
+        usageDay: usageDay.toISOString(),
+        rolledUpRows: groups.length,
+        totalEstimatedUsd: Number(formatUsd(totalEstimatedUsd))
+      }
+    });
+
+    let spikeAlerts = 0;
+    for (const group of groups) {
+      const priorAverageUsd = priorAverages.get(agentCostGroupKey(group.stage, group.campaignId)) ?? 0;
+      if (priorAverageUsd <= 0 || group.estimatedUsd <= priorAverageUsd * spikeMultiplier) {
+        continue;
+      }
+
+      const dayKey = usageDay.toISOString().slice(0, 10);
+      const notificationKey = `agent_cost_spike:${group.stage}:${group.campaignId ?? "none"}:${dayKey}`;
+      if (await telegramNotificationJobExists(tx, notificationKey)) {
+        continue;
+      }
+
+      await tx.insert(eventLog).values({
+        eventType: "agent_cost_spike",
+        entityType: group.campaignId ? "campaign" : "system_state",
+        ...(group.campaignId ? { entityId: group.campaignId } : {}),
+        correlationId,
+        payloadJson: {
+          usageDay: usageDay.toISOString(),
+          stage: group.stage,
+          campaignId: group.campaignId,
+          estimatedUsd: Number(formatUsd(group.estimatedUsd)),
+          previousAverageUsd: Number(formatUsd(priorAverageUsd)),
+          spikeMultiplier
+        }
+      });
+      await enqueueTelegramNotificationJob(tx, {
+        text: [
+          "Agent cost spike detected",
+          `stage=${group.stage}`,
+          `date=${dayKey}`,
+          `estimatedUsd=${formatUsd(group.estimatedUsd)}`,
+          `7dAvgUsd=${formatUsd(priorAverageUsd)}`
+        ].join(" "),
+        entityType: "agent_cost_daily",
+        entityId: group.campaignId ?? group.stage,
+        notificationKey,
+        correlationId,
+        priority: 90
+      });
+      spikeAlerts += 1;
+    }
+
+    return {
+      usageDay: usageDay.toISOString(),
+      rolledUpRows: groups.length,
+      totalEstimatedUsd: Number(formatUsd(totalEstimatedUsd)),
+      spikeAlerts,
+      groups
+    };
+  });
+}
+
+export async function ensureRotateEventLogCronScheduled(input: {
+  availableAt?: Date;
+  intervalSeconds?: number;
+  retentionDays?: number;
+  batchSize?: number;
+} = {}): Promise<{ enqueued: boolean; jobId: string | null }> {
+  const db = getDb();
+  const intervalSeconds = input.intervalSeconds ?? ROTATE_EVENT_LOG_DEFAULT_INTERVAL_SECONDS;
+  const availableAt = input.availableAt ?? new Date(Date.now() + intervalSeconds * 1000);
+  const bucket = intervalBucketRange(availableAt, intervalSeconds);
+  const retentionDays = input.retentionDays ?? ROTATE_EVENT_LOG_DEFAULT_RETENTION_DAYS;
+  const batchSize = input.batchSize ?? ROTATE_EVENT_LOG_DEFAULT_BATCH_SIZE;
+
+  return db.transaction(async (tx) => {
+    const existingRows = await tx
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(
+        eq(jobs.jobType, ROTATE_EVENT_LOG_CRON_TYPE),
+        inArray(jobs.status, ["queued", "leased", "running"]),
+        gte(jobs.availableAt, bucket.start),
+        lt(jobs.availableAt, bucket.end)
+      ))
+      .limit(1);
+    if (existingRows.length > 0) {
+      return { enqueued: false, jobId: null };
+    }
+
+    const jobId = randomUUID();
+    await tx.insert(jobs).values({
+      id: jobId,
+      jobType: ROTATE_EVENT_LOG_CRON_TYPE,
+      status: "queued",
+      workerPool: "background",
+      priority: 1003,
+      payloadJson: { intervalSeconds, retentionDays, batchSize },
+      concurrencyKey: ROTATE_EVENT_LOG_CONCURRENCY_KEY,
+      correlationId: randomUUID(),
+      availableAt
+    });
+    return { enqueued: true, jobId };
+  });
+}
+
+export async function completeRotateEventLogCronJob(input: {
+  job: LeasedJob;
+  runId: string;
+  workerId: string;
+}): Promise<RotateEventLogResult> {
+  const payload = input.job.payload_json as {
+    intervalSeconds?: number;
+    retentionDays?: number;
+    batchSize?: number;
+  } | null;
+  const intervalSeconds = payload?.intervalSeconds ?? ROTATE_EVENT_LOG_DEFAULT_INTERVAL_SECONDS;
+  const result = await rotateEventLog({
+    correlationId: input.job.correlation_id,
+    retentionDays: payload?.retentionDays ?? ROTATE_EVENT_LOG_DEFAULT_RETENTION_DAYS,
+    batchSize: payload?.batchSize ?? ROTATE_EVENT_LOG_DEFAULT_BATCH_SIZE
+  });
+  await completeJob({ job: input.job, runId: input.runId, workerId: input.workerId });
+  await ensureRotateEventLogCronScheduled({
+    intervalSeconds,
+    availableAt: new Date(Date.now() + intervalSeconds * 1000),
+    retentionDays: payload?.retentionDays ?? ROTATE_EVENT_LOG_DEFAULT_RETENTION_DAYS,
+    batchSize: payload?.batchSize ?? ROTATE_EVENT_LOG_DEFAULT_BATCH_SIZE
+  });
+  return result;
+}
+
+export async function ensureRollupAgentCostsCronScheduled(input: {
+  availableAt?: Date;
+  intervalSeconds?: number;
+  lookbackDays?: number;
+  spikeMultiplier?: number;
+} = {}): Promise<{ enqueued: boolean; jobId: string | null }> {
+  const db = getDb();
+  const intervalSeconds = input.intervalSeconds ?? ROLLUP_AGENT_COSTS_DEFAULT_INTERVAL_SECONDS;
+  const availableAt = input.availableAt ?? new Date(Date.now() + intervalSeconds * 1000);
+  const bucket = intervalBucketRange(availableAt, intervalSeconds);
+  const lookbackDays = input.lookbackDays ?? AGENT_COST_SPIKE_DEFAULT_LOOKBACK_DAYS;
+  const spikeMultiplier = input.spikeMultiplier ?? AGENT_COST_SPIKE_DEFAULT_MULTIPLIER;
+
+  return db.transaction(async (tx) => {
+    const existingRows = await tx
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(
+        eq(jobs.jobType, ROLLUP_AGENT_COSTS_CRON_TYPE),
+        inArray(jobs.status, ["queued", "leased", "running"]),
+        gte(jobs.availableAt, bucket.start),
+        lt(jobs.availableAt, bucket.end)
+      ))
+      .limit(1);
+    if (existingRows.length > 0) {
+      return { enqueued: false, jobId: null };
+    }
+
+    const jobId = randomUUID();
+    await tx.insert(jobs).values({
+      id: jobId,
+      jobType: ROLLUP_AGENT_COSTS_CRON_TYPE,
+      status: "queued",
+      workerPool: "background",
+      priority: 1004,
+      payloadJson: { intervalSeconds, lookbackDays, spikeMultiplier },
+      concurrencyKey: ROLLUP_AGENT_COSTS_CONCURRENCY_KEY,
+      correlationId: randomUUID(),
+      availableAt
+    });
+    return { enqueued: true, jobId };
+  });
+}
+
+export async function completeRollupAgentCostsCronJob(input: {
+  job: LeasedJob;
+  runId: string;
+  workerId: string;
+}): Promise<RollupAgentCostsResult> {
+  const payload = input.job.payload_json as {
+    intervalSeconds?: number;
+    lookbackDays?: number;
+    spikeMultiplier?: number;
+    usageDay?: string;
+  } | null;
+  const intervalSeconds = payload?.intervalSeconds ?? ROLLUP_AGENT_COSTS_DEFAULT_INTERVAL_SECONDS;
+  const usageDay = typeof payload?.usageDay === "string" ? new Date(payload.usageDay) : undefined;
+  const result = await rollupAgentCosts({
+    correlationId: input.job.correlation_id,
+    ...(usageDay && !Number.isNaN(usageDay.getTime()) ? { usageDay } : {}),
+    lookbackDays: payload?.lookbackDays ?? AGENT_COST_SPIKE_DEFAULT_LOOKBACK_DAYS,
+    spikeMultiplier: payload?.spikeMultiplier ?? AGENT_COST_SPIKE_DEFAULT_MULTIPLIER
+  });
+  await completeJob({ job: input.job, runId: input.runId, workerId: input.workerId });
+  await ensureRollupAgentCostsCronScheduled({
+    intervalSeconds,
+    availableAt: new Date(Date.now() + intervalSeconds * 1000),
+    lookbackDays: payload?.lookbackDays ?? AGENT_COST_SPIKE_DEFAULT_LOOKBACK_DAYS,
+    spikeMultiplier: payload?.spikeMultiplier ?? AGENT_COST_SPIKE_DEFAULT_MULTIPLIER
+  });
+  return result;
+}
+
+export async function ensureBackgroundCronsScheduled(input: {
+  availableAt?: Date;
+} = {}): Promise<{
+  resurfacePolicyStates: { enqueued: boolean; jobId: string | null };
+  recoverStaleJobs: { enqueued: boolean; jobId: string | null };
+  workerHeartbeatWatchdog: { enqueued: boolean; jobId: string | null };
+  queueDepthWatchdog: { enqueued: boolean; jobId: string | null };
+  rotateEventLog: { enqueued: boolean; jobId: string | null };
+  rollupAgentCosts: { enqueued: boolean; jobId: string | null };
+}> {
+  const availableAt = input.availableAt ?? new Date();
+  const resurfacePolicyStates = await ensureResurfacePolicyStatesJobScheduled({ availableAt });
+  const recoverStaleJobs = await ensureRecoverStaleJobsCronScheduled({ availableAt });
+  const workerHeartbeatWatchdog = await ensureWorkerHeartbeatWatchdogScheduled({ availableAt });
+  const queueDepthWatchdog = await ensureQueueDepthWatchdogScheduled({ availableAt });
+  const rotateEventLog = await ensureRotateEventLogCronScheduled({ availableAt });
+  const rollupAgentCosts = await ensureRollupAgentCostsCronScheduled({ availableAt });
+  return {
+    resurfacePolicyStates,
+    recoverStaleJobs,
+    workerHeartbeatWatchdog,
+    queueDepthWatchdog,
+    rotateEventLog,
+    rollupAgentCosts
+  };
+}
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function addDaysUtc(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 24 * 60 * 60_000);
+}
+
+function normalizeAgentTokenUsage(value: unknown): AgentTokenUsage | null {
+  const parsed = agentTokenUsageSchema.safeParse(value);
+  if (!parsed.success) {
+    return null;
+  }
+
+  const totalTokens = parsed.data.totalTokens > 0
+    ? parsed.data.totalTokens
+    : parsed.data.promptTokens + parsed.data.completionTokens;
+  if (totalTokens === 0 && (parsed.data.costUsd ?? 0) === 0) {
+    return null;
+  }
+
+  return {
+    ...parsed.data,
+    totalTokens
+  };
+}
+
+function estimateAgentRunCostUsd(usage: AgentTokenUsage): number {
+  if (usage.costUsd !== undefined) {
+    return usage.costUsd;
+  }
+  return (usage.promptTokens * DEFAULT_PROMPT_TOKEN_COST_USD)
+    + (usage.completionTokens * DEFAULT_COMPLETION_TOKEN_COST_USD);
+}
+
+function readCampaignId(record: JsonRecord | null | undefined): string | null {
+  const value = record?.["campaignId"];
+  return typeof value === "string" && isUuid(value) ? value : null;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function agentCostGroupKey(stage: string, campaignId: string | null): string {
+  return `${stage}:${campaignId ?? "none"}`;
+}
+
+function averagePriorCosts(rows: Array<{
+  stage: string;
+  campaignId: string | null;
+  estimatedUsd: string;
+}>): Map<string, number> {
+  const buckets = new Map<string, { total: number; count: number }>();
+  for (const row of rows) {
+    const key = agentCostGroupKey(row.stage, row.campaignId);
+    const bucket = buckets.get(key) ?? { total: 0, count: 0 };
+    bucket.total += Number(row.estimatedUsd);
+    bucket.count += 1;
+    buckets.set(key, bucket);
+  }
+
+  return new Map(
+    [...buckets.entries()].map(([key, bucket]) => [key, bucket.count > 0 ? bucket.total / bucket.count : 0])
+  );
+}
+
+function formatUsd(value: number): string {
+  return value.toFixed(6);
 }
 
 // Self-rescheduling singleton job. Inserts a `job.resurface_policy_states`

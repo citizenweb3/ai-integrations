@@ -55,7 +55,7 @@ Sync this file with every state change. One row per ticket. Update the **state**
 | T-015 | Step 9 critical path: classifier + attach-inbound + warm dedup | merged | codex | local merge | GitNexus MCP impact unavailable (`Transport closed`); CLI impact resolved `buildGenerateWarmDraftIdempotencyKey` LOW / 0 direct callers / 0 affected processes, while `buildClassifyReplyPrompt` and `attachInboundToThreadCommand` were not indexed as symbols, so repository/test scope was checked manually. Verified with focused T-015 DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
 | T-016 | Telegram `/approve` soft-blocker override flow | merged | codex | local merge | GitNexus MCP unavailable (`Transport closed`); CLI impact could not resolve `processTelegramInboundUpdate`, `approveDraftForSendCommand`, `parseApproveCommand`, or `repositories.ts`, so scope was checked manually against Telegram inbound command flow, approve guardrail result, and focused tests. Verified with focused `approve-draft-trust` DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
 | T-017 | Telegram pool isolation | merged | codex | local merge | GitNexus MCP unavailable (`Transport closed`); CLI impact could not resolve private `enqueueTelegramNotificationJob`, and worker `main` impact returned no usable output. CLI query identified worker `main` and Telegram webhook POST as relevant flows; scope was manually limited to worker pool config, Telegram notification enqueue, Compose service split, docs, and tests. Verified with focused queue/heartbeat watchdog DB tests, `docker compose config`, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. Merged locally into `main` (no remote PR). |
-| T-018 | Event-log retention + cost rollup + nightly suite | todo |  |  |  |
+| T-018 | Event-log retention + cost rollup + nightly suite | done | codex | local | GitNexus MCP impact/detect_changes transport closed; CLI impact could not resolve edited symbols, verified with focused DB test + verify:db + yarn verify. |
 
 # P3 — UX / scale headroom
 
@@ -200,10 +200,10 @@ Each section mirrors the acceptance criteria from `TICKETS.md`. Tick boxes as ea
 
 ## T-018 — Event-log retention + cost rollup + nightly suite
 
-- [ ] `rotate_event_log` archives > 90d rows to `event_log_archive`
-- [ ] `rollup_agent_costs` writes daily rows + spike telegram alert when daily > 3× 7d avg
-- [ ] `agentTokenUsageSchema` zod definition + backfill plan documented
-- [ ] All new nightly jobs registered through `ensureBackgroundCronsScheduled`
+- [x] `rotate_event_log` archives > 90d rows to `event_log_archive`
+- [x] `rollup_agent_costs` writes daily rows + spike telegram alert when daily > 3× 7d avg
+- [x] `agentTokenUsageSchema` zod definition + backfill plan documented
+- [x] All new nightly jobs registered through `ensureBackgroundCronsScheduled`
 
 ## T-019 — Inbox saved-views + pagination
 
