@@ -11,6 +11,8 @@ import {
   completeRefreshResearchSnapshotJob,
   completeResearchMoreJob,
   completeRecoverStaleJobsCronJob,
+  completeRollupAgentCostsCronJob,
+  completeRotateEventLogCronJob,
   completeRunCampaignDiscoveryJob,
   completeResurfacePolicyStatesJob,
   completeRevalidateDraftClaimsJob,
@@ -19,10 +21,7 @@ import {
   completeSendTelegramNotificationJob,
   completeWebhookProcessingJob,
   completeWorkerHeartbeatWatchdogJob,
-  ensureQueueDepthWatchdogScheduled,
-  ensureRecoverStaleJobsCronScheduled,
-  ensureResurfacePolicyStatesJobScheduled,
-  ensureWorkerHeartbeatWatchdogScheduled,
+  ensureBackgroundCronsScheduled,
   failJob,
   leaseNextJob,
   recordWorkerHeartbeat,
@@ -172,32 +171,14 @@ async function main() {
   log("info", "worker_started", { pollIntervalMs, leaseSeconds, heartbeatIntervalMs, workerPools, runOnce });
   await maybeRecordHeartbeat(true);
 
-  // Per canonical §66.5447-5456: cooldown / retry_after states must surface
-  // a deduped Inbox work item when they expire. Scheduled as a singleton
-  // self-rescheduling background job — no external cron required. Skipped
-  // when the background pool is not in this worker's pool set, since the
-  // job lives in the background pool and another worker process is expected
-  // to pick it up.
+  // Background cron suite: policy resurfacing, stale recovery, watchdogs, event
+  // retention, and cost rollups. Each helper dedupes by singleton key/bucket,
+  // so startup can call this idempotently without an external scheduler.
   if (workerPools.includes("background")) {
-    const scheduled = await ensureResurfacePolicyStatesJobScheduled({
+    const scheduled = await ensureBackgroundCronsScheduled({
       availableAt: new Date()
     });
-    log("info", "policy_resurface_bootstrap", scheduled);
-
-    const staleRecoveryScheduled = await ensureRecoverStaleJobsCronScheduled({
-      availableAt: new Date()
-    });
-    log("info", "stale_jobs_recovery_bootstrap", staleRecoveryScheduled);
-
-    const workerHeartbeatWatchdogScheduled = await ensureWorkerHeartbeatWatchdogScheduled({
-      availableAt: new Date()
-    });
-    log("info", "worker_heartbeat_watchdog_bootstrap", workerHeartbeatWatchdogScheduled);
-
-    const queueDepthWatchdogScheduled = await ensureQueueDepthWatchdogScheduled({
-      availableAt: new Date()
-    });
-    log("info", "queue_depth_watchdog_bootstrap", queueDepthWatchdogScheduled);
+    log("info", "background_crons_bootstrap", scheduled);
   }
 
   while (!shuttingDown) {
@@ -527,6 +508,37 @@ async function runJob(job: LeasedJob) {
           detected: result.detected,
           notified: result.notified,
           bucket: result.bucket
+        });
+        break;
+      }
+
+      case "job.cron_rotate_event_log": {
+        const result = await completeRotateEventLogCronJob({
+          job,
+          runId: run.id,
+          workerId
+        });
+        log("info", "event_log_rotation_cron_completed", {
+          jobId: job.id,
+          archivedRows: result.archivedRows,
+          policyReferencesCleared: result.policyReferencesCleared,
+          cutoff: result.cutoff
+        });
+        break;
+      }
+
+      case "job.cron_rollup_agent_costs": {
+        const result = await completeRollupAgentCostsCronJob({
+          job,
+          runId: run.id,
+          workerId
+        });
+        log("info", "agent_cost_rollup_cron_completed", {
+          jobId: job.id,
+          usageDay: result.usageDay,
+          rolledUpRows: result.rolledUpRows,
+          totalEstimatedUsd: result.totalEstimatedUsd,
+          spikeAlerts: result.spikeAlerts
         });
         break;
       }

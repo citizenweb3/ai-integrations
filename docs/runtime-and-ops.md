@@ -94,6 +94,13 @@ Counters that should be zero in steady state:
 
 `NonRetryableJobError` short-circuits the retry loop and dead-letters immediately. Used for: missing payload fields, auth/quota gRPC codes from Vertex (3 / 7 / 9 / 16), suppression-class hard rejections.
 
+### Background cron suite
+Background workers call `ensureBackgroundCronsScheduled` at startup. The bundle registers the singleton self-rescheduling jobs for policy resurfacing, stale-job recovery, worker heartbeat watchdog, queue-depth watchdog, `job.cron_rotate_event_log`, and `job.cron_rollup_agent_costs`.
+
+`rotate_event_log` archives hot `event_log` rows older than 90 days into `event_log_archive` before deleting them from the hot table. `rollup_agent_costs` reads `agent_runs.token_usage_json`, writes `agent_cost_daily` rows by `(usage_day, stage, campaign_id)`, and emits `agent_cost_spike` plus a Telegram notification when a day's estimated spend is greater than 3x the prior 7-day average for the same stage/campaign bucket.
+
+`agentTokenUsageSchema` in `@bizdev/shared` is the contract for `agent_runs.token_usage_json`: `{promptTokens, completionTokens, totalTokens, modelId, costUsd?, latencyMs?}`. Backfill plan for legacy rows: extract provider usage metadata from retained `agent_run_events`/agent outputs when present, normalize it through `agentTokenUsageSchema`, update `agent_runs.token_usage_json`, then rerun `rollup_agent_costs` for each affected UTC day. Rows with no recoverable provider usage remain `{}` and are intentionally skipped by the rollup.
+
 ### Operator commands
 All operator actions go through `POST /api/commands` (JSON or form-encoded). Idempotency keys are required and prefix-checked per command type — see `commandTypeIdempotencyPrefix` in `packages/shared`. Commands never mutate state directly; they enqueue jobs.
 
