@@ -1,0 +1,130 @@
+import { FC, PropsWithChildren, ReactNode } from "react";
+import Link from "next/link";
+import { twMerge } from "tailwind-merge";
+
+export const inputClass =
+  "w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm font-light text-foreground placeholder:opacity-50 focus:outline-none focus:border-[var(--accent)]/60 transition-colors";
+
+export const textareaClass =
+  "w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm font-light text-foreground placeholder:opacity-50 focus:outline-none focus:border-[var(--accent)]/60 transition-colors min-h-24 resize-y";
+
+export const Button: FC<
+  PropsWithChildren<{
+    type?: "submit" | "button" | "reset";
+    name?: string;
+    value?: string;
+    tone?: "primary" | "ghost" | "danger" | "muted";
+    size?: "sm" | "md";
+    className?: string;
+  }>
+> = ({ children, type = "submit", name, value, tone = "primary", size = "md", className }) => {
+  const sizes = size === "sm" ? "px-3 py-1.5 text-xs" : "px-4 py-2.5 text-sm";
+  const tones = {
+    primary: "bg-[var(--accent)] text-black hover:opacity-90",
+    ghost: "bg-transparent border border-white/15 text-white hover:bg-white/5",
+    danger: "bg-[#7f2d20] text-white hover:opacity-90",
+    muted: "bg-[#1A1A1B] border-b border-[#262626] text-white hover:bg-[#262626]"
+  }[tone];
+  return (
+    <button
+      type={type}
+      name={name}
+      value={value}
+      className={twMerge(
+        "rounded-lg font-bold tracking-wide transition-colors hover:no-underline",
+        sizes,
+        tones,
+        className
+      )}
+    >
+      {children}
+    </button>
+  );
+};
+
+export const PillLink: FC<{
+  href: string;
+  children: ReactNode;
+  primary?: boolean;
+  className?: string;
+}> = ({ href, children, primary = false, className }) => {
+  const tone = primary
+    ? "bg-[var(--accent)] text-black hover:opacity-90"
+    : "bg-[#1A1A1B] border-b border-[#262626] text-white hover:bg-[#262626]";
+  return (
+    <Link
+      href={href}
+      className={twMerge(
+        "px-5 py-2 rounded-[10px] text-sm font-semibold tracking-wide transition-colors hover:no-underline inline-block",
+        tone,
+        className
+      )}
+    >
+      {children}
+    </Link>
+  );
+};
+
+export const Badge: FC<{
+  children: ReactNode;
+  tone?: "default" | "accent" | "primary" | "warning" | "danger";
+  className?: string;
+}> = ({ children, tone = "default", className }) => {
+  const tones = {
+    default: "border-white/20 text-white/70",
+    accent: "border-[var(--accent)]/40 text-[var(--accent)]",
+    primary: "border-[hsl(var(--primary))]/40 text-[hsl(var(--primary))]",
+    warning: "border-yellow-500/40 text-yellow-400",
+    danger: "border-red-500/40 text-red-400"
+  }[tone];
+  return (
+    <span
+      className={twMerge(
+        "inline-flex items-center text-xs px-2 py-0.5 rounded-full border whitespace-nowrap",
+        tones,
+        className
+      )}
+    >
+      {children}
+    </span>
+  );
+};
+
+export const SectionGrid: FC<PropsWithChildren<{ cols?: 2 | 3 | 4; className?: string }>> = ({
+  children,
+  cols = 2,
+  className
+}) => {
+  const colsCls = {
+    2: "grid-cols-1 lg:grid-cols-2",
+    3: "grid-cols-1 md:grid-cols-2 lg:grid-cols-3",
+    4: "grid-cols-2 md:grid-cols-4"
+  }[cols];
+  return <div className={twMerge("grid gap-6", colsCls, className)}>{children}</div>;
+};
+
+export const PageBody: FC<PropsWithChildren<{ className?: string }>> = ({ children, className }) => {
+  return <section className={twMerge("max-w-[80vw] mx-auto px-4 pb-24 space-y-8", className)}>{children}</section>;
+};
+
+export const MetricCard: FC<{ label: string; value: number | string; accent?: boolean }> = ({
+  label,
+  value,
+  accent = false
+}) => {
+  return (
+    <div className="rounded-2xl bg-linear-to-t from-[#7C7C81]/25 to-[#1A1A1B]/25 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
+      <div className={`text-3xl font-bold ${accent ? "text-[var(--accent)]" : ""}`}>{value}</div>
+      <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-2">{label}</div>
+    </div>
+  );
+};
+
+export const InfoRow: FC<{ label: string; value: ReactNode; className?: string }> = ({ label, value, className }) => {
+  return (
+    <div className={twMerge("flex justify-between items-center gap-4 border-b border-white/10 py-2 text-sm last:border-b-0", className)}>
+      <span className="opacity-60">{label}</span>
+      <span className="font-medium text-right">{value}</span>
+    </div>
+  );
+};

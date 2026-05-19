@@ -1,0 +1,32 @@
+{
+  "name": "@bizdev/dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0 --port ${DASHBOARD_PORT:-3000}",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0 --port ${DASHBOARD_PORT:-3000}",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@bizdev/db": "0.0.0",
+    "@bizdev/shared": "0.0.0",
+    "lucide-react": "0.544.0",
+    "next": "16.2.4",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "tailwind-merge": "3.3.1",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.1.13",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "eslint-config-next": "16.2.4",
+    "postcss": "8.5.6",
+    "tailwindcss": "4.1.13",
+    "typescript": "6.0.3"
+  }
+}
