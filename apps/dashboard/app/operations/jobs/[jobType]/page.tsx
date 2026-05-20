@@ -3,7 +3,7 @@ import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
-import { PageBody } from "@/components/ui";
+import { Badge, MetricCard, PageBody } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +27,19 @@ function truncate(text: string | null, n = 240): string {
   return text.length > n ? `${text.slice(0, n)}…` : text;
 }
 
+function fmtDuration(ms: number | null): string {
+  if (ms === null) return "n/a";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
+}
+
+function fmtRate(value: number | null): string {
+  return value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
+}
+
 export default async function JobsByTypePage({
   params
 }: {
@@ -34,7 +47,9 @@ export default async function JobsByTypePage({
 }) {
   const { jobType: rawJobType } = await params;
   const jobType = decodeURIComponent(rawJobType);
-  const rows = await getJobsByType(jobType, PAGE_LIMIT);
+  const view = await getJobsByType(jobType, PAGE_LIMIT);
+  const rows = view.rows;
+  const sla = view.sla;
 
   const grouped = new Map<string, typeof rows>();
   for (const r of rows) {
@@ -68,6 +83,46 @@ export default async function JobsByTypePage({
       />
 
       <PageBody>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <MetricCard label="p50 runtime" value={fmtDuration(sla.p50LatencyMs)} accent={sla.p50LatencyMs !== null} />
+          <MetricCard label="p95 runtime" value={fmtDuration(sla.p95LatencyMs)} accent={sla.p95LatencyMs !== null} />
+          <MetricCard label="success rate" value={fmtRate(sla.successRate)} accent={sla.successRate !== null && sla.successRate >= 0.95} />
+          <MetricCard label="dead-letter rate" value={fmtRate(sla.deadLetterRate)} />
+        </div>
+
+        <Card>
+          <BlockTitle title={`24h SLA (${sla.completedRuns} completed runs)`} className="mb-4 text-left" />
+          <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+            <div>
+              <div className="mb-3 flex flex-wrap gap-2">
+                <Badge tone="accent">window {sla.windowHours}h</Badge>
+                <Badge tone="default">terminal {sla.totalTerminal}</Badge>
+                <Badge tone="primary">succeeded {sla.succeeded}</Badge>
+                <Badge tone={sla.failed > 0 ? "warning" : "default"}>failed {sla.failed}</Badge>
+                <Badge tone={sla.deadLettered > 0 ? "danger" : "default"}>dead-lettered {sla.deadLettered}</Badge>
+              </div>
+              <p className="text-xs font-light opacity-60">Generated {fmtDate(sla.generatedAt)}</p>
+            </div>
+            <div>
+              <div className="mb-2 text-xs uppercase tracking-wider opacity-60">Dead-letter reasons</div>
+              {sla.deadLetteredByReason.length === 0 ? (
+                <p className="text-sm font-light opacity-60">No dead-lettered jobs in the last 24h.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {sla.deadLetteredByReason.map((reason) => (
+                    <li key={reason.reason} className="flex items-start justify-between gap-4 border-b border-white/10 pb-2 last:border-b-0 text-sm">
+                      <span className="break-words">{reason.reason}</span>
+                      <span className="whitespace-nowrap font-medium">
+                        {reason.count} · {fmtRate(reason.rate)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </Card>
+
         {rows.length === 0 ? (
           <Card>
             <p className="text-sm font-light opacity-60">No jobs found for this type.</p>

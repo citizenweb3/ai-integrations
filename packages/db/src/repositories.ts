@@ -928,44 +928,105 @@ export type JobsByTypeRow = {
   updatedAt: Date;
 };
 
+export type JobTypeDeadLetterReason = {
+  reason: string;
+  count: number;
+  rate: number | null;
+};
+
+export type JobTypeSlaSummary = {
+  windowHours: number;
+  generatedAt: Date;
+  completedRuns: number;
+  p50LatencyMs: number | null;
+  p95LatencyMs: number | null;
+  statusCounts: Record<string, number>;
+  totalTerminal: number;
+  succeeded: number;
+  failed: number;
+  deadLettered: number;
+  successRate: number | null;
+  deadLetterRate: number | null;
+  deadLetteredByReason: JobTypeDeadLetterReason[];
+};
+
+export type JobsByTypeView = {
+  rows: JobsByTypeRow[];
+  sla: JobTypeSlaSummary;
+};
+
 // Drill-down for a single job_type from /operations. Pulls recent rows across
 // the lifecycle (queued, leased, running, retry-scheduled, dead-lettered,
 // failed, succeeded) so the operator can correlate pile-ups in the type with
 // concrete failures. Bounded by `limit` because some job types fan out to
-// thousands of completed rows per day; the dashboard renders the slice in
-// memory and we don't paginate beyond that.
-export async function getJobsByType(jobType: string, limit = 50): Promise<JobsByTypeRow[]> {
+// thousands of completed rows per day. The SLA block is intentionally derived
+// from `job_runs` for latency because `jobs` keeps only its latest lifecycle
+// timestamp; `job_runs.started_at -> finished_at` is the stable per-attempt
+// execution interval.
+export async function getJobsByType(jobType: string, limit = 50): Promise<JobsByTypeView> {
   const db = getDb();
-  const rows = await db.execute(sql`
-    select id,
-           status,
-           attempts,
-           max_attempts,
-           worker_pool,
-           priority,
-           available_at,
-           leased_by,
-           leased_until,
-           last_error,
-           correlation_id,
-           created_at,
-           updated_at
-    from jobs
-    where job_type = ${jobType}
-    order by
-      case status
-        when 'dead_lettered' then 0
-        when 'failed' then 1
-        when 'leased' then 2
-        when 'running' then 3
-        when 'queued' then 4
-        else 5
-      end,
-      updated_at desc
-    limit ${limit}
-  `);
+  const windowHours = 24;
+  const [rows, latencyRows, statusRows, deadLetterRows] = await Promise.all([
+    db.execute(sql`
+      select id,
+             status,
+             attempts,
+             max_attempts,
+             worker_pool,
+             priority,
+             available_at,
+             leased_by,
+             leased_until,
+             last_error,
+             correlation_id,
+             created_at,
+             updated_at
+      from jobs
+      where job_type = ${jobType}
+      order by
+        case status
+          when 'dead_lettered' then 0
+          when 'failed' then 1
+          when 'leased' then 2
+          when 'running' then 3
+          when 'queued' then 4
+          else 5
+        end,
+        updated_at desc
+      limit ${limit}
+    `),
+    db.execute(sql`
+      select count(*)::int as completed_runs,
+             percentile_cont(0.5) within group (
+               order by extract(epoch from (${jobRuns.finishedAt} - ${jobRuns.startedAt}))
+             ) as p50_seconds,
+             percentile_cont(0.95) within group (
+               order by extract(epoch from (${jobRuns.finishedAt} - ${jobRuns.startedAt}))
+             ) as p95_seconds
+      from ${jobRuns}
+      join ${jobs} on ${jobs.id} = ${jobRuns.jobId}
+      where ${jobs.jobType} = ${jobType}
+        and ${jobRuns.status} = 'succeeded'
+        and ${jobRuns.finishedAt} is not null
+        and ${jobRuns.finishedAt} >= now() - (${windowHours} || ' hours')::interval
+    `),
+    db.execute(sql`
+      select status, count(*)::int as count
+      from jobs
+      where job_type = ${jobType}
+        and updated_at >= now() - (${windowHours} || ' hours')::interval
+      group by status
+    `),
+    db.execute(sql`
+      select last_error
+      from jobs
+      where job_type = ${jobType}
+        and status = 'dead_lettered'
+        and updated_at >= now() - (${windowHours} || ' hours')::interval
+    `)
+  ]);
 
-  return (rows as unknown as Array<{
+  const jobRows = (rows as unknown as Array<{
     id: string;
     status: string;
     attempts: number;
@@ -994,6 +1055,66 @@ export async function getJobsByType(jobType: string, limit = 50): Promise<JobsBy
     createdAt: r.created_at,
     updatedAt: r.updated_at
   }));
+
+  const [latency] = latencyRows as unknown as Array<{
+    completed_runs: number;
+    p50_seconds: number | string | null;
+    p95_seconds: number | string | null;
+  }>;
+
+  const statusCounts: Record<string, number> = {};
+  for (const row of statusRows as unknown as Array<{ status: string; count: number }>) {
+    statusCounts[row.status] = row.count;
+  }
+
+  const totalTerminal = (statusCounts.succeeded ?? 0)
+    + (statusCounts.failed ?? 0)
+    + (statusCounts.dead_lettered ?? 0)
+    + (statusCounts.cancelled ?? 0);
+  const deadLettered = statusCounts.dead_lettered ?? 0;
+  const deadLetterReasonCounts = new Map<string, number>();
+  for (const row of deadLetterRows as unknown as Array<{ last_error: string | null }>) {
+    const reason = parseJobDeadLetterReason(row.last_error);
+    deadLetterReasonCounts.set(reason, (deadLetterReasonCounts.get(reason) ?? 0) + 1);
+  }
+
+  return {
+    rows: jobRows,
+    sla: {
+      windowHours,
+      generatedAt: new Date(),
+      completedRuns: latency?.completed_runs ?? 0,
+      p50LatencyMs: secondsToMilliseconds(latency?.p50_seconds ?? null),
+      p95LatencyMs: secondsToMilliseconds(latency?.p95_seconds ?? null),
+      statusCounts,
+      totalTerminal,
+      succeeded: statusCounts.succeeded ?? 0,
+      failed: statusCounts.failed ?? 0,
+      deadLettered,
+      successRate: totalTerminal > 0 ? (statusCounts.succeeded ?? 0) / totalTerminal : null,
+      deadLetterRate: totalTerminal > 0 ? deadLettered / totalTerminal : null,
+      deadLetteredByReason: [...deadLetterReasonCounts.entries()]
+        .map(([reason, count]) => ({
+          reason,
+          count,
+          rate: totalTerminal > 0 ? count / totalTerminal : null
+        }))
+        .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason))
+    }
+  };
+}
+
+function secondsToMilliseconds(value: number | string | null): number | null {
+  if (value === null) return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed * 1000) : null;
+}
+
+function parseJobDeadLetterReason(lastError: string | null): string {
+  const trimmed = lastError?.trim();
+  if (!trimmed) return "unknown";
+  const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  return firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine;
 }
 
 export async function getDashboardSnapshot() {
