@@ -28,6 +28,7 @@ import {
   recoverStaleJobs,
   startJobRun,
   stubRagEmbedder,
+  traceOperation,
   type AgentStageDispatcher,
   type LeasedJob,
   type SendEmailDispatcher,
@@ -225,6 +226,21 @@ async function leaseNextJobFromPools(): Promise<LeasedJob | null> {
 }
 
 async function runJob(job: LeasedJob) {
+  return traceOperation({
+    serviceName: "worker",
+    name: "worker.runJob",
+    kind: "consumer",
+    correlationId: job.correlation_id,
+    attributes: {
+      jobId: job.id,
+      jobType: job.job_type,
+      attempt: job.attempts,
+      workerId
+    }
+  }, () => runJobWithinTrace(job));
+}
+
+async function runJobWithinTrace(job: LeasedJob) {
   log("info", "job_leased", {
     jobId: job.id,
     jobType: job.job_type,

@@ -22,7 +22,8 @@ import {
   resumeAllSendsCommand,
   resolvePolicyStateCommand,
   runCampaignDiscoveryCommand,
-  suppressContactCommand
+  suppressContactCommand,
+  traceOperation
 } from "@bizdev/db";
 import { createCommandRequestSchema } from "@bizdev/shared";
 import { NextResponse } from "next/server";
@@ -30,7 +31,19 @@ import { logger } from "../../../lib/logger";
 import { runWithRequestContext } from "../../../lib/request-context";
 
 export async function POST(request: Request) {
-  return runWithRequestContext(request, () => handlePost(request));
+  return runWithRequestContext(request, (requestId) =>
+    traceOperation({
+      serviceName: "dashboard",
+      name: "dashboard.commandExecution",
+      kind: "server",
+      correlationId: requestId,
+      attributes: {
+        route: "/api/commands",
+        method: request.method,
+        requestId
+      }
+    }, () => handlePost(request))
+  );
 }
 
 async function handlePost(request: Request) {
