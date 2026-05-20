@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **bizdev-email-agent** (577 symbols, 1273 relationships, 39 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **bizdev-email-agent** (586 symbols, 1307 relationships, 40 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -76,3 +76,11 @@ Before completing any code modification task, verify:
 - Generate docs: `npx gitnexus wiki`
 
 <!-- gitnexus:end -->
+
+---
+
+## ClawMem — Semantic Code Memory
+
+> ⚠️ Not indexed yet. Add to `~/.config/clawmem/index.yml` to enable.
+
+**When indexed:** use `memory_retrieve` MCP tool before code searches and `reindex` after each commit.
