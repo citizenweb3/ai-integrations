@@ -17082,6 +17082,16 @@ function toNullableNumber(value: number | string | null): number | null {
 
 // ─── campaign discovery dashboard views (canonical §67 + D6) ─────────────
 
+export type CampaignProgress = {
+  contactsAccepted: number;
+  draftsGenerated: number;
+  draftsApproved: number;
+  sent: number;
+  replied: number;
+  replyClassCounts: Record<string, number>;
+  lastActivityAt: Date | null;
+};
+
 export type CampaignListItem = {
   id: string;
   name: string;
@@ -17093,7 +17103,176 @@ export type CampaignListItem = {
   candidateCounts: Record<DiscoveryCandidateStatus, number>;
   totalCandidates: number;
   pendingCandidates: number;
+  progress: CampaignProgress;
 };
+
+function emptyCampaignProgress(): CampaignProgress {
+  return {
+    contactsAccepted: 0,
+    draftsGenerated: 0,
+    draftsApproved: 0,
+    sent: 0,
+    replied: 0,
+    replyClassCounts: {},
+    lastActivityAt: null
+  };
+}
+
+function getOrCreateCampaignProgress(
+  map: Map<string, CampaignProgress>,
+  campaignId: string
+): CampaignProgress {
+  const existing = map.get(campaignId);
+  if (existing) return existing;
+  const created = emptyCampaignProgress();
+  map.set(campaignId, created);
+  return created;
+}
+
+async function getCampaignProgressMap(campaignIds: string[]): Promise<Map<string, CampaignProgress>> {
+  const ids = [...new Set(campaignIds)];
+  const map = new Map(ids.map((id) => [id, emptyCampaignProgress()] as const));
+  if (ids.length === 0) return map;
+
+  const db = getDb();
+  const idList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
+  const [contactRows, draftRows, sentRows, replyRows, activityRows] = await Promise.all([
+    db.execute(sql`
+      with contact_links as (
+        select campaign_id, contact_id
+        from outreach_records
+        where campaign_id in (${idList})
+          and contact_id is not null
+        union
+        select campaign_id, contact_id
+        from drafts
+        where campaign_id in (${idList})
+          and contact_id is not null
+        union
+        select campaign_id, contact_id
+        from outbound_messages
+        where campaign_id in (${idList})
+          and contact_id is not null
+        union
+        select dc.campaign_id, rcc.converted_contact_id as contact_id
+        from research_contact_candidates rcc
+        join discovery_candidates dc
+          on dc.matched_organization_id = rcc.organization_id
+        where dc.campaign_id in (${idList})
+          and rcc.status = 'converted'
+          and rcc.converted_contact_id is not null
+      )
+      select campaign_id, count(distinct contact_id)::int as contacts_accepted
+      from contact_links
+      group by campaign_id
+    `),
+    db.execute(sql`
+      select campaign_id,
+             count(*)::int as drafts_generated,
+             count(*) filter (
+               where status in ('approved_pending_send', 'approved', 'send_failed_post_approve')
+             )::int as drafts_approved
+      from drafts
+      where campaign_id in (${idList})
+      group by campaign_id
+    `),
+    db.execute(sql`
+      select campaign_id,
+             count(*) filter (
+               where status in ('sent', 'delivery_delivered', 'delivery_bounced', 'complained')
+             )::int as sent
+      from outbound_messages
+      where campaign_id in (${idList})
+      group by campaign_id
+    `),
+    db.execute(sql`
+      select t.campaign_id,
+             coalesce(im.reply_class, 'unclassified') as reply_class,
+             count(*)::int as count
+      from inbound_messages im
+      join threads t on t.id = im.thread_id
+      where t.campaign_id in (${idList})
+      group by t.campaign_id, coalesce(im.reply_class, 'unclassified')
+    `),
+    db.execute(sql`
+      select campaign_id, max(activity_at) as last_activity_at
+      from (
+        select id as campaign_id, updated_at as activity_at
+        from campaigns
+        where id in (${idList})
+        union all
+        select campaign_id, updated_at
+        from discovery_candidates
+        where campaign_id in (${idList})
+        union all
+        select campaign_id, updated_at
+        from outreach_records
+        where campaign_id in (${idList})
+        union all
+        select campaign_id, updated_at
+        from drafts
+        where campaign_id in (${idList})
+        union all
+        select campaign_id, updated_at
+        from outbound_messages
+        where campaign_id in (${idList})
+        union all
+        select t.campaign_id, im.created_at
+        from inbound_messages im
+        join threads t on t.id = im.thread_id
+        where t.campaign_id in (${idList})
+        union all
+        select dc.campaign_id, rcc.updated_at
+        from research_contact_candidates rcc
+        join discovery_candidates dc
+          on dc.matched_organization_id = rcc.organization_id
+        where dc.campaign_id in (${idList})
+      ) activity
+      group by campaign_id
+    `)
+  ]);
+
+  for (const row of contactRows as unknown as Array<{ campaign_id: string; contacts_accepted: number }>) {
+    getOrCreateCampaignProgress(map, row.campaign_id).contactsAccepted = row.contacts_accepted;
+  }
+  for (const row of draftRows as unknown as Array<{
+    campaign_id: string;
+    drafts_generated: number;
+    drafts_approved: number;
+  }>) {
+    const progress = getOrCreateCampaignProgress(map, row.campaign_id);
+    progress.draftsGenerated = row.drafts_generated;
+    progress.draftsApproved = row.drafts_approved;
+  }
+  for (const row of sentRows as unknown as Array<{ campaign_id: string; sent: number }>) {
+    getOrCreateCampaignProgress(map, row.campaign_id).sent = row.sent;
+  }
+  for (const row of replyRows as unknown as Array<{
+    campaign_id: string;
+    reply_class: string;
+    count: number;
+  }>) {
+    const progress = getOrCreateCampaignProgress(map, row.campaign_id);
+    progress.replyClassCounts[row.reply_class] = row.count;
+    progress.replied += row.count;
+  }
+  for (const row of activityRows as unknown as Array<{
+    campaign_id: string;
+    last_activity_at: Date | string | null;
+  }>) {
+    getOrCreateCampaignProgress(map, row.campaign_id).lastActivityAt = row.last_activity_at
+      ? row.last_activity_at instanceof Date
+        ? row.last_activity_at
+        : new Date(row.last_activity_at)
+      : null;
+  }
+
+  return map;
+}
+
+export async function getCampaignProgress(campaignId: string): Promise<CampaignProgress> {
+  return (await getCampaignProgressMap([campaignId])).get(campaignId) ?? emptyCampaignProgress();
+}
 
 export async function listCampaignsForDashboard(limit = 100): Promise<CampaignListItem[]> {
   const db = getDb();
@@ -17136,7 +17315,7 @@ export async function listCampaignsForDashboard(limit = 100): Promise<CampaignLi
   ];
   const pendingStatuses: DiscoveryCandidateStatus[] = ["proposed", "needs_review"];
 
-  return (rows as unknown as Array<{
+  const items = (rows as unknown as Array<{
     id: string;
     name: string;
     status: string;
@@ -17165,9 +17344,16 @@ export async function listCampaignsForDashboard(limit = 100): Promise<CampaignLi
       updatedAt: r.updated_at instanceof Date ? r.updated_at : new Date(r.updated_at),
       candidateCounts: counts,
       totalCandidates: r.total_candidates,
-      pendingCandidates: pendingStatuses.reduce((sum, s) => sum + counts[s], 0)
+      pendingCandidates: pendingStatuses.reduce((sum, s) => sum + counts[s], 0),
+      progress: emptyCampaignProgress()
     };
   });
+
+  const progressMap = await getCampaignProgressMap(items.map((item) => item.id));
+  return items.map((item) => ({
+    ...item,
+    progress: progressMap.get(item.id) ?? emptyCampaignProgress()
+  }));
 }
 
 export type DiscoveryCandidateView = {
@@ -17202,6 +17388,7 @@ export type CampaignDiscoveryView = {
     createdAt: Date;
     updatedAt: Date;
   };
+  progress: CampaignProgress;
   candidatesByStatus: Record<DiscoveryCandidateStatus, DiscoveryCandidateView[]>;
   recentDiscoveryRuns: Array<{
     jobId: string;
@@ -17331,6 +17518,8 @@ export async function getCampaignDiscoveryView(
     .orderBy(desc(jobs.createdAt))
     .limit(10);
 
+  const progress = await getCampaignProgress(campaignId);
+
   return {
     campaign: {
       id: campaign.id,
@@ -17342,6 +17531,7 @@ export async function getCampaignDiscoveryView(
       createdAt: campaign.createdAt,
       updatedAt: campaign.updatedAt
     },
+    progress,
     candidatesByStatus,
     recentDiscoveryRuns: runRows.map((r) => ({
       jobId: r.jobId,

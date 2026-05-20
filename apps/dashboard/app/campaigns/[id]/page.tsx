@@ -63,6 +63,10 @@ export default async function CampaignDetailPage({
   );
   const pending =
     view.candidatesByStatus.proposed.length + view.candidatesByStatus.needs_review.length;
+  const replyClassBreakdown = Object.entries(view.progress.replyClassCounts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([replyClass, count]) => `${formatReplyClass(replyClass)}: ${count}`)
+    .join(", ");
 
   return (
     <>
@@ -103,6 +107,30 @@ export default async function CampaignDetailPage({
             }
           />
         </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <MetricCard label="Contacts accepted" value={view.progress.contactsAccepted} />
+          <MetricCard label="Drafts generated" value={view.progress.draftsGenerated} />
+          <MetricCard label="Drafts approved" value={view.progress.draftsApproved} />
+          <MetricCard label="Sent" value={view.progress.sent} />
+          <MetricCard label="Replies" value={view.progress.replied} accent={view.progress.replied > 0} />
+        </div>
+
+        <Card>
+          <BlockTitle title="Progress" className="mb-4 text-left" />
+          <InfoRow
+            label="Reply classes"
+            value={replyClassBreakdown || <span className="opacity-50">none</span>}
+          />
+          <InfoRow
+            label="Last activity"
+            value={
+              view.progress.lastActivityAt
+                ? view.progress.lastActivityAt.toISOString()
+                : <span className="opacity-50">none</span>
+            }
+          />
+        </Card>
 
         <Card>
           <BlockTitle title="Campaign" className="mb-4 text-left" />
@@ -184,6 +212,10 @@ export default async function CampaignDetailPage({
       </PageBody>
     </>
   );
+}
+
+function formatReplyClass(replyClass: string): string {
+  return replyClass.replaceAll("_", " ");
 }
 
 function CandidateRow({ candidate }: { candidate: DiscoveryCandidateView }) {
