@@ -1,6 +1,6 @@
 import {
   appendEvent,
-  parseTelegramOperatorAllowlist,
+  loadTelegramOperatorAllowlist,
   processTelegramInboundUpdate,
   type TelegramInboundUpdate
 } from "@bizdev/db";
@@ -10,11 +10,6 @@ import { NextResponse } from "next/server";
 type JsonRecord = Record<string, unknown>;
 
 export const dynamic = "force-dynamic";
-
-// Parse the operator allowlist once at module load. The map is read-only at
-// runtime; restart is required to pick up changes. An empty / missing env
-// disables state-change commands but leaves /help and /queue working.
-const operatorAllowlist = parseTelegramOperatorAllowlist(process.env.TELEGRAM_OPERATOR_MAP);
 
 // `/approve` resolves the draft body + recipient at command time but the
 // `From:` address has no per-draft source — fall back to the dashboard-wide
@@ -60,6 +55,7 @@ export async function POST(
 
   const correlationId = randomUUID();
   try {
+    const operatorAllowlist = await loadTelegramOperatorAllowlist();
     const result = await processTelegramInboundUpdate({ update, correlationId, operatorAllowlist, defaultFromEmail });
     return NextResponse.json({ received: true, result });
   } catch (error) {

@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   customType,
   index,
@@ -320,6 +321,18 @@ export const webhookEventNonces = pgTable("webhook_event_nonces", {
   seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow()
 }, (table) => ({
   seenAtIdx: index("webhook_event_nonces_seen_at_idx").on(table.seenAt)
+}));
+
+export const telegramOperators = pgTable("telegram_operators", {
+  telegramId: bigint("telegram_id", { mode: "number" }).primaryKey(),
+  // There is no first-class operators table yet; this stores the UUID used by
+  // command actor_id fields so Telegram commands stay on the canonical path.
+  operatorId: uuid("operator_id").notNull(),
+  active: boolean("active").notNull().default(true),
+  addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: updatedAt()
+}, (table) => ({
+  activeIdx: index("telegram_operators_active_idx").on(table.active, table.addedAt)
 }));
 
 export const commands = pgTable("commands", {

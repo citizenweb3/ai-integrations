@@ -110,6 +110,7 @@ import {
   researchSnapshots,
   suppressionEntries,
   systemState,
+  telegramOperators,
   threadParticipants,
   threads,
   webhookEvents,
@@ -13669,35 +13670,184 @@ export type TelegramInboundResult =
   | { kind: "command_failed"; command: string; reason: string }
   | { kind: "unknown"; text: string };
 
-// Maps Telegram `from.id` (numeric user id) to internal operator UUID. The
-// dashboard reads `TELEGRAM_OPERATOR_MAP` from env (JSON object) and passes
-// the parsed map here. Empty / missing map = no Telegram user is authorized
-// for state-change commands; read-only commands still work.
+// Maps Telegram `from.id` (numeric user id) to internal operator UUID. Empty DB
+// map = no Telegram user is authorized for state-change commands; read-only
+// commands still work.
 export type TelegramOperatorAllowlist = ReadonlyMap<number, string>;
 
-// Parses the env value into the allowlist map. Accepts either:
-// - `{"<numeric_telegram_id>": "<operator_uuid>", ...}` — explicit map
-// - `""` / undefined — empty allowlist (state-change commands disabled)
-// Invalid entries are dropped silently (parse-tolerant: a malformed entry
-// shouldn't block startup; ops sees empty allowlist + can fix the env).
-export function parseTelegramOperatorAllowlist(envValue: string | undefined | null): TelegramOperatorAllowlist {
-  if (!envValue || !envValue.trim()) return new Map();
-  let parsed: unknown;
+export type TelegramOperator = {
+  telegramId: number;
+  operatorId: string;
+  active: boolean;
+  addedAt: Date;
+  updatedAt: Date;
+};
+
+const TELEGRAM_OPERATOR_ALLOWLIST_CACHE_TTL_MS = 30_000;
+const uuidPatternForTelegram = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type TelegramOperatorAllowlistCache = {
+  value: TelegramOperatorAllowlist | null;
+  expiresAtMs: number;
+  pending: Promise<TelegramOperatorAllowlist> | null;
+};
+
+let telegramOperatorAllowlistCache: TelegramOperatorAllowlistCache = {
+  value: null,
+  expiresAtMs: 0,
+  pending: null
+};
+
+export function invalidateTelegramOperatorAllowlistCache(): void {
+  telegramOperatorAllowlistCache = { value: null, expiresAtMs: 0, pending: null };
+}
+
+export async function loadTelegramOperatorAllowlist(): Promise<TelegramOperatorAllowlist> {
+  const nowMs = Date.now();
+  if (telegramOperatorAllowlistCache.value && telegramOperatorAllowlistCache.expiresAtMs > nowMs) {
+    return telegramOperatorAllowlistCache.value;
+  }
+  if (telegramOperatorAllowlistCache.pending) {
+    return telegramOperatorAllowlistCache.pending;
+  }
+
+  const pending = readTelegramOperatorAllowlist();
+  telegramOperatorAllowlistCache = {
+    value: telegramOperatorAllowlistCache.value,
+    expiresAtMs: telegramOperatorAllowlistCache.expiresAtMs,
+    pending
+  };
+
   try {
-    parsed = JSON.parse(envValue);
-  } catch {
-    return new Map();
+    const value = await pending;
+    if (telegramOperatorAllowlistCache.pending === pending) {
+      telegramOperatorAllowlistCache = {
+        value,
+        expiresAtMs: Date.now() + TELEGRAM_OPERATOR_ALLOWLIST_CACHE_TTL_MS,
+        pending: null
+      };
+    }
+    return value;
+  } catch (error) {
+    if (telegramOperatorAllowlistCache.pending === pending) {
+      telegramOperatorAllowlistCache = {
+        value: telegramOperatorAllowlistCache.value,
+        expiresAtMs: 0,
+        pending: null
+      };
+    }
+    throw error;
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return new Map();
-  const map = new Map<number, string>();
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-    const telegramId = Number.parseInt(key, 10);
-    if (!Number.isFinite(telegramId)) continue;
-    if (typeof value !== "string" || !uuidPattern.test(value)) continue;
-    map.set(telegramId, value);
+}
+
+export async function listTelegramOperators(input: { activeOnly?: boolean } = {}): Promise<TelegramOperator[]> {
+  const rows = await getDb()
+    .select({
+      telegramId: telegramOperators.telegramId,
+      operatorId: telegramOperators.operatorId,
+      active: telegramOperators.active,
+      addedAt: telegramOperators.addedAt,
+      updatedAt: telegramOperators.updatedAt
+    })
+    .from(telegramOperators)
+    .where(input.activeOnly ? eq(telegramOperators.active, true) : undefined)
+    .orderBy(asc(telegramOperators.telegramId));
+
+  return rows.map(mapTelegramOperatorRow);
+}
+
+export async function upsertTelegramOperator(input: {
+  telegramId: number;
+  operatorId: string;
+  active?: boolean;
+}): Promise<TelegramOperator> {
+  const telegramId = normalizeTelegramId(input.telegramId);
+  const operatorId = normalizeTelegramOperatorId(input.operatorId);
+  const active = input.active ?? true;
+  const [row] = await getDb()
+    .insert(telegramOperators)
+    .values({ telegramId, operatorId, active })
+    .onConflictDoUpdate({
+      target: telegramOperators.telegramId,
+      set: { operatorId, active, updatedAt: new Date() }
+    })
+    .returning({
+      telegramId: telegramOperators.telegramId,
+      operatorId: telegramOperators.operatorId,
+      active: telegramOperators.active,
+      addedAt: telegramOperators.addedAt,
+      updatedAt: telegramOperators.updatedAt
+    });
+  if (!row) throw new Error("Failed to upsert Telegram operator");
+  invalidateTelegramOperatorAllowlistCache();
+  return mapTelegramOperatorRow(row);
+}
+
+export async function setTelegramOperatorActive(input: {
+  telegramId: number;
+  active: boolean;
+}): Promise<TelegramOperator | null> {
+  const [row] = await getDb()
+    .update(telegramOperators)
+    .set({ active: input.active, updatedAt: new Date() })
+    .where(eq(telegramOperators.telegramId, normalizeTelegramId(input.telegramId)))
+    .returning({
+      telegramId: telegramOperators.telegramId,
+      operatorId: telegramOperators.operatorId,
+      active: telegramOperators.active,
+      addedAt: telegramOperators.addedAt,
+      updatedAt: telegramOperators.updatedAt
+    });
+  if (!row) return null;
+  invalidateTelegramOperatorAllowlistCache();
+  return mapTelegramOperatorRow(row);
+}
+
+export async function deleteTelegramOperator(telegramId: number): Promise<{ deleted: boolean }> {
+  const rows = await getDb()
+    .delete(telegramOperators)
+    .where(eq(telegramOperators.telegramId, normalizeTelegramId(telegramId)))
+    .returning({ telegramId: telegramOperators.telegramId });
+  if (rows.length > 0) {
+    invalidateTelegramOperatorAllowlistCache();
   }
-  return map;
+  return { deleted: rows.length > 0 };
+}
+
+async function readTelegramOperatorAllowlist(): Promise<TelegramOperatorAllowlist> {
+  const rows = await listTelegramOperators({ activeOnly: true });
+  return new Map(rows.map((row) => [row.telegramId, row.operatorId]));
+}
+
+function mapTelegramOperatorRow(row: {
+  telegramId: number;
+  operatorId: string;
+  active: boolean;
+  addedAt: Date;
+  updatedAt: Date;
+}): TelegramOperator {
+  return {
+    telegramId: row.telegramId,
+    operatorId: row.operatorId,
+    active: row.active,
+    addedAt: row.addedAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+function normalizeTelegramId(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("telegramId must be a positive safe integer");
+  }
+  return value;
+}
+
+function normalizeTelegramOperatorId(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!uuidPatternForTelegram.test(normalized)) {
+    throw new Error("operatorId must be a UUID");
+  }
+  return normalized;
 }
 
 export async function processTelegramInboundUpdate(input: {
@@ -13809,7 +13959,7 @@ export async function processTelegramInboundUpdate(input: {
     const confirmation = parseConfirmCommand(args);
     const actorId = typeof fromId === "number" ? operatorAllowlist.get(fromId) : undefined;
     if (!actorId) {
-      const reply = `Unauthorized: your Telegram user id is not mapped to an operator.\nContact ops to be added to TELEGRAM_OPERATOR_MAP.`;
+      const reply = `Unauthorized: your Telegram user id is not mapped to an operator.\nContact ops to be added to telegram_operators.`;
       await db.transaction(async (tx) => {
         await enqueueTelegramNotificationJob(tx, {
           text: reply, entityType: "telegram_update", entityId: String(updateId),
@@ -13976,7 +14126,7 @@ export async function processTelegramInboundUpdate(input: {
     const approve = parseApproveCommand(args);
     const actorId = typeof fromId === "number" ? operatorAllowlist.get(fromId) : undefined;
     if (!actorId) {
-      const reply = `Unauthorized: your Telegram user id is not mapped to an operator.\nContact ops to be added to TELEGRAM_OPERATOR_MAP.`;
+      const reply = `Unauthorized: your Telegram user id is not mapped to an operator.\nContact ops to be added to telegram_operators.`;
       await db.transaction(async (tx) => {
         await enqueueTelegramNotificationJob(tx, {
           text: reply, entityType: "telegram_update", entityId: String(updateId),
@@ -14210,7 +14360,7 @@ export async function processTelegramInboundUpdate(input: {
   if (stateChange) {
     const actorId = typeof fromId === "number" ? operatorAllowlist.get(fromId) : undefined;
     if (!actorId) {
-      const reply = `Unauthorized: your Telegram user id is not mapped to an operator.\nContact ops to be added to TELEGRAM_OPERATOR_MAP.`;
+      const reply = `Unauthorized: your Telegram user id is not mapped to an operator.\nContact ops to be added to telegram_operators.`;
       await db.transaction(async (tx) => {
         await enqueueTelegramNotificationJob(tx, {
           text: reply, entityType: "telegram_update", entityId: String(updateId),
@@ -14287,8 +14437,6 @@ export async function processTelegramInboundUpdate(input: {
   });
   return { kind: "unknown", text };
 }
-
-const uuidPatternForTelegram = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function uniqueOverridableCodes(failures: PreSendGuardrailFailure[]): OverridableGuardrailCode[] {
   const valid = new Set<string>(overridableGuardrailCodes);
