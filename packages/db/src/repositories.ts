@@ -305,7 +305,7 @@ export async function pauseAllSendsCommand(input: {
     );
   }
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [current] = await tx
       .select({
         valueJson: systemState.valueJson,
@@ -423,6 +423,8 @@ export async function pauseAllSendsCommand(input: {
       deduplicated: false
     };
   });
+  invalidateOperationsCountersCache();
+  return result;
 }
 
 export async function resumeAllSendsCommand(input: {
@@ -438,7 +440,7 @@ export async function resumeAllSendsCommand(input: {
     );
   }
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [current] = await tx
       .select({
         valueJson: systemState.valueJson,
@@ -543,6 +545,8 @@ export async function resumeAllSendsCommand(input: {
       deduplicated: false
     };
   });
+  invalidateOperationsCountersCache();
+  return result;
 }
 
 export async function createStartCampaignCommand(input: {
@@ -778,10 +782,63 @@ export async function getOperationsEventFeed(input: OperationsEventFeedInput = {
 }
 
 // Operational counters for the Phase 7 hardening dashboard. Single function
-// runs all queries in parallel so the page renders in one round-trip; each
-// query is intentionally narrow (count or small group-by) so the page stays
-// cheap as the system grows.
+// caches one generated snapshot for a short interval so multiple operator tabs
+// do not re-run the same aggregate query bundle every render. Cold concurrent
+// callers share one in-flight promise.
+const OPERATIONS_COUNTERS_CACHE_TTL_MS = 1_000;
+
+type OperationsCountersCache = {
+  value: OperationsCounters | null;
+  expiresAtMs: number;
+  inFlight: Promise<OperationsCounters> | null;
+  generation: number;
+};
+
+const operationsCountersCache: OperationsCountersCache = {
+  value: null,
+  expiresAtMs: 0,
+  inFlight: null,
+  generation: 0
+};
+
+export function invalidateOperationsCountersCache(): void {
+  operationsCountersCache.value = null;
+  operationsCountersCache.expiresAtMs = 0;
+  operationsCountersCache.inFlight = null;
+  operationsCountersCache.generation += 1;
+}
+
 export async function getOperationsCounters(): Promise<OperationsCounters> {
+  const nowMs = Date.now();
+  if (operationsCountersCache.value && nowMs < operationsCountersCache.expiresAtMs) {
+    return operationsCountersCache.value;
+  }
+  if (operationsCountersCache.inFlight) {
+    return operationsCountersCache.inFlight;
+  }
+
+  const generation = operationsCountersCache.generation;
+  const inFlight = loadOperationsCounters().then(
+    (value) => {
+      if (operationsCountersCache.generation === generation) {
+        operationsCountersCache.value = value;
+        operationsCountersCache.expiresAtMs = Date.now() + OPERATIONS_COUNTERS_CACHE_TTL_MS;
+        operationsCountersCache.inFlight = null;
+      }
+      return value;
+    },
+    (error: unknown) => {
+      if (operationsCountersCache.generation === generation) {
+        operationsCountersCache.inFlight = null;
+      }
+      throw error;
+    }
+  );
+  operationsCountersCache.inFlight = inFlight;
+  return inFlight;
+}
+
+async function loadOperationsCounters(): Promise<OperationsCounters> {
   const db = getDb();
   const generatedAt = new Date();
   const heartbeatStaleSeconds = 30;

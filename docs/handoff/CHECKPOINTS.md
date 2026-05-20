@@ -65,7 +65,7 @@ Sync this file with every state change. One row per ticket. Update the **state**
 | T-020 | `/operations/events` live feed | done | codex | local | GitNexus MCP query/detect_changes transport closed; CLI status up-to-date at `85005a2`. CLI impact `OperationsPage`: LOW / 0 direct callers; new `getOperationsEventFeed` was not indexed yet. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright `/operations/events` smoke including correlation/eventType filter and 5s refresh. |
 | T-021 | Per-jobType SLA panel | done | codex | local | CLI impact `JobsByTypePage`: LOW / 0 direct callers. `getJobsByType` is not indexed by GitNexus; scoped manually to its only caller `/operations/jobs/[jobType]`. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright smoke on `/operations/jobs/job.index_rag_document`. |
 | T-022 | Campaign progress roll-up | done | codex | local | CLI impact `CampaignsIndexPage` and `CampaignDetailPage`: LOW / 0 direct callers. `listCampaignsForDashboard` and `getCampaignDiscoveryView` are not indexed by GitNexus; scoped manually to `/campaigns` and `/campaigns/[id]`. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright smoke on `/campaigns` + `/campaigns/[id]` using a temporary local DB fixture. |
-| T-023 | `getOperationsCounters` 1-second cache | todo |  |  |  |
+| T-023 | `getOperationsCounters` 1-second cache | done | codex | local | GitNexus impact: `getOperationsCounters`, `pauseAllSendsCommand`, and `resumeAllSendsCommand` are not indexed as symbols; fallback impact `OperationsPage`: LOW / 0 direct callers / 0 affected processes. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright `/operations` smoke. |
 | T-024 | DB-backed Telegram operator map | todo |  |  |  |
 | T-025 | Prometheus `/metrics` + OTLP skeleton | todo |  |  |  |
 | T-026 | Per-step non-critical Step 1–5 polish | todo |  |  |  |
@@ -231,9 +231,9 @@ Each section mirrors the acceptance criteria from `TICKETS.md`. Tick boxes as ea
 
 ## T-023 — `getOperationsCounters` 1-second cache
 
-- [ ] In-process cache with 1s TTL
-- [ ] Concurrent requests within TTL share one DB hit
-- [ ] Cache key invalidates on `system_state` change (optional bonus)
+- [x] In-process cache with 1s TTL
+- [x] Concurrent requests within TTL share one DB hit
+- [x] Cache key invalidates on `system_state` change (optional bonus)
 
 ## T-024 — DB-backed Telegram operator map
 
