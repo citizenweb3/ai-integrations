@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { after, test } from "node:test";
+import { eq, inArray } from "drizzle-orm";
 import {
   closeDb,
+  commands,
   configureOtlpExporterForTest,
+  eventLog,
+  flushOtlpExporterForTest,
+  getDb,
   getTraceBaggage,
   isOtlpExporterEnabled,
+  resumeAllSendsCommand,
   traceOperation
 } from "../src";
+import { POST as commandsPost } from "../../../apps/dashboard/app/api/commands/route";
 
 after(async () => {
   await closeDb();
@@ -65,6 +73,7 @@ test("OTLP tracing exports spans and propagates correlationId as baggage", async
     });
   });
 
+  await flushOtlpExporterForTest();
   assert.equal(exported.length, 2);
   assert.equal(exported[0]?.endpoint, "http://otel-collector:4318/v1/traces");
   const spans = exported.map((entry) => readOnlySpan(entry.payload));
@@ -79,11 +88,107 @@ test("OTLP tracing exports spans and propagates correlationId as baggage", async
   assert.equal(readStringAttribute(outer, "correlationId"), "corr-t025");
 });
 
+test("OTLP tracing does not block command execution when exporter hangs", async (t) => {
+  const previousEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  const previousTimeout = process.env.OTEL_EXPORTER_OTLP_TIMEOUT_MS;
+  process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector:4318";
+  process.env.OTEL_EXPORTER_OTLP_TIMEOUT_MS = "5";
+  t.after(() => restoreEndpoint(previousEndpoint));
+  t.after(() => restoreOptionalEnv("OTEL_EXPORTER_OTLP_TIMEOUT_MS", previousTimeout));
+
+  const restoreExporter = configureOtlpExporterForTest(async () => {
+    await new Promise<void>(() => {
+      // Simulates a collector/exporter that never responds.
+    });
+  });
+  t.after(restoreExporter);
+
+  const startedAt = Date.now();
+  await traceOperation({
+    serviceName: "test",
+    name: "test.hanging_exporter",
+    correlationId: "corr-hanging"
+  }, async () => "ok");
+
+  assert.ok(Date.now() - startedAt < 50);
+  await flushOtlpExporterForTest();
+});
+
+test("dashboard command trace exports the command correlationId", async (t) => {
+  const previousEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector:4318";
+  t.after(() => restoreEndpoint(previousEndpoint));
+
+  const exported: Array<{ endpoint: string; payload: Record<string, unknown> }> = [];
+  const restoreExporter = configureOtlpExporterForTest(async (endpoint, payload) => {
+    exported.push({ endpoint, payload });
+  });
+  t.after(restoreExporter);
+
+  const db = getDb();
+  const suffix = randomUUID();
+  const pauseIdempotencyKey = `pause_all_sends:t025-trace:${suffix}`;
+  const resumeIdempotencyKey = `resume_all_sends:t025-trace:${suffix}`;
+  t.after(async () => {
+    await resumeAllSendsCommand({
+      payload: {
+        idempotencyKey: resumeIdempotencyKey
+      }
+    });
+    const commandRows = await db
+      .select({ id: commands.id })
+      .from(commands)
+      .where(inArray(commands.idempotencyKey, [
+        pauseIdempotencyKey,
+        resumeIdempotencyKey
+      ]));
+    const commandIds = commandRows.map((row) => row.id);
+    if (commandIds.length > 0) {
+      await db.delete(eventLog).where(inArray(eventLog.commandId, commandIds));
+      await db.delete(commands).where(inArray(commands.id, commandIds));
+    }
+  });
+
+  const response = await commandsPost(new Request("http://localhost/api/commands", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-request-id": "req-t025-trace"
+    },
+    body: JSON.stringify({
+      commandType: "pause_all_sends",
+      payload: {
+        reason: `T-025 trace ${suffix}`,
+        idempotencyKey: pauseIdempotencyKey
+      }
+    })
+  }));
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { commandId: string };
+  const [command] = await db
+    .select({ correlationId: commands.correlationId })
+    .from(commands)
+    .where(eq(commands.id, body.commandId))
+    .limit(1);
+  assert.ok(command);
+
+  await flushOtlpExporterForTest();
+  const spans = exported.map((entry) => readOnlySpan(entry.payload));
+  const commandSpan = spans.find((span) => span.name === "dashboard.commandExecution");
+  assert.ok(commandSpan);
+  assert.equal(readStringAttribute(commandSpan, "correlationId"), command.correlationId);
+  assert.equal(readStringAttribute(commandSpan, "trace.baggage"), `correlationId=${command.correlationId}`);
+});
+
 function restoreEndpoint(value: string | undefined): void {
+  restoreOptionalEnv("OTEL_EXPORTER_OTLP_ENDPOINT", value);
+}
+
+function restoreOptionalEnv(key: string, value: string | undefined): void {
   if (value === undefined) {
-    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    delete process.env[key];
   } else {
-    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = value;
+    process.env[key] = value;
   }
 }
 

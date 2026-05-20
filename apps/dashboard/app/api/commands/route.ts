@@ -23,7 +23,8 @@ import {
   resolvePolicyStateCommand,
   runCampaignDiscoveryCommand,
   suppressContactCommand,
-  traceOperation
+  traceOperation,
+  type TraceSpanHandle
 } from "@bizdev/db";
 import { createCommandRequestSchema } from "@bizdev/shared";
 import { NextResponse } from "next/server";
@@ -42,11 +43,11 @@ export async function POST(request: Request) {
         method: request.method,
         requestId
       }
-    }, () => handlePost(request))
+    }, (span) => handlePost(request, span))
   );
 }
 
-async function handlePost(request: Request) {
+async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
   const contentType = request.headers.get("content-type") ?? "";
   const isJson = contentType.includes("application/json");
 
@@ -86,10 +87,10 @@ async function handlePost(request: Request) {
   try {
   switch (parsed.data.commandType) {
     case "start_campaign": {
-      const result = await createStartCampaignCommand({
+      const result = traceCommandResult(traceSpan, await createStartCampaignCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (isJson) {
         return NextResponse.json({
           campaignId: result.campaign.id,
@@ -114,11 +115,11 @@ async function handlePost(request: Request) {
         redirect.searchParams.set("error", `configuration_error: ${message}`);
         return NextResponse.redirect(redirect, { status: 303 });
       }
-      const result = await approveDraftForSendCommand({
+      const result = traceCommandResult(traceSpan, await approveDraftForSendCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload,
         fromEmail
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -139,10 +140,10 @@ async function handlePost(request: Request) {
     }
 
     case "pause_all_sends": {
-      const result = await pauseAllSendsCommand({
+      const result = traceCommandResult(traceSpan, await pauseAllSendsCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (isJson) {
         return NextResponse.json({
           commandId: result.command.id,
@@ -157,10 +158,10 @@ async function handlePost(request: Request) {
     }
 
     case "resume_all_sends": {
-      const result = await resumeAllSendsCommand({
+      const result = traceCommandResult(traceSpan, await resumeAllSendsCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (isJson) {
         return NextResponse.json({
           commandId: result.command.id,
@@ -173,10 +174,10 @@ async function handlePost(request: Request) {
     }
 
     case "attach_inbound_to_thread": {
-      const result = await attachInboundToThreadCommand({
+      const result = traceCommandResult(traceSpan, await attachInboundToThreadCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -199,10 +200,10 @@ async function handlePost(request: Request) {
     }
 
     case "suppress_contact": {
-      const result = await suppressContactCommand({
+      const result = traceCommandResult(traceSpan, await suppressContactCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -223,10 +224,10 @@ async function handlePost(request: Request) {
     }
 
     case "clear_suppression": {
-      const result = await clearSuppressionCommand({
+      const result = traceCommandResult(traceSpan, await clearSuppressionCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -246,10 +247,10 @@ async function handlePost(request: Request) {
     }
 
     case "approve_contact_candidate": {
-      const result = await approveContactCandidateCommand({
+      const result = traceCommandResult(traceSpan, await approveContactCandidateCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -271,10 +272,10 @@ async function handlePost(request: Request) {
     }
 
     case "reject_contact_candidate": {
-      const result = await rejectContactCandidateCommand({
+      const result = traceCommandResult(traceSpan, await rejectContactCandidateCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -294,10 +295,10 @@ async function handlePost(request: Request) {
     }
 
     case "create_draft": {
-      const result = await createDraftCommand({
+      const result = traceCommandResult(traceSpan, await createDraftCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -319,10 +320,10 @@ async function handlePost(request: Request) {
     }
 
     case "request_manual_edit_save": {
-      const result = await requestManualEditSaveCommand({
+      const result = traceCommandResult(traceSpan, await requestManualEditSaveCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -343,10 +344,10 @@ async function handlePost(request: Request) {
     }
 
     case "generate_draft": {
-      const result = await generateDraftCommand({
+      const result = traceCommandResult(traceSpan, await generateDraftCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -367,10 +368,10 @@ async function handlePost(request: Request) {
     }
 
     case "generate_warm_draft": {
-      const result = await generateWarmDraftCommand({
+      const result = traceCommandResult(traceSpan, await generateWarmDraftCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -391,10 +392,10 @@ async function handlePost(request: Request) {
     }
 
     case "request_ai_revise": {
-      const result = await requestAiReviseCommand({
+      const result = traceCommandResult(traceSpan, await requestAiReviseCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -415,10 +416,10 @@ async function handlePost(request: Request) {
     }
 
     case "request_research_more": {
-      const result = await requestResearchMoreCommand({
+      const result = traceCommandResult(traceSpan, await requestResearchMoreCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -439,10 +440,10 @@ async function handlePost(request: Request) {
     }
 
     case "mark_claim_resolved": {
-      const result = await markClaimResolvedCommand({
+      const result = traceCommandResult(traceSpan, await markClaimResolvedCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -465,10 +466,10 @@ async function handlePost(request: Request) {
     }
 
     case "discard_draft": {
-      const result = await discardDraftCommand({
+      const result = traceCommandResult(traceSpan, await discardDraftCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -489,10 +490,10 @@ async function handlePost(request: Request) {
     }
 
     case "refresh_research_snapshot": {
-      const result = await refreshResearchSnapshotCommand({
+      const result = traceCommandResult(traceSpan, await refreshResearchSnapshotCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -513,10 +514,10 @@ async function handlePost(request: Request) {
     }
 
     case "record_draft_feedback": {
-      const result = await recordDraftFeedbackCommand({
+      const result = traceCommandResult(traceSpan, await recordDraftFeedbackCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -536,10 +537,10 @@ async function handlePost(request: Request) {
     }
 
     case "recompute_quality_score": {
-      const result = await recomputeQualityScoreCommand({
+      const result = traceCommandResult(traceSpan, await recomputeQualityScoreCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -559,10 +560,10 @@ async function handlePost(request: Request) {
     }
 
     case "resolve_policy_state": {
-      const result = await resolvePolicyStateCommand({
+      const result = traceCommandResult(traceSpan, await resolvePolicyStateCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -582,10 +583,10 @@ async function handlePost(request: Request) {
     }
 
     case "run_campaign_discovery": {
-      const result = await runCampaignDiscoveryCommand({
+      const result = traceCommandResult(traceSpan, await runCampaignDiscoveryCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -606,10 +607,10 @@ async function handlePost(request: Request) {
     }
 
     case "accept_discovery_candidate": {
-      const result = await acceptDiscoveryCandidateCommand({
+      const result = traceCommandResult(traceSpan, await acceptDiscoveryCandidateCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -633,10 +634,10 @@ async function handlePost(request: Request) {
     }
 
     case "reject_discovery_candidate": {
-      const result = await rejectDiscoveryCandidateCommand({
+      const result = traceCommandResult(traceSpan, await rejectDiscoveryCandidateCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
-      });
+      }));
       if (!result.ok) {
         if (isJson) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
@@ -685,6 +686,25 @@ async function handlePost(request: Request) {
     );
     return NextResponse.redirect(redirect, { status: 303 });
   }
+}
+
+function traceCommandResult<T>(span: TraceSpanHandle | undefined, result: T): T {
+  const correlationId = readCommandCorrelationId(result);
+  if (correlationId) {
+    span?.setBaggage("correlationId", correlationId);
+    span?.setAttribute("correlationId", correlationId);
+  }
+  return result;
+}
+
+function readCommandCorrelationId(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const command = (result as { command?: unknown }).command;
+  if (!command || typeof command !== "object") return null;
+  const correlationId = (command as { correlationId?: unknown }).correlationId;
+  return typeof correlationId === "string" && correlationId.length > 0
+    ? correlationId
+    : null;
 }
 
 function safeRedirectUrl(request: Request): URL {

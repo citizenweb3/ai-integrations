@@ -220,6 +220,7 @@ type CompletedSpan = {
 type OtlpExporter = (endpoint: string, payload: Record<string, unknown>) => Promise<void>;
 
 const traceStorage = new AsyncLocalStorage<TraceContext>();
+const pendingTraceExports = new Set<Promise<void>>();
 let otlpExporter: OtlpExporter = defaultOtlpExporter;
 
 export async function traceOperation<T>(
@@ -277,7 +278,7 @@ export async function traceOperation<T>(
       if (baggageHeader) {
         attributes["trace.baggage"] = baggageHeader;
       }
-      await exportCompletedSpan({
+      queueCompletedSpanExport({
         serviceName: input.serviceName,
         name: input.name,
         kind: spanKind(input.kind ?? "internal"),
@@ -309,16 +310,45 @@ export function configureOtlpExporterForTest(exporter: OtlpExporter): () => void
   };
 }
 
-async function exportCompletedSpan(span: CompletedSpan): Promise<void> {
+export async function flushOtlpExporterForTest(): Promise<void> {
+  await Promise.allSettled([...pendingTraceExports]);
+}
+
+function queueCompletedSpanExport(span: CompletedSpan): void {
   const endpoint = readOtlpTraceEndpoint();
   if (!endpoint) return;
 
   const payload = buildOtlpTracePayload(span);
+  let exportCall: Promise<void>;
   try {
-    await otlpExporter(endpoint, payload);
+    exportCall = otlpExporter(endpoint, payload);
   } catch {
-    // Telemetry export must never affect command/job execution.
+    return;
   }
+  const exportPromise = withOtlpExportTimeout(exportCall)
+    .catch(() => {
+      // Telemetry export must never affect command/job execution.
+    })
+    .finally(() => {
+      pendingTraceExports.delete(exportPromise);
+    });
+  pendingTraceExports.add(exportPromise);
+}
+
+function withOtlpExportTimeout(exportPromise: Promise<void>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(resolve, readOtlpExportTimeoutMs());
+    exportPromise.then(
+      () => {
+        clearTimeout(timeout);
+        resolve();
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    );
+  });
 }
 
 function buildOtlpTracePayload(span: CompletedSpan): Record<string, unknown> {
@@ -372,11 +402,18 @@ function otlpStringAttribute(key: string, value: string): Record<string, unknown
 }
 
 async function defaultOtlpExporter(endpoint: string, payload: Record<string, unknown>): Promise<void> {
-  await fetch(endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), readOtlpExportTimeoutMs());
+  try {
+    await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function readOtlpTraceEndpoint(): string | null {
@@ -385,6 +422,12 @@ function readOtlpTraceEndpoint(): string | null {
   return raw.endsWith("/v1/traces")
     ? raw
     : `${raw.replace(/\/+$/, "")}/v1/traces`;
+}
+
+function readOtlpExportTimeoutMs(): number {
+  const raw = Number(process.env.OTEL_EXPORTER_OTLP_TIMEOUT_MS ?? 250);
+  if (!Number.isFinite(raw) || raw < 1) return 250;
+  return raw;
 }
 
 function spanKind(kind: NonNullable<TraceOperationInput["kind"]>): number {
