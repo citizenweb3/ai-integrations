@@ -74,6 +74,14 @@ export default async function CampaignsIndexPage() {
                       }
                     />
                   </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center border-t border-white/10 pt-4 mt-4">
+                    <CountTile label="Contacts" value={c.progress.contactsAccepted} />
+                    <CountTile label="Drafts" value={c.progress.draftsGenerated} />
+                    <CountTile label="Approved" value={c.progress.draftsApproved} />
+                    <CountTile label="Sent" value={c.progress.sent} />
+                    <CountTile label="Replies" value={c.progress.replied} accent={c.progress.replied > 0} />
+                  </div>
                 </Card>
               </Link>
             ))}
