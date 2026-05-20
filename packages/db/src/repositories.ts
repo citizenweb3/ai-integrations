@@ -85,6 +85,7 @@ import {
   drafts,
   eventLog,
   inboundMessages,
+  inboxViews,
   jobs,
   jobRuns,
   contacts,
@@ -15537,11 +15538,35 @@ export type InboxWorkItemRow = {
   updatedAt: Date;
 };
 
+export type InboxViewFilter = {
+  types?: string[];
+  statuses?: string[];
+  campaignIds?: string[];
+  priorityMin?: number;
+  fromEmail?: string;
+};
+
+export type InboxSavedView = {
+  id: string;
+  operatorId: string;
+  name: string;
+  filterJson: InboxViewFilter;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type InboxView = {
   tab: InboxTab;
   counts: Record<InboxTab, number>;
+  totalCount: number;
   items: InboxWorkItemRow[];
+  nextCursor: string | null;
+  savedViews: InboxSavedView[];
+  activeSavedView: InboxSavedView | null;
 };
+
+export const DEFAULT_INBOX_OPERATOR_ID = "local-operator";
+const INBOX_PAGE_SIZE = 200;
 
 const inboxTabTypeFilters: Record<Exclude<InboxTab, "all">, string[]> = {
   needs_reply: ["unmatched_inbound_message", "thread_match_ambiguous"],
@@ -15561,8 +15586,28 @@ const inboxOpenStatusSql = sql`(
   or (${workItems.status} = 'snoozed' and ${workItems.availableAt} <= now())
 )`;
 
-export async function getInboxView(tab: InboxTab): Promise<InboxView> {
+export type GetInboxViewInput = {
+  tab?: InboxTab;
+  operatorId?: string;
+  savedViewId?: string | null;
+  cursor?: string | null;
+  limit?: number;
+};
+
+export async function getInboxView(input: InboxTab | GetInboxViewInput = "needs_reply"): Promise<InboxView> {
   const db = getDb();
+  const request = typeof input === "string" ? { tab: input } : input;
+  const tab = request.tab ?? "needs_reply";
+  const operatorId = normalizeOperatorId(request.operatorId);
+  const savedViews = await listInboxViews(operatorId);
+  const activeSavedView = request.savedViewId
+    ? savedViews.find((view) => view.id === request.savedViewId) ?? null
+    : null;
+  const activeFilter = activeSavedView
+    ? inboxSavedViewFilterSql(activeSavedView.filterJson)
+    : inboxTabFilterSql(tab);
+  const cursor = decodeInboxCursor(request.cursor ?? null);
+  const limit = Math.min(Math.max(request.limit ?? INBOX_PAGE_SIZE, 1), INBOX_PAGE_SIZE);
   const counts: Record<InboxTab, number> = {
     needs_reply: 0,
     awaiting_approval: 0,
@@ -15598,6 +15643,12 @@ export async function getInboxView(tab: InboxTab): Promise<InboxView> {
     }
   }
 
+  const [totalRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(workItems)
+    .where(and(inboxOpenStatusSql, activeFilter));
+  const totalCount = toNumber(totalRow?.count ?? 0);
+
   const itemRows = await db
     .select({
       id: workItems.id,
@@ -15613,11 +15664,20 @@ export async function getInboxView(tab: InboxTab): Promise<InboxView> {
       updatedAt: workItems.updatedAt
     })
     .from(workItems)
-    .where(and(inboxOpenStatusSql, inboxTabFilterSql(tab)))
-    .orderBy(desc(workItems.priority), desc(workItems.createdAt))
-    .limit(200);
+    .where(and(
+      inboxOpenStatusSql,
+      activeFilter,
+      cursor ? inboxCursorSql(cursor) : sql`true`
+    ))
+    .orderBy(desc(workItems.priority), desc(workItems.createdAt), desc(workItems.id))
+    .limit(limit + 1);
 
-  const items = itemRows.map((row) => ({
+  const visibleRows = itemRows.slice(0, limit);
+  const nextCursor = itemRows.length > limit
+    ? encodeInboxCursor(visibleRows[visibleRows.length - 1])
+    : null;
+
+  const items = visibleRows.map((row) => ({
     id: row.id,
     type: row.type,
     status: row.status,
@@ -15631,7 +15691,112 @@ export async function getInboxView(tab: InboxTab): Promise<InboxView> {
     updatedAt: row.updatedAt
   }));
 
-  return { tab, counts, items };
+  return { tab, counts, totalCount, items, nextCursor, savedViews, activeSavedView };
+}
+
+export async function listInboxViews(operatorId = DEFAULT_INBOX_OPERATOR_ID): Promise<InboxSavedView[]> {
+  const rows = await getDb()
+    .select({
+      id: inboxViews.id,
+      operatorId: inboxViews.operatorId,
+      name: inboxViews.name,
+      filterJson: inboxViews.filterJson,
+      createdAt: inboxViews.createdAt,
+      updatedAt: inboxViews.updatedAt
+    })
+    .from(inboxViews)
+    .where(eq(inboxViews.operatorId, normalizeOperatorId(operatorId)))
+    .orderBy(asc(inboxViews.name), asc(inboxViews.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    operatorId: row.operatorId,
+    name: row.name,
+    filterJson: normalizeInboxViewFilter(row.filterJson),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  }));
+}
+
+export async function createInboxView(input: {
+  operatorId?: string;
+  name: string;
+  filterJson?: unknown;
+}): Promise<InboxSavedView> {
+  const db = getDb();
+  const operatorId = normalizeOperatorId(input.operatorId);
+  const name = normalizeInboxViewName(input.name);
+  const filterJson = normalizeInboxViewFilter(input.filterJson ?? {});
+  const [row] = await db
+    .insert(inboxViews)
+    .values({ operatorId, name, filterJson })
+    .returning({
+      id: inboxViews.id,
+      operatorId: inboxViews.operatorId,
+      name: inboxViews.name,
+      filterJson: inboxViews.filterJson,
+      createdAt: inboxViews.createdAt,
+      updatedAt: inboxViews.updatedAt
+    });
+  if (!row) {
+    throw new Error("Failed to create inbox view");
+  }
+  return {
+    id: row.id,
+    operatorId: row.operatorId,
+    name: row.name,
+    filterJson: normalizeInboxViewFilter(row.filterJson),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+export async function updateInboxView(input: {
+  id: string;
+  operatorId?: string;
+  name: string;
+  filterJson?: unknown;
+}): Promise<InboxSavedView | null> {
+  const operatorId = normalizeOperatorId(input.operatorId);
+  const name = normalizeInboxViewName(input.name);
+  const filterJson = normalizeInboxViewFilter(input.filterJson ?? {});
+  const [row] = await getDb()
+    .update(inboxViews)
+    .set({ name, filterJson, updatedAt: new Date() })
+    .where(and(eq(inboxViews.id, input.id), eq(inboxViews.operatorId, operatorId)))
+    .returning({
+      id: inboxViews.id,
+      operatorId: inboxViews.operatorId,
+      name: inboxViews.name,
+      filterJson: inboxViews.filterJson,
+      createdAt: inboxViews.createdAt,
+      updatedAt: inboxViews.updatedAt
+    });
+  if (!row) {
+    return null;
+  }
+  return {
+    id: row.id,
+    operatorId: row.operatorId,
+    name: row.name,
+    filterJson: normalizeInboxViewFilter(row.filterJson),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+export async function deleteInboxView(input: {
+  id: string;
+  operatorId?: string;
+}): Promise<{ deleted: boolean }> {
+  const rows = await getDb()
+    .delete(inboxViews)
+    .where(and(
+      eq(inboxViews.id, input.id),
+      eq(inboxViews.operatorId, normalizeOperatorId(input.operatorId))
+    ))
+    .returning({ id: inboxViews.id });
+  return { deleted: rows.length > 0 };
 }
 
 function inboxTabFilterSql(tab: InboxTab) {
@@ -15644,6 +15809,135 @@ function inboxTabFilterSql(tab: InboxTab) {
   }
   const types = inboxTabTypeFilters[tab];
   return inArray(workItems.type, types);
+}
+
+function inboxSavedViewFilterSql(filter: InboxViewFilter) {
+  const clauses = [];
+  if (filter.types && filter.types.length > 0) {
+    clauses.push(inArray(workItems.type, filter.types));
+  }
+  if (filter.statuses && filter.statuses.length > 0) {
+    clauses.push(inArray(workItems.status, filter.statuses));
+  }
+  if (filter.campaignIds && filter.campaignIds.length > 0) {
+    clauses.push(inArray(workItems.campaignId, filter.campaignIds));
+  }
+  if (filter.priorityMin !== undefined) {
+    clauses.push(gte(workItems.priority, filter.priorityMin));
+  }
+  if (filter.fromEmail) {
+    clauses.push(sql`exists (
+      select 1
+      from inbound_messages im
+      where im.id = ${workItems.inboundMessageId}
+        and lower(im.from_email) like ${`%${escapeLike(filter.fromEmail.toLowerCase())}%`} escape '\\'
+    )`);
+  }
+  return clauses.length > 0 ? and(...clauses) : sql`true`;
+}
+
+function inboxCursorSql(cursor: { priority: number; createdAt: string; id: string }) {
+  return sql`(
+    ${workItems.priority} < ${cursor.priority}
+    or (
+      ${workItems.priority} = ${cursor.priority}
+      and ${workItems.createdAt} < ${cursor.createdAt}::timestamptz
+    )
+    or (
+      ${workItems.priority} = ${cursor.priority}
+      and ${workItems.createdAt} = ${cursor.createdAt}::timestamptz
+      and ${workItems.id} < ${cursor.id}::uuid
+    )
+  )`;
+}
+
+function encodeInboxCursor(row: { priority: number; createdAt: Date; id: string } | undefined): string | null {
+  if (!row) return null;
+  return Buffer
+    .from(JSON.stringify({
+      priority: row.priority,
+      createdAt: row.createdAt.toISOString(),
+      id: row.id
+    }))
+    .toString("base64url");
+}
+
+function decodeInboxCursor(value: string | null): { priority: number; createdAt: string; id: string } | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
+    const priority = parsed["priority"];
+    const createdAt = parsed["createdAt"];
+    const id = parsed["id"];
+    if (
+      typeof priority === "number"
+      && Number.isInteger(priority)
+      && typeof createdAt === "string"
+      && !Number.isNaN(new Date(createdAt).getTime())
+      && typeof id === "string"
+      && isUuid(id)
+    ) {
+      return { priority, createdAt, id };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function normalizeInboxViewFilter(input: unknown): InboxViewFilter {
+  const record = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const types = normalizeStringList(record["types"]);
+  const statuses = normalizeStringList(record["statuses"]);
+  const campaignIds = normalizeStringList(record["campaignIds"]).filter(isUuid);
+  const priorityMinRaw = record["priorityMin"];
+  const priorityMin = typeof priorityMinRaw === "number"
+    ? priorityMinRaw
+    : typeof priorityMinRaw === "string" && priorityMinRaw.trim().length > 0
+      ? Number(priorityMinRaw)
+      : undefined;
+  const fromEmailRaw = record["fromEmail"];
+  const fromEmail = typeof fromEmailRaw === "string" ? fromEmailRaw.trim().slice(0, 320) : "";
+
+  return {
+    ...(types.length > 0 ? { types } : {}),
+    ...(statuses.length > 0 ? { statuses } : {}),
+    ...(campaignIds.length > 0 ? { campaignIds } : {}),
+    ...(priorityMin !== undefined && Number.isFinite(priorityMin)
+      ? { priorityMin: Math.max(0, Math.floor(priorityMin)) }
+      : {}),
+    ...(fromEmail ? { fromEmail } : {})
+  };
+}
+
+function normalizeStringList(value: unknown): string[] {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  return [...new Set(values
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(0, 50))];
+}
+
+function normalizeOperatorId(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed || DEFAULT_INBOX_OPERATOR_ID;
+}
+
+function normalizeInboxViewName(value: string): string {
+  const name = value.trim().replace(/\s+/g, " ").slice(0, 80);
+  if (!name) {
+    throw new Error("Inbox view name is required");
+  }
+  return name;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
 export type PoliciesView = {

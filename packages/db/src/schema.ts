@@ -482,6 +482,18 @@ export const workItems = pgTable("work_items", {
   typeStatusIdx: index("work_items_type_status_idx").on(table.type, table.status)
 }));
 
+export const inboxViews = pgTable("inbox_views", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  operatorId: text("operator_id").notNull(),
+  name: text("name").notNull(),
+  filterJson: jsonb("filter_json").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: createdAt(),
+  updatedAt: updatedAt()
+}, (table) => ({
+  operatorIdx: index("inbox_views_operator_idx").on(table.operatorId, table.name),
+  operatorNameUidx: uniqueIndex("inbox_views_operator_name_uidx").on(table.operatorId, table.name)
+}));
+
 export const idempotencyRegistry = pgTable("idempotency_registry", {
   id: uuid("id").primaryKey().defaultRandom(),
   idempotencyKey: text("idempotency_key").notNull(),
