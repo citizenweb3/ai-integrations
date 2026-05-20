@@ -66,7 +66,7 @@ Sync this file with every state change. One row per ticket. Update the **state**
 | T-021 | Per-jobType SLA panel | done | codex | local | CLI impact `JobsByTypePage`: LOW / 0 direct callers. `getJobsByType` is not indexed by GitNexus; scoped manually to its only caller `/operations/jobs/[jobType]`. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright smoke on `/operations/jobs/job.index_rag_document`. |
 | T-022 | Campaign progress roll-up | done | codex | local | CLI impact `CampaignsIndexPage` and `CampaignDetailPage`: LOW / 0 direct callers. `listCampaignsForDashboard` and `getCampaignDiscoveryView` are not indexed by GitNexus; scoped manually to `/campaigns` and `/campaigns/[id]`. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright smoke on `/campaigns` + `/campaigns/[id]` using a temporary local DB fixture. |
 | T-023 | `getOperationsCounters` 1-second cache | done | codex | local | GitNexus impact: `getOperationsCounters`, `pauseAllSendsCommand`, and `resumeAllSendsCommand` are not indexed as symbols; fallback impact `OperationsPage`: LOW / 0 direct callers / 0 affected processes. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright `/operations` smoke. |
-| T-024 | DB-backed Telegram operator map | todo |  |  |  |
+| T-024 | DB-backed Telegram operator map | done | codex | local | GitNexus impact could not resolve `parseTelegramOperatorAllowlist` / `processTelegramInboundUpdate`; Telegram webhook `POST` context has no incoming callers, but name-only impact resolves another route, so scope was tracked manually against Telegram route + DB repository + migration/test. `operator_id` is UUID without FK because the schema has no first-class operators table yet. Verified with focused DB/route test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. |
 | T-025 | Prometheus `/metrics` + OTLP skeleton | todo |  |  |  |
 | T-026 | Per-step non-critical Step 1–5 polish | todo |  |  |  |
 | T-027 | Step 9 polish bundle | todo |  |  |  |
@@ -237,9 +237,9 @@ Each section mirrors the acceptance criteria from `TICKETS.md`. Tick boxes as ea
 
 ## T-024 — DB-backed Telegram operator map
 
-- [ ] `telegram_operators` table + CRUD
-- [ ] Dashboard reads from DB with 30s in-process cache
-- [ ] Removing the env var no longer blocks the bot
+- [x] `telegram_operators` table + CRUD
+- [x] Dashboard reads from DB with 30s in-process cache
+- [x] Removing the env var no longer blocks the bot
 
 ## T-025 — Prometheus `/metrics` + OTLP skeleton
 
