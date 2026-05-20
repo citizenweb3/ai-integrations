@@ -61,7 +61,7 @@ Sync this file with every state change. One row per ticket. Update the **state**
 
 | Ticket | Title | State | Owner | PR | Notes |
 |--------|-------|-------|-------|----|----|
-| T-019 | Inbox saved-views + pagination | todo |  |  |  |
+| T-019 | Inbox saved-views + pagination | done | codex | local | GitNexus MCP detect_changes transport closed; impact: InboxPage LOW/0; getInboxView not indexed by CLI, verified with focused DB tests, verify:db, yarn verify, and Playwright /inbox smoke. |
 | T-020 | `/operations/events` live feed | todo |  |  |  |
 | T-021 | Per-jobType SLA panel | todo |  |  |  |
 | T-022 | Campaign progress roll-up | todo |  |  |  |
@@ -207,9 +207,9 @@ Each section mirrors the acceptance criteria from `TICKETS.md`. Tick boxes as ea
 
 ## T-019 — Inbox saved-views + pagination
 
-- [ ] Cursor pagination keyed by `(priority desc, createdAt desc, id)` + "Load 200 more"
-- [ ] Total count banner above list
-- [ ] `inbox_views` table + per-operator CRUD
+- [x] Cursor pagination keyed by `(priority desc, createdAt desc, id)` + "Load 200 more"
+- [x] Total count banner above list
+- [x] `inbox_views` table + per-operator CRUD
 
 ## T-020 — `/operations/events` live feed
 
