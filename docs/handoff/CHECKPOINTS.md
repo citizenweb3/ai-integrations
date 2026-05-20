@@ -62,7 +62,7 @@ Sync this file with every state change. One row per ticket. Update the **state**
 | Ticket | Title | State | Owner | PR | Notes |
 |--------|-------|-------|-------|----|----|
 | T-019 | Inbox saved-views + pagination | done | codex | local | GitNexus MCP detect_changes transport closed; impact: InboxPage LOW/0; getInboxView not indexed by CLI, verified with focused DB tests, verify:db, yarn verify, and Playwright /inbox smoke. |
-| T-020 | `/operations/events` live feed | todo |  |  |  |
+| T-020 | `/operations/events` live feed | done | codex | local | GitNexus MCP query/detect_changes transport closed; CLI status up-to-date at `85005a2`. CLI impact `OperationsPage`: LOW / 0 direct callers; new `getOperationsEventFeed` was not indexed yet. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright `/operations/events` smoke including correlation/eventType filter and 5s refresh. |
 | T-021 | Per-jobType SLA panel | todo |  |  |  |
 | T-022 | Campaign progress roll-up | todo |  |  |  |
 | T-023 | `getOperationsCounters` 1-second cache | todo |  |  |  |
@@ -213,9 +213,9 @@ Each section mirrors the acceptance criteria from `TICKETS.md`. Tick boxes as ea
 
 ## T-020 — `/operations/events` live feed
 
-- [ ] Last 500 rows render with filters on eventType / correlationId / time range
-- [ ] Polling or SSE refresh every 5s
-- [ ] Search by `correlationId` works end-to-end
+- [x] Last 500 rows render with filters on eventType / correlationId / time range
+- [x] Polling or SSE refresh every 5s
+- [x] Search by `correlationId` works end-to-end
 
 ## T-021 — Per-jobType SLA panel
 

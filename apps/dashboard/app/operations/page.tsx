@@ -3,7 +3,7 @@ import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
-import { Badge, MetricCard, PageBody } from "@/components/ui";
+import { Badge, MetricCard, PageBody, PillLink } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +46,10 @@ export default async function OperationsPage() {
       />
 
       <PageBody>
+        <div className="flex flex-wrap gap-2">
+          <PillLink href="/operations/events">Event feed</PillLink>
+        </div>
+
         {sendsPause.paused ? (
           <div className="rounded-lg border border-red-400/40 bg-red-950/30 p-4">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
