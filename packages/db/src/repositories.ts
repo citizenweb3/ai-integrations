@@ -53,6 +53,7 @@ import {
   type SuppressContactPayload,
   type WorkItemAction,
   computeJobBackoffSeconds,
+  eventTypes,
   getJobRetryPolicy,
   hardSuppressionReasons,
   isNonRetryableJobError,
@@ -67,11 +68,12 @@ import {
   type ReplyClassConfidence,
   type DedupeResult,
   type DiscoveryCandidateStatus,
+  type EventType,
   agentTokenUsageSchema,
   type AgentTokenUsage
 } from "@bizdev/shared";
 import { dedupeOrganization, type DedupeDb } from "./dedupe";
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "./client";
 import { getSchemaCompatibility, type SchemaCompatibilitySnapshot } from "./schema-compatibility";
@@ -659,6 +661,121 @@ export type OperationsCounters = {
   };
   sendsPause: SendsPauseState;
 };
+
+export const OPERATIONS_EVENT_FEED_LIMIT = 500;
+
+export type OperationsEventFeedInput = {
+  eventType?: string | null;
+  correlationId?: string | null;
+  from?: Date | string | null;
+  to?: Date | string | null;
+  limit?: number;
+};
+
+export type OperationsEventFeedFilters = {
+  eventType: EventType | null;
+  correlationId: string | null;
+  correlationIdValid: boolean;
+  from: Date | null;
+  to: Date | null;
+  limit: number;
+};
+
+export type OperationsEventFeedRow = {
+  id: string;
+  eventType: string;
+  entityType: string | null;
+  entityId: string | null;
+  commandId: string | null;
+  jobId: string | null;
+  correlationId: string;
+  payloadJson: JsonRecord;
+  createdAt: Date;
+};
+
+export type OperationsEventFeed = {
+  generatedAt: Date;
+  filters: OperationsEventFeedFilters;
+  eventTypes: readonly EventType[];
+  rows: OperationsEventFeedRow[];
+};
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeOperationsEventType(value: string | null | undefined): EventType | null {
+  const candidate = value?.trim();
+  if (!candidate) return null;
+  return (eventTypes as readonly string[]).includes(candidate) ? (candidate as EventType) : null;
+}
+
+function normalizeOperationsCorrelationId(value: string | null | undefined): {
+  value: string | null;
+  valid: boolean;
+} {
+  const candidate = value?.trim();
+  if (!candidate) return { value: null, valid: true };
+  return { value: candidate.toLowerCase(), valid: uuidPattern.test(candidate) };
+}
+
+function parseOperationsDate(value: Date | string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeOperationsEventLimit(value: number | undefined): number {
+  if (value === undefined) return OPERATIONS_EVENT_FEED_LIMIT;
+  if (!Number.isFinite(value)) return OPERATIONS_EVENT_FEED_LIMIT;
+  return Math.min(Math.max(Math.trunc(value), 1), OPERATIONS_EVENT_FEED_LIMIT);
+}
+
+export async function getOperationsEventFeed(input: OperationsEventFeedInput = {}): Promise<OperationsEventFeed> {
+  const db = getDb();
+  const eventType = normalizeOperationsEventType(input.eventType);
+  const correlationId = normalizeOperationsCorrelationId(input.correlationId);
+  const from = parseOperationsDate(input.from);
+  const to = parseOperationsDate(input.to);
+  const limit = normalizeOperationsEventLimit(input.limit);
+  const conditions: SQL[] = [];
+
+  if (eventType) conditions.push(eq(eventLog.eventType, eventType));
+  if (correlationId.value) {
+    conditions.push(correlationId.valid ? eq(eventLog.correlationId, correlationId.value) : sql`false`);
+  }
+  if (from) conditions.push(gte(eventLog.createdAt, from));
+  if (to) conditions.push(lte(eventLog.createdAt, to));
+
+  const rows = await db
+    .select({
+      id: eventLog.id,
+      eventType: eventLog.eventType,
+      entityType: eventLog.entityType,
+      entityId: eventLog.entityId,
+      commandId: eventLog.commandId,
+      jobId: eventLog.jobId,
+      correlationId: eventLog.correlationId,
+      payloadJson: eventLog.payloadJson,
+      createdAt: eventLog.createdAt
+    })
+    .from(eventLog)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(eventLog.createdAt), desc(eventLog.id))
+    .limit(limit);
+
+  return {
+    generatedAt: new Date(),
+    filters: {
+      eventType,
+      correlationId: correlationId.value,
+      correlationIdValid: correlationId.valid,
+      from,
+      to,
+      limit
+    },
+    eventTypes,
+    rows
+  };
+}
 
 // Operational counters for the Phase 7 hardening dashboard. Single function
 // runs all queries in parallel so the page renders in one round-trip; each
