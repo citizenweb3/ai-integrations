@@ -63,7 +63,7 @@ Sync this file with every state change. One row per ticket. Update the **state**
 |--------|-------|-------|-------|----|----|
 | T-019 | Inbox saved-views + pagination | done | codex | local | GitNexus MCP detect_changes transport closed; impact: InboxPage LOW/0; getInboxView not indexed by CLI, verified with focused DB tests, verify:db, yarn verify, and Playwright /inbox smoke. |
 | T-020 | `/operations/events` live feed | done | codex | local | GitNexus MCP query/detect_changes transport closed; CLI status up-to-date at `85005a2`. CLI impact `OperationsPage`: LOW / 0 direct callers; new `getOperationsEventFeed` was not indexed yet. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright `/operations/events` smoke including correlation/eventType filter and 5s refresh. |
-| T-021 | Per-jobType SLA panel | todo |  |  |  |
+| T-021 | Per-jobType SLA panel | done | codex | local | CLI impact `JobsByTypePage`: LOW / 0 direct callers. `getJobsByType` is not indexed by GitNexus; scoped manually to its only caller `/operations/jobs/[jobType]`. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright smoke on `/operations/jobs/job.index_rag_document`. |
 | T-022 | Campaign progress roll-up | todo |  |  |  |
 | T-023 | `getOperationsCounters` 1-second cache | todo |  |  |  |
 | T-024 | DB-backed Telegram operator map | todo |  |  |  |
@@ -219,9 +219,9 @@ Each section mirrors the acceptance criteria from `TICKETS.md`. Tick boxes as ea
 
 ## T-021 — Per-jobType SLA panel
 
-- [ ] p50/p95 over 24h
-- [ ] Success rate + dead-letter-rate by reason
-- [ ] Renders on `/operations/jobs/[jobType]`
+- [x] p50/p95 over 24h
+- [x] Success rate + dead-letter-rate by reason
+- [x] Renders on `/operations/jobs/[jobType]`
 
 ## T-022 — Campaign progress roll-up
 
