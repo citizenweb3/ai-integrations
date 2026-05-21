@@ -12,7 +12,19 @@ Sync this file with every state change. One row per ticket. Update the **state**
 | `review` | PR raised, awaiting code review. |
 | `merged` | PR merged into `main`. |
 | `verified` | Smoke-tested in production-like environment; acceptance criteria observed. |
+| `done` | Locally implemented, merged, and verified without a remote PR. |
 | `abandoned` | Decided not to ship (record why in notes). |
+
+## Completion tally
+
+As of 2026-05-21, the production-readiness wave is locally complete:
+
+- P0: 5/5 done.
+- P1: 6/6 done.
+- P2: 7/7 done.
+- P3: 10/10 done.
+- Total: 28/28 tickets done, all acceptance checkpoints ticked.
+- No remote PRs were pushed; all work was merged locally into `main`.
 
 ## How to update
 
