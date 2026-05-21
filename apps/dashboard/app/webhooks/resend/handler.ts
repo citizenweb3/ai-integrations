@@ -16,10 +16,6 @@ export async function handleResendWebhook(request: Request, channel: ResendWebho
   if (!signatureResult.ok) {
     return NextResponse.json({ error: signatureResult.error }, { status: signatureResult.status });
   }
-  if (!await claimWebhookEventNonce(signatureResult.svixId)) {
-    return NextResponse.json({ deduplicated: true });
-  }
-
   const parsedBody = parseJsonBody(rawBody);
   if (!parsedBody.ok) {
     return NextResponse.json({ error: parsedBody.error }, { status: 400 });
@@ -31,6 +27,16 @@ export async function handleResendWebhook(request: Request, channel: ResendWebho
 
   if (!eventType) {
     return NextResponse.json({ error: "Missing Resend event type" }, { status: 400 });
+  }
+  if (!isEventTypeAllowedForChannel(channel, eventType)) {
+    return NextResponse.json(
+      { error: `Resend event type ${eventType} is not allowed on ${channel} webhook` },
+      { status: 400 }
+    );
+  }
+
+  if (!await claimWebhookEventNonce(signatureResult.svixId)) {
+    return NextResponse.json({ deduplicated: true });
   }
 
   const providerEventId = readString(parsedBody.value, ["id"])
@@ -163,6 +169,12 @@ function classifySuppressionReason(eventType: string): string | undefined {
     return "unsubscribe";
   }
   return undefined;
+}
+
+function isEventTypeAllowedForChannel(channel: ResendWebhookChannel, eventType: string): boolean {
+  const normalized = eventType.toLowerCase();
+  const isInbound = normalized === "email.received" || normalized === "received";
+  return channel === "inbound" ? isInbound : !isInbound;
 }
 
 function extractRecipientEmail(body: JsonRecord): string | undefined {
