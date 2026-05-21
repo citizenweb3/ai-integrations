@@ -199,6 +199,74 @@ test("delivery and inbound webhook routes use independent signing secrets", asyn
   context.cleanupSvixIds.push(deliverySvixId, inboundSvixId, deliveryAfterInboundRotationSvixId);
 });
 
+test("webhook routes reject event types from the other channel without claiming nonce", async (t) => {
+  const context = await withWebhookSecret(t);
+  const deliveryOnInboundBody = JSON.stringify({
+    id: `evt_${randomUUID()}`,
+    type: "email.delivered",
+    data: { email_id: `email_${randomUUID()}`, to: "wrong-channel-delivery@example.com" }
+  });
+  const inboundOnDeliveryBody = JSON.stringify({
+    id: `evt_${randomUUID()}`,
+    type: "email.received",
+    data: {
+      email_id: `email_${randomUUID()}`,
+      from: "reply@example.com",
+      to: "wrong-channel-inbound@example.com",
+      subject: "Re: channel",
+      text: "Reply"
+    }
+  });
+  const deliveryOnInboundSvixId = `msg_${randomUUID()}`;
+  const inboundOnDeliverySvixId = `msg_${randomUUID()}`;
+
+  const deliveryOnInbound = await resendInboundWebhookPost(signedRequest({
+    svixId: deliveryOnInboundSvixId,
+    body: deliveryOnInboundBody,
+    secretBytes: inboundSecretBytes,
+    path: "/webhooks/resend/inbound"
+  }));
+  assert.equal(deliveryOnInbound.status, 400);
+  assert.match((await deliveryOnInbound.json()).error, /not allowed on inbound webhook/);
+
+  const inboundOnDelivery = await resendDeliveryWebhookPost(signedRequest({
+    svixId: inboundOnDeliverySvixId,
+    body: inboundOnDeliveryBody,
+    secretBytes: deliverySecretBytes,
+    path: "/webhooks/resend/events"
+  }));
+  assert.equal(inboundOnDelivery.status, 400);
+  assert.match((await inboundOnDelivery.json()).error, /not allowed on delivery webhook/);
+
+  const nonces = await getDb()
+    .select({ svixId: webhookEventNonces.svixId })
+    .from(webhookEventNonces)
+    .where(inArray(webhookEventNonces.svixId, [deliveryOnInboundSvixId, inboundOnDeliverySvixId]));
+  assert.equal(nonces.length, 0);
+
+  const deliveryOnDelivery = await resendDeliveryWebhookPost(signedRequest({
+    svixId: deliveryOnInboundSvixId,
+    body: deliveryOnInboundBody,
+    secretBytes: deliverySecretBytes,
+    path: "/webhooks/resend/events"
+  }));
+  assert.equal(deliveryOnDelivery.status, 200);
+  assert.equal((await deliveryOnDelivery.json()).received, true);
+
+  const inboundOnInbound = await resendInboundWebhookPost(signedRequest({
+    svixId: inboundOnDeliverySvixId,
+    body: inboundOnDeliveryBody,
+    secretBytes: inboundSecretBytes,
+    path: "/webhooks/resend/inbound"
+  }));
+  assert.equal(inboundOnInbound.status, 200);
+  assert.equal((await inboundOnInbound.json()).received, true);
+
+  context.cleanupProviderEventIds.push(JSON.parse(deliveryOnInboundBody).id);
+  context.cleanupProviderEventIds.push(JSON.parse(inboundOnDeliveryBody).id);
+  context.cleanupSvixIds.push(deliveryOnInboundSvixId, inboundOnDeliverySvixId);
+});
+
 function signedRequest(input: { svixId: string; body: string; secretBytes: Buffer; path: string }): Request {
   const timestamp = `${Math.floor(Date.now() / 1000)}`;
   const signature = createHmac("sha256", input.secretBytes)
