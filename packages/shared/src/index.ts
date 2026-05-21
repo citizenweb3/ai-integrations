@@ -232,6 +232,7 @@ export const eventTypes = [
   "agent_run_failed",
   "research_snapshot_refreshed",
   "research_snapshot_router_failed",
+  "manual_org_research_completed",
   "contact_candidate_approved",
   "contact_candidate_rejected",
   "reply_classified",
@@ -382,10 +383,11 @@ export const editSeveritySignalTags = [
 export type EditSeveritySignalTag = (typeof editSeveritySignalTags)[number];
 
 // Canonical §62.5937-5983 — every draft_versions and draft_feedback row is
-// routed to one of three learning corpora at write time so Phase 6 RAG can
+// routed to one of the learning corpora at write time so Phase 6 RAG can
 // pull positive examples and negative anti-patterns separately. `neutral`
-// rows are kept for audit/debug but excluded from retrieval.
-export const corpusLabels = ["positive", "negative", "neutral"] as const;
+// rows are kept for audit/debug but excluded from retrieval. Safe research
+// facts use the `research_fact` corpus for factual retrieval.
+export const corpusLabels = ["positive", "negative", "neutral", "research_fact"] as const;
 export type CorpusLabel = (typeof corpusLabels)[number];
 
 // Why the router picked the label. Whitelist guards downstream pipelines
@@ -425,7 +427,7 @@ export const corpusNegativeFeedbackTags: readonly DraftFeedbackTag[] = [
 
 // Phase 6 RAG: artifact kinds that get indexed into rag_documents. The
 // retriever filters by these + corpus_label + organization scope.
-export const ragArtifactKinds = ["draft_version", "draft_feedback"] as const;
+export const ragArtifactKinds = ["draft_version", "draft_feedback", "research_fact"] as const;
 export type RagArtifactKind = (typeof ragArtifactKinds)[number];
 
 // RAG embedding provider taxonomy. `stub` writes a deterministic zero-vector

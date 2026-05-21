@@ -183,6 +183,28 @@ export default async function OrganizationDetailPage({ params }: Props) {
                     ) : null}
                   </div>
                   {c.notes ? <p className="text-xs opacity-60 mb-3 whitespace-pre-wrap">{c.notes}</p> : null}
+                  {c.sourceRefs.length > 0 ? (
+                    <details className="text-xs opacity-80 mb-3">
+                      <summary className="cursor-pointer opacity-60">
+                        {c.sourceRefs.length} source{c.sourceRefs.length === 1 ? "" : "s"}
+                      </summary>
+                      <ul className="mt-2 space-y-1">
+                        {c.sourceRefs.map((s, i) => (
+                          <li key={`${s.url}-${i}`}>
+                            <a
+                              href={s.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[var(--accent)] break-all"
+                            >
+                              {s.title ?? prettifyUrl(s.url)}
+                            </a>
+                            {s.snippet ? <span className="opacity-60"> · {s.snippet}</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <form className="space-y-2" action="/api/commands" method="post">
                       <input type="hidden" name="commandType" value="approve_contact_candidate" />
@@ -318,6 +340,19 @@ function SnapshotPanel({
 
       {snapshot && snapshot.facts.length === 0 ? (
         <p className="text-sm font-light opacity-60">Snapshot recorded but no facts yet — pipeline still running?</p>
+      ) : null}
+
+      {snapshot && snapshot.questions.length > 0 ? (
+        <div className="border border-white/10 rounded-xl p-4 bg-black/20">
+          <div className="text-xs uppercase tracking-[0.2em] opacity-60 mb-2">
+            Open research questions
+          </div>
+          <ul className="list-disc pl-5 space-y-1 text-sm opacity-80">
+            {snapshot.questions.map((question, i) => (
+              <li key={`${question}-${i}`}>{question}</li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       {snapshot && snapshot.facts.length > 0 ? (

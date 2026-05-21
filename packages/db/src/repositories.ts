@@ -8527,6 +8527,7 @@ type ResearchAgentContactCandidate = {
   role?: string | null;
   source?: string | null;
   evidenceUrl?: string | null;
+  sourceRefs?: unknown;
   confidence?: "low" | "medium" | "high" | null;
   notes?: string | null;
 };
@@ -8540,15 +8541,83 @@ type ResearchAgentOutput = {
 
 const CONTACT_CANDIDATE_CAP = 8;
 
+type ResearchContactSourceRef = { url: string; title?: string; snippet?: string };
+
 type NormalizedContactCandidate = {
   fullName: string;
   email: string | null;
   role: string | null;
   source: string | null;
   evidenceUrl: string | null;
+  sourceRefs: ResearchContactSourceRef[];
   confidence: number;
   notes: string | null;
 };
+
+function normalizeResearchQuestions(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of input) {
+    if (typeof value !== "string") continue;
+    const text = value.replace(/[\r\n]+/g, " ").trim().slice(0, 500);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+function normalizeResearchContactSourceRefs(input: unknown, evidenceUrl: string | null): ResearchContactSourceRef[] {
+  const refs: ResearchContactSourceRef[] = [];
+  const seen = new Set<string>();
+  const pushRef = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    const raw = value as Record<string, unknown>;
+    const urlRaw = typeof raw.url === "string" ? raw.url.trim() : "";
+    if (!urlRaw || isGroundingTrackerUrl(urlRaw)) return;
+    let parsed: URL;
+    try {
+      parsed = new URL(urlRaw);
+    } catch {
+      return;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+    parsed.hash = "";
+    const url = parsed.toString().slice(0, 1000);
+    if (seen.has(url)) return;
+    seen.add(url);
+    const ref: ResearchContactSourceRef = { url };
+    const title = typeof raw.title === "string" ? raw.title.trim() : "";
+    if (title) ref.title = title.slice(0, 300);
+    const snippet = typeof raw.snippet === "string" ? raw.snippet.trim() : "";
+    if (snippet) ref.snippet = snippet.slice(0, 600);
+    refs.push(ref);
+  };
+
+  if (Array.isArray(input)) {
+    for (const entry of input) pushRef(entry);
+  }
+  if (evidenceUrl) pushRef({ url: evidenceUrl, title: "Evidence" });
+  return refs.slice(0, 8);
+}
+
+function mergeResearchContactSourceRefs(
+  existing: unknown,
+  next: readonly ResearchContactSourceRef[]
+): ResearchContactSourceRef[] {
+  const merged = normalizeResearchContactSourceRefs(existing, null);
+  const seen = new Set(merged.map((ref) => ref.url));
+  for (const ref of next) {
+    if (seen.has(ref.url)) continue;
+    seen.add(ref.url);
+    merged.push(ref);
+  }
+  return merged.slice(0, 12);
+}
 
 function normalizeContactCandidate(input: unknown): NormalizedContactCandidate | null {
   if (!input || typeof input !== "object") return null;
@@ -8566,12 +8635,13 @@ function normalizeContactCandidate(input: unknown): NormalizedContactCandidate |
   const source = typeof raw.source === "string" && raw.source.trim() ? raw.source.trim() : null;
   const evidenceUrlRaw = typeof raw.evidenceUrl === "string" ? raw.evidenceUrl.trim() : "";
   const evidenceUrl = evidenceUrlRaw && /^https?:\/\//i.test(evidenceUrlRaw) ? evidenceUrlRaw : null;
+  const sourceRefs = normalizeResearchContactSourceRefs(raw.sourceRefs, evidenceUrl);
   const notes = typeof raw.notes === "string" && raw.notes.trim() ? raw.notes.trim() : null;
 
   const confidenceTag = typeof raw.confidence === "string" ? raw.confidence.trim() : "";
   const confidence = (CONFIDENCE_SCORE as Record<string, number>)[confidenceTag] ?? 0;
 
-  return { fullName, email, role, source, evidenceUrl, confidence, notes };
+  return { fullName, email, role, source, evidenceUrl, sourceRefs, confidence, notes };
 }
 
 const ALLOWED_SOURCE_TYPES = new Set<NonNullable<ResearchAgentEvidence["sourceType"]>>([
@@ -8737,6 +8807,7 @@ export async function routeResearchSnapshotOutcome(input: {
   }
 
   const facts = Array.isArray(parsed.facts) ? parsed.facts : [];
+  const questions = normalizeResearchQuestions(parsed.questions);
 
   const db = getDb();
   return db.transaction(async (tx) => {
@@ -8769,7 +8840,8 @@ export async function routeResearchSnapshotOutcome(input: {
       .values({
         organizationId: input.organizationId,
         snapshotVersion: nextVersion,
-        status: "draft"
+        status: "draft",
+        questionsJson: questions
       })
       .returning({ id: researchSnapshots.id });
     if (!snapshotRow) {
@@ -8802,6 +8874,7 @@ export async function routeResearchSnapshotOutcome(input: {
       inserted += 1;
       if (safeForCopy) safeForCopyInserted += 1;
 
+      const evidenceUrlsForIndex: string[] = [];
       for (const normalized of normalizedEvidenceList) {
         const [evidenceRow] = await tx
           .insert(researchEvidence)
@@ -8819,7 +8892,31 @@ export async function routeResearchSnapshotOutcome(input: {
           researchEvidenceId: evidenceRow.id,
           supportType: normalized.supportType ?? "supports"
         });
+        if (normalized.sourceUrl) evidenceUrlsForIndex.push(normalized.sourceUrl);
         evidenceInserted += 1;
+      }
+
+      if (safeForCopy) {
+        await indexCorpusArtifact(tx, {
+          sourceEntityType: "research_fact",
+          sourceEntityId: factRow.id,
+          organizationId: input.organizationId,
+          corpusLabel: "research_fact",
+          qualityScore: confidence,
+          title: fact.claim.trim().slice(0, 200),
+          body: [
+            fact.claim.trim(),
+            evidenceUrlsForIndex.length > 0
+              ? `Evidence:\n${[...new Set(evidenceUrlsForIndex)].join("\n")}`
+              : ""
+          ].filter(Boolean).join("\n\n"),
+          ...(parsed.summary?.trim() ? { summary: parsed.summary.trim() } : {}),
+          metadata: {
+            snapshotId: snapshotRow.id,
+            snapshotVersion: nextVersion,
+            safeForCopy: true
+          }
+        });
       }
     }
 
@@ -8827,6 +8924,7 @@ export async function routeResearchSnapshotOutcome(input: {
       ? parsed.contactCandidates.slice(0, CONTACT_CANDIDATE_CAP)
       : [];
     let candidateInserted = 0;
+    let candidateUpdated = 0;
     // Track emails seen within this snapshot so two near-identical candidate
     // entries from one agent run don't both fight for the partial unique
     // index slot. The DB index is the durable guard against cross-run dups.
@@ -8848,22 +8946,62 @@ export async function routeResearchSnapshotOutcome(input: {
         if (namelessSeenInRun.has(nameKey)) continue;
         namelessSeenInRun.add(nameKey);
       }
-      const inserts = await tx
-        .insert(researchContactCandidates)
-        .values({
-          organizationId: input.organizationId,
-          fullName: candidate.fullName,
-          email: candidate.email,
-          role: candidate.role,
-          source: candidate.source,
-          evidenceUrl: candidate.evidenceUrl,
-          confidence: candidate.confidence,
-          notes: candidate.notes,
-          agentRunId: input.agentRunId,
-          status: "pending"
+      const [existingCandidate] = await tx
+        .select({
+          id: researchContactCandidates.id,
+          confidence: researchContactCandidates.confidence,
+          sourceRefs: researchContactCandidates.sourceRefs,
+          evidenceUrl: researchContactCandidates.evidenceUrl,
+          notes: researchContactCandidates.notes
         })
-        .onConflictDoNothing()
-        .returning({ id: researchContactCandidates.id });
+        .from(researchContactCandidates)
+        .where(and(
+          eq(researchContactCandidates.organizationId, input.organizationId),
+          inArray(researchContactCandidates.status, ["pending", "approved"]),
+          candidate.email
+            ? sql`lower(${researchContactCandidates.email}) = ${candidate.email}`
+            : sql`${researchContactCandidates.email} is null and lower(${researchContactCandidates.fullName}) = ${candidate.fullName.toLowerCase()}`
+        ))
+        .orderBy(desc(researchContactCandidates.updatedAt))
+        .limit(1);
+
+      if (existingCandidate) {
+        await tx
+          .update(researchContactCandidates)
+          .set({
+            role: candidate.role ?? undefined,
+            source: candidate.source ?? undefined,
+            evidenceUrl: candidate.evidenceUrl ?? existingCandidate.evidenceUrl,
+            sourceRefs: mergeResearchContactSourceRefs(existingCandidate.sourceRefs, candidate.sourceRefs),
+            confidence: Math.max(existingCandidate.confidence, candidate.confidence),
+            notes: candidate.notes ?? existingCandidate.notes,
+            agentRunId: input.agentRunId,
+            lastSeenAt: new Date(),
+            updatedAt: new Date()
+          })
+          .where(eq(researchContactCandidates.id, existingCandidate.id));
+        candidateUpdated += 1;
+        continue;
+      }
+
+      const inserts = await tx
+          .insert(researchContactCandidates)
+          .values({
+            organizationId: input.organizationId,
+            fullName: candidate.fullName,
+            email: candidate.email,
+            role: candidate.role,
+            source: candidate.source,
+            evidenceUrl: candidate.evidenceUrl,
+            sourceRefs: candidate.sourceRefs,
+            confidence: candidate.confidence,
+            notes: candidate.notes,
+            agentRunId: input.agentRunId,
+            lastSeenAt: new Date(),
+            status: "pending"
+          })
+          .onConflictDoNothing()
+          .returning({ id: researchContactCandidates.id });
       if (inserts.length > 0) candidateInserted += 1;
     }
 
@@ -8902,6 +9040,22 @@ export async function routeResearchSnapshotOutcome(input: {
       });
     }
 
+    if (enrichedRows.length === 0) {
+      await tx.insert(eventLog).values({
+        eventType: "manual_org_research_completed",
+        entityType: "organization",
+        entityId: input.organizationId,
+        ...(input.jobId ? { jobId: input.jobId } : {}),
+        correlationId: input.correlationId,
+        payloadJson: {
+          organizationId: input.organizationId,
+          snapshotId: snapshotRow.id,
+          snapshotVersion: nextVersion,
+          agentRunId: input.agentRunId
+        }
+      });
+    }
+
     await tx.insert(eventLog).values({
       eventType: "research_snapshot_refreshed",
       entityType: "research_snapshot",
@@ -8912,9 +9066,12 @@ export async function routeResearchSnapshotOutcome(input: {
         organizationId: input.organizationId,
         snapshotVersion: nextVersion,
         factCount: inserted,
+        questionCount: questions.length,
         safeForCopyFactCount: safeForCopyInserted,
         evidenceCount: evidenceInserted,
-        contactCandidateCount: candidateInserted,
+        contactCandidateCount: candidateInserted + candidateUpdated,
+        contactCandidateInsertedCount: candidateInserted,
+        contactCandidateUpdatedCount: candidateUpdated,
         enrichedCandidateCount: enrichedRows.length,
         agentRunId: input.agentRunId
       }
@@ -8924,7 +9081,7 @@ export async function routeResearchSnapshotOutcome(input: {
       snapshotId: snapshotRow.id,
       factCount: inserted,
       evidenceCount: evidenceInserted,
-      contactCandidateCount: candidateInserted,
+      contactCandidateCount: candidateInserted + candidateUpdated,
       enrichedCandidateCount: enrichedRows.length
     };
   });
@@ -16994,6 +17151,7 @@ export type OrganizationDetail = {
     id: string;
     version: number;
     status: string;
+    questions: string[];
     createdAt: Date;
     facts: Array<{
       id: string;
@@ -17046,6 +17204,7 @@ export type OrganizationDetail = {
     role: string | null;
     source: string | null;
     evidenceUrl: string | null;
+    sourceRefs: Array<{ url: string; title?: string; snippet?: string }>;
     confidence: number;
     notes: string | null;
     agentRunId: string | null;
@@ -17184,6 +17343,7 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
       id: latestSnapshotRow.id,
       version: latestSnapshotRow.snapshotVersion,
       status: latestSnapshotRow.status,
+      questions: Array.isArray(latestSnapshotRow.questionsJson) ? latestSnapshotRow.questionsJson : [],
       createdAt: latestSnapshotRow.createdAt,
       facts: factRows.map((f) => ({
         id: f.id,
@@ -17248,6 +17408,7 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
       role: c.role ?? null,
       source: c.source ?? null,
       evidenceUrl: c.evidenceUrl ?? null,
+      sourceRefs: Array.isArray(c.sourceRefs) ? c.sourceRefs : [],
       confidence: c.confidence,
       notes: c.notes ?? null,
       agentRunId: c.agentRunId ?? null,
