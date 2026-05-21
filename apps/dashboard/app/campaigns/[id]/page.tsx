@@ -2,6 +2,8 @@ import { getCampaignDiscoveryView, type DiscoveryCandidateView } from "@bizdev/d
 import {
   buildAcceptDiscoveryCandidateIdempotencyKey,
   buildRejectDiscoveryCandidateIdempotencyKey,
+  discoveryRejectionReasonCodes,
+  type DiscoveryRejectionReasonCode,
   type DiscoveryCandidateStatus
 } from "@bizdev/shared";
 import Link from "next/link";
@@ -45,6 +47,16 @@ const PANEL_ORDER: DiscoveryCandidateStatus[] = [
   "rejected_by_policy",
   "accepted"
 ];
+
+const REJECTION_REASON_LABELS: Record<DiscoveryRejectionReasonCode, string> = {
+  out_of_segment: "Out of segment",
+  dead_company: "Dead company",
+  competitor: "Competitor",
+  existing_customer: "Existing customer",
+  wrong_geo: "Wrong geo",
+  private_pii: "Private PII",
+  other: "Other"
+};
 
 export default async function CampaignDetailPage({
   params
@@ -259,8 +271,11 @@ function CandidateRow({ candidate }: { candidate: DiscoveryCandidateView }) {
         </div>
       ) : null}
 
-      {candidate.rejectionReason ? (
-        <div className="text-xs text-red-300/80">Rejection: {candidate.rejectionReason}</div>
+      {candidate.rejectionReason || candidate.rejectionReasonCode ? (
+        <div className="text-xs text-red-300/80">
+          Rejection: {candidate.rejectionReasonCode ? formatDiscoveryRejectionReason(candidate.rejectionReasonCode) : "Policy"}
+          {candidate.rejectionReason ? ` · ${candidate.rejectionReason}` : ""}
+        </div>
       ) : null}
 
       {candidate.sourceRefs.length > 0 ? (
@@ -318,10 +333,17 @@ function CandidateRow({ candidate }: { candidate: DiscoveryCandidateView }) {
                 name="idempotencyKey"
                 value={buildRejectDiscoveryCandidateIdempotencyKey(candidate.id, candidate.updatedAt)}
               />
+              <select className={inputClass} name="reasonCode" defaultValue="other">
+                {discoveryRejectionReasonCodes.map((code) => (
+                  <option key={code} value={code}>
+                    {REJECTION_REASON_LABELS[code]}
+                  </option>
+                ))}
+              </select>
               <input
                 className={inputClass}
                 name="reasonText"
-                placeholder="Reason (optional)"
+                placeholder="Notes (optional)"
                 maxLength={2000}
               />
               <Button type="submit" tone="danger" size="sm">Reject</Button>
@@ -331,4 +353,8 @@ function CandidateRow({ candidate }: { candidate: DiscoveryCandidateView }) {
       ) : null}
     </li>
   );
+}
+
+function formatDiscoveryRejectionReason(code: string): string {
+  return REJECTION_REASON_LABELS[code as DiscoveryRejectionReasonCode] ?? code;
 }

@@ -1175,6 +1175,7 @@ function formDataToCommand(formData: FormData) {
 
   if (commandType === "reject_discovery_candidate") {
     const candidateId = String(formData.get("candidateId") ?? "").trim();
+    const reasonCode = String(formData.get("reasonCode") ?? "").trim();
     const reasonText = String(formData.get("reasonText") ?? "").trim();
     const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
     return {
@@ -1182,6 +1183,7 @@ function formDataToCommand(formData: FormData) {
       ...base,
       payload: {
         candidateId,
+        ...(reasonCode ? { reasonCode } : {}),
         ...(reasonText ? { reasonText } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {})
       }

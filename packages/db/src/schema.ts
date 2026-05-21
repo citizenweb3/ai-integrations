@@ -669,6 +669,7 @@ export const discoveryCandidates = pgTable("discovery_candidates", {
     .references(() => organizations.id, { onDelete: "set null" }),
   status: text("status").notNull().default("proposed"),
   rejectionReason: text("rejection_reason"),
+  rejectionReasonCode: text("rejection_reason_code"),
   agentRunId: uuid("agent_run_id").references(() => agentRuns.id),
   createdAt: createdAt(),
   updatedAt: updatedAt()
