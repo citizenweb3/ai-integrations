@@ -81,9 +81,20 @@ export const campaigns = pgTable("campaigns", {
   objective: text("objective").notNull(),
   targetSegments: jsonb("target_segments").$type<string[]>().notNull().default([]),
   operatorNotes: text("operator_notes"),
+  discoverySourceHints: jsonb("discovery_source_hints").$type<string[]>().notNull().default([]),
+  discoveryExclusions: text("discovery_exclusions").array().notNull().default(sql`'{}'::text[]`),
+  allowedRegions: text("allowed_regions").array().notNull().default(sql`'{}'::text[]`),
+  maxOrganizationsToDiscover: integer("max_organizations_to_discover").notNull().default(25),
+  cooldownBetweenDiscoverySeconds: integer("cooldown_between_discovery_seconds").notNull().default(3600),
+  discoveryScopeVersion: integer("discovery_scope_version").notNull().default(1),
   createdAt: createdAt(),
   updatedAt: updatedAt()
-});
+}, (table) => ({
+  statusDiscoveryScopeIdx: index("campaigns_status_discovery_scope_idx").on(
+    table.status,
+    table.discoveryScopeVersion
+  )
+}));
 
 export const organizations = pgTable("organizations", {
   id: uuid("id").primaryKey().defaultRandom(),

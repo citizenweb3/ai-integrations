@@ -577,6 +577,11 @@ export async function createStartCampaignCommand(input: {
           objective: input.payload.objective,
           targetSegments: input.payload.targetSegments,
           operatorNotes: input.payload.operatorNotes,
+          discoverySourceHints: input.payload.discoverySourceHints ?? [],
+          discoveryExclusions: input.payload.discoveryExclusions ?? [],
+          allowedRegions: input.payload.allowedRegions ?? [],
+          maxOrganizationsToDiscover: input.payload.maxOrganizationsToDiscover ?? 25,
+          cooldownBetweenDiscoverySeconds: input.payload.cooldownBetweenDiscoverySeconds ?? 3600,
           status: "drafting_scope"
         })
         .returning(), "campaign");
@@ -4983,6 +4988,14 @@ const ACCEPTABLE_DISCOVERY_STATUSES_FOR_REJECT: ReadonlySet<DiscoveryCandidateSt
   "duplicate"
 ]);
 
+const DISCOVERY_NON_TERMINAL_STATUSES: readonly DiscoveryCandidateStatus[] = [
+  "proposed",
+  "accepted",
+  "needs_review",
+  "queued_for_enrichment",
+  "enriched"
+];
+
 async function readInactiveCampaignFailure(
   tx: DbTransaction,
   campaignId: string
@@ -5008,7 +5021,21 @@ export type RunCampaignDiscoveryResult =
       idempotencyKey: string;
       deduplicated: boolean;
     }
-  | { ok: false; failure: { code: "campaign_not_found"; message: string } };
+  | {
+      ok: false;
+      failure: {
+        code:
+          | "campaign_not_found"
+          | "campaign_not_active"
+          | "discovery_cooldown_active"
+          | "discovery_cap_reached";
+        message: string;
+        expiresAt?: Date;
+        runCap?: number;
+        activeCandidateCount?: number;
+        maxOrganizationsToDiscover?: number;
+      };
+    };
 
 export async function runCampaignDiscoveryCommand(input: {
   payload: RunCampaignDiscoveryPayload;
@@ -5019,7 +5046,13 @@ export async function runCampaignDiscoveryCommand(input: {
 
   return db.transaction(async (tx) => {
     const [campaign] = await tx
-      .select({ id: campaigns.id })
+      .select({
+        id: campaigns.id,
+        status: campaigns.status,
+        maxOrganizationsToDiscover: campaigns.maxOrganizationsToDiscover,
+        cooldownBetweenDiscoverySeconds: campaigns.cooldownBetweenDiscoverySeconds,
+        discoveryScopeVersion: campaigns.discoveryScopeVersion
+      })
       .from(campaigns)
       .where(eq(campaigns.id, payload.campaignId))
       .limit(1);
@@ -5032,15 +5065,114 @@ export async function runCampaignDiscoveryCommand(input: {
         }
       };
     }
-
     const triggeredAt = new Date();
-    const guidanceHash = createHash("sha256")
-      .update(payload.additionalGuidance?.trim() ?? "")
-      .digest("hex")
-      .slice(0, 16);
     const idempotencyKey = payload.idempotencyKey
-      ?? buildRunCampaignDiscoveryIdempotencyKey(campaign.id, guidanceHash, triggeredAt);
+      ?? buildRunCampaignDiscoveryIdempotencyKey(
+        campaign.id,
+        campaign.discoveryScopeVersion,
+        triggeredAt
+      );
     const correlationId = randomUUID();
+
+    const [preexistingCommand] = await tx
+      .select()
+      .from(commands)
+      .where(eq(commands.idempotencyKey, idempotencyKey))
+      .limit(1);
+    if (preexistingCommand) {
+      if (preexistingCommand.commandType !== "run_campaign_discovery") {
+        throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
+      }
+      const [existingJob] = await tx
+        .select()
+        .from(jobs)
+        .where(eq(jobs.commandId, preexistingCommand.id))
+        .limit(1);
+      if (!existingJob) {
+        throw new Error(`Dedup hit but job missing for command ${preexistingCommand.id}`);
+      }
+      if (existingJob.jobType !== "job.run_campaign_discovery") {
+        throw new Error(
+          `Dedup job type mismatch for command ${preexistingCommand.id}: expected job.run_campaign_discovery, got ${existingJob.jobType}`
+        );
+      }
+      return {
+        ok: true as const,
+        command: preexistingCommand,
+        job: existingJob,
+        idempotencyKey,
+        deduplicated: true
+      };
+    }
+
+    if (campaign.status !== "active") {
+      return {
+        ok: false as const,
+        failure: {
+          code: "campaign_not_active",
+          message: `Campaign ${campaign.id} is ${campaign.status}; discovery runs require active campaigns`
+        }
+      };
+    }
+
+    const [activeCooldown] = await tx
+      .select({ id: policyStateEntries.id, expiresAt: policyStateEntries.expiresAt })
+      .from(policyStateEntries)
+      .where(sql`
+        ${policyStateEntries.scopeType} = 'campaign'
+        and ${policyStateEntries.scopeId} = ${campaign.id}::uuid
+        and ${policyStateEntries.stateType} = 'discovery_cooldown'
+        and ${policyStateEntries.status} = 'active'
+        and (${policyStateEntries.expiresAt} is null or ${policyStateEntries.expiresAt} > now())
+      `)
+      .orderBy(desc(policyStateEntries.expiresAt))
+      .limit(1);
+    if (activeCooldown) {
+      return {
+        ok: false as const,
+        failure: {
+          code: "discovery_cooldown_active",
+          message: activeCooldown.expiresAt
+            ? `Campaign ${campaign.id} discovery is cooling down until ${activeCooldown.expiresAt.toISOString()}`
+            : `Campaign ${campaign.id} discovery is cooling down`,
+          ...(activeCooldown.expiresAt ? { expiresAt: activeCooldown.expiresAt } : {})
+        }
+      };
+    }
+
+    const [candidateCountRow] = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(discoveryCandidates)
+      .where(and(
+        eq(discoveryCandidates.campaignId, campaign.id),
+        inArray(discoveryCandidates.status, DISCOVERY_NON_TERMINAL_STATUSES)
+      ));
+    const activeCandidateCount = Number(candidateCountRow?.count ?? 0);
+    const remainingCapacity = campaign.maxOrganizationsToDiscover - activeCandidateCount;
+    const runCap = Math.max(0, Math.min(DISCOVERY_CANDIDATES_PER_RUN_CAP, remainingCapacity));
+    if (runCap <= 0) {
+      await tx.insert(eventLog).values({
+        eventType: "campaign_discovery_cap_reached",
+        entityType: "campaign",
+        entityId: campaign.id,
+        correlationId,
+        payloadJson: {
+          maxOrganizationsToDiscover: campaign.maxOrganizationsToDiscover,
+          activeCandidateCount,
+          runCap
+        }
+      });
+      return {
+        ok: false as const,
+        failure: {
+          code: "discovery_cap_reached",
+          message: `Campaign ${campaign.id} has reached its discovery cap (${activeCandidateCount}/${campaign.maxOrganizationsToDiscover})`,
+          runCap,
+          activeCandidateCount,
+          maxOrganizationsToDiscover: campaign.maxOrganizationsToDiscover
+        }
+      };
+    }
 
     const insertedCommands = await tx
       .insert(commands)
@@ -5102,14 +5234,16 @@ export async function runCampaignDiscoveryCommand(input: {
         targetEntityId: campaign.id,
         payloadJson: {
           campaignId: campaign.id,
-          ...(payload.additionalGuidance ? { additionalGuidance: payload.additionalGuidance } : {})
+          runCap,
+          discoveryScopeVersion: campaign.discoveryScopeVersion,
+          cooldownBetweenDiscoverySeconds: campaign.cooldownBetweenDiscoverySeconds
         },
         // One discovery run at a time per campaign — the agent is
         // stateful via web search and concurrent runs would just emit
         // identical proposals racing against the campaign-level partial
         // unique. Concurrency key collapses redundant submits at the
-        // queue level; the idempotencyKey + guidanceHash collapses
-        // exact-duplicate operator clicks.
+        // queue level; the idempotencyKey covers explicit client
+        // retries, while the persisted cooldown blocks same-scope churn.
         concurrencyKey: `campaign_discovery:${campaign.id}`,
         correlationId
       })
@@ -5123,7 +5257,13 @@ export async function runCampaignDiscoveryCommand(input: {
       commandId: command.id,
       jobId: job.id,
       correlationId,
-      payloadJson: { commandType: "run_campaign_discovery" }
+      payloadJson: {
+        commandType: "run_campaign_discovery",
+        runCap,
+        activeCandidateCount,
+        maxOrganizationsToDiscover: campaign.maxOrganizationsToDiscover,
+        discoveryScopeVersion: campaign.discoveryScopeVersion
+      }
     });
 
     return {
@@ -10564,8 +10704,11 @@ function tryParseCampaignDiscoveryOutput(raw: string): CampaignDiscoveryAgentOut
 
 async function buildCampaignDiscoveryPrompt(input: {
   campaignId: string;
-  additionalGuidance: string | null;
-}): Promise<{ prompt: string; campaignName: string } | null> {
+}): Promise<{
+  prompt: string;
+  campaignName: string;
+  cooldownBetweenDiscoverySeconds: number;
+} | null> {
   const db = getDb();
   const [row] = await db
     .select({
@@ -10573,7 +10716,11 @@ async function buildCampaignDiscoveryPrompt(input: {
       name: campaigns.name,
       objective: campaigns.objective,
       targetSegments: campaigns.targetSegments,
-      operatorNotes: campaigns.operatorNotes
+      operatorNotes: campaigns.operatorNotes,
+      discoverySourceHints: campaigns.discoverySourceHints,
+      discoveryExclusions: campaigns.discoveryExclusions,
+      allowedRegions: campaigns.allowedRegions,
+      cooldownBetweenDiscoverySeconds: campaigns.cooldownBetweenDiscoverySeconds
     })
     .from(campaigns)
     .where(eq(campaigns.id, input.campaignId))
@@ -10584,9 +10731,7 @@ async function buildCampaignDiscoveryPrompt(input: {
   // bounded. The brief sits inside <campaign_brief> tags and the system
   // prompt's injection guard instructs the agent to treat the contents
   // as data, but an unbounded `objective` could still push the prompt
-  // past the model's context window silently. Truncation budget matches
-  // `additionalGuidance` so all three operator-supplied fields share the
-  // same ceiling.
+  // past the model's context window silently.
   const truncate = (s: string | null | undefined, max: number): string => {
     if (!s) return "";
     return s.length > max ? `${s.slice(0, max)}\n…[truncated]` : s;
@@ -10594,20 +10739,31 @@ async function buildCampaignDiscoveryPrompt(input: {
   const segments = (row.targetSegments ?? [])
     .map((s) => `  - ${truncate(s, 500)}`)
     .join("\n");
+  const sourceHints = (Array.isArray(row.discoverySourceHints) ? row.discoverySourceHints : [])
+    .map((s) => `  - ${truncate(s, 500)}`)
+    .join("\n");
+  const exclusions = (Array.isArray(row.discoveryExclusions) ? row.discoveryExclusions : [])
+    .map((s) => `  - ${truncate(s, 500)}`)
+    .join("\n");
+  const allowedRegions = (Array.isArray(row.allowedRegions) ? row.allowedRegions : [])
+    .map((s) => `  - ${truncate(s, 120)}`)
+    .join("\n");
   const sections: string[] = [];
   sections.push(
     `<campaign_brief>\nName: ${truncate(row.name, 200)}\nObjective: ${truncate(row.objective, 4000)}\nTarget segments:\n${segments || "  - (none)"}\nOperator notes: ${truncate(row.operatorNotes, 4000) || "(none)"}\n</campaign_brief>`
   );
-  if (input.additionalGuidance && input.additionalGuidance.trim().length > 0) {
-    sections.push(
-      `<additional_guidance>\n${truncate(input.additionalGuidance.trim(), 4000)}\n</additional_guidance>`
-    );
-  }
+  sections.push(
+    `<persistent_hints>\nDiscovery source hints:\n${sourceHints || "  - (none)"}\nDiscovery exclusions:\n${exclusions || "  - (none)"}\nAllowed regions:\n${allowedRegions || "  - (none)"}\n</persistent_hints>`
+  );
   sections.push(
     "Propose candidate prospect organizations grounded on web search per the system schema. Output strict JSON only. An empty `candidates` array is acceptable when no good fit is found."
   );
 
-  return { prompt: sections.join("\n\n"), campaignName: row.name };
+  return {
+    prompt: sections.join("\n\n"),
+    campaignName: row.name,
+    cooldownBetweenDiscoverySeconds: row.cooldownBetweenDiscoverySeconds
+  };
 }
 
 type NormalizedProposal = {
@@ -10703,6 +10859,7 @@ export async function routeCampaignDiscoveryOutcome(input: {
   finalText: string;
   correlationId: string;
   jobId?: string;
+  runCap?: number;
 }): Promise<{
   proposalsTotal: number;
   inserted: number;
@@ -10735,9 +10892,29 @@ export async function routeCampaignDiscoveryOutcome(input: {
   let novel = 0;
 
   // Defensive cap: prompt advertises the same cap, but the agent
-  // occasionally exceeds the soft limit.
-  const candidates = candidatesRaw.slice(0, DISCOVERY_CANDIDATES_PER_RUN_CAP);
+  // occasionally exceeds the soft limit. Campaign-level capacity can
+  // reduce this further for bounded expansion.
+  const effectiveRunCap = Math.max(
+    0,
+    Math.min(DISCOVERY_CANDIDATES_PER_RUN_CAP, Math.floor(input.runCap ?? DISCOVERY_CANDIDATES_PER_RUN_CAP))
+  );
+  const candidates = candidatesRaw.slice(0, effectiveRunCap);
   const db = getDb();
+  if (candidatesRaw.length > effectiveRunCap) {
+    await appendEvent({
+      eventType: "campaign_discovery_cap_reached",
+      entityType: "agent_run",
+      entityId: input.agentRunId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      correlationId: input.correlationId,
+      payloadJson: {
+        campaignId: input.campaignId,
+        proposalsTotal,
+        runCap: effectiveRunCap,
+        dropped: candidatesRaw.length - effectiveRunCap
+      }
+    });
+  }
 
   for (const rawEntry of candidates) {
     if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
@@ -11034,17 +11211,57 @@ export async function routeCampaignDiscoveryOutcome(input: {
   return { proposalsTotal, inserted, rejected, needsReview, duplicates, autoLinked, novel };
 }
 
+async function insertDiscoveryCooldownPolicyState(input: {
+  campaignId: string;
+  cooldownSeconds: number;
+  correlationId: string;
+  jobId: string;
+}): Promise<Date | null> {
+  if (input.cooldownSeconds <= 0) return null;
+
+  const db = getDb();
+  const expiresAt = new Date(Date.now() + input.cooldownSeconds * 1000);
+  const entry = expectOne(await db
+    .insert(policyStateEntries)
+    .values({
+      scopeType: "campaign",
+      scopeId: input.campaignId,
+      stateType: "discovery_cooldown",
+      status: "active",
+      reasonCode: "campaign_discovery",
+      reasonText: `Campaign discovery cooldown (${input.cooldownSeconds}s)`,
+      expiresAt,
+      createdByType: "system"
+    })
+    .returning({ id: policyStateEntries.id }), "discovery cooldown policy state");
+
+  await appendEvent({
+    eventType: "campaign_discovery_cooldown_started",
+    entityType: "policy_state_entry",
+    entityId: entry.id,
+    jobId: input.jobId,
+    correlationId: input.correlationId,
+    payloadJson: {
+      campaignId: input.campaignId,
+      cooldownSeconds: input.cooldownSeconds,
+      expiresAt: expiresAt.toISOString()
+    }
+  });
+
+  return expiresAt;
+}
+
 export async function completeRunCampaignDiscoveryJob(input: {
   job: LeasedJob;
   runId: string;
   workerId: string;
   campaignId: string;
-  additionalGuidance: string | null;
+  runCap?: number;
+  cooldownBetweenDiscoverySeconds?: number;
   dispatcher: AgentStageDispatcher;
 }): Promise<void> {
   const built = await buildCampaignDiscoveryPrompt({
-    campaignId: input.campaignId,
-    additionalGuidance: input.additionalGuidance
+    campaignId: input.campaignId
   });
   if (!built) {
     // Permanent: campaign deleted between command accept and lease.
@@ -11066,7 +11283,7 @@ export async function completeRunCampaignDiscoveryJob(input: {
     jobId: input.job.id,
     inputSnapshotJson: {
       campaignId: input.campaignId,
-      additionalGuidance: input.additionalGuidance,
+      runCap: input.runCap ?? DISCOVERY_CANDIDATES_PER_RUN_CAP,
       promptLength: built.prompt.length
     }
   });
@@ -11148,9 +11365,19 @@ export async function completeRunCampaignDiscoveryJob(input: {
       campaignId: input.campaignId,
       finalText,
       correlationId: input.job.correlation_id,
-      jobId: input.job.id
+      jobId: input.job.id,
+      ...(input.runCap !== undefined ? { runCap: input.runCap } : {})
     });
   }
+
+  const cooldownSeconds = input.cooldownBetweenDiscoverySeconds
+    ?? built.cooldownBetweenDiscoverySeconds;
+  const cooldownExpiresAt = await insertDiscoveryCooldownPolicyState({
+    campaignId: input.campaignId,
+    cooldownSeconds,
+    correlationId: input.job.correlation_id,
+    jobId: input.job.id
+  });
 
   // `succeeded` status reflects the ADK run itself, not the router
   // outcome — matches the classify_reply / refresh_research_snapshot
@@ -11175,6 +11402,8 @@ export async function completeRunCampaignDiscoveryJob(input: {
     payloadJson: {
       campaignId: input.campaignId,
       hasFinalText: finalText !== null,
+      runCap: input.runCap ?? DISCOVERY_CANDIDATES_PER_RUN_CAP,
+      ...(cooldownExpiresAt ? { cooldownExpiresAt: cooldownExpiresAt.toISOString() } : {}),
       ...(routerResult ?? {})
     }
   });
@@ -11190,6 +11419,8 @@ export async function completeRunCampaignDiscoveryJob(input: {
       stage: "campaign_discovery",
       campaignId: input.campaignId,
       hasFinalText: finalText !== null,
+      runCap: input.runCap ?? DISCOVERY_CANDIDATES_PER_RUN_CAP,
+      ...(cooldownExpiresAt ? { cooldownExpiresAt: cooldownExpiresAt.toISOString() } : {}),
       ...(routerResult ?? {})
     }
   });
@@ -17182,7 +17413,12 @@ function buildStartCampaignIdempotencyKey(payload: StartCampaignPayload): string
     name: payload.name.trim(),
     objective: payload.objective.trim(),
     targetSegments: [...payload.targetSegments].sort(),
-    operatorNotes: payload.operatorNotes?.trim() ?? null
+    operatorNotes: payload.operatorNotes?.trim() ?? null,
+    discoverySourceHints: [...(payload.discoverySourceHints ?? [])].sort(),
+    discoveryExclusions: [...(payload.discoveryExclusions ?? [])].sort(),
+    allowedRegions: [...(payload.allowedRegions ?? [])].sort(),
+    maxOrganizationsToDiscover: payload.maxOrganizationsToDiscover ?? 25,
+    cooldownBetweenDiscoverySeconds: payload.cooldownBetweenDiscoverySeconds ?? 3600
   });
   return `start_campaign:${createHash("sha256").update(normalized).digest("hex")}`;
 }
@@ -17736,6 +17972,12 @@ export type CampaignDiscoveryView = {
     objective: string;
     targetSegments: string[];
     operatorNotes: string | null;
+    discoverySourceHints: string[];
+    discoveryExclusions: string[];
+    allowedRegions: string[];
+    maxOrganizationsToDiscover: number;
+    cooldownBetweenDiscoverySeconds: number;
+    discoveryScopeVersion: number;
     createdAt: Date;
     updatedAt: Date;
   };
@@ -17882,6 +18124,12 @@ export async function getCampaignDiscoveryView(
       objective: campaign.objective,
       targetSegments: Array.isArray(campaign.targetSegments) ? campaign.targetSegments : [],
       operatorNotes: campaign.operatorNotes,
+      discoverySourceHints: Array.isArray(campaign.discoverySourceHints) ? campaign.discoverySourceHints : [],
+      discoveryExclusions: Array.isArray(campaign.discoveryExclusions) ? campaign.discoveryExclusions : [],
+      allowedRegions: Array.isArray(campaign.allowedRegions) ? campaign.allowedRegions : [],
+      maxOrganizationsToDiscover: campaign.maxOrganizationsToDiscover,
+      cooldownBetweenDiscoverySeconds: campaign.cooldownBetweenDiscoverySeconds,
+      discoveryScopeVersion: campaign.discoveryScopeVersion,
       createdAt: campaign.createdAt,
       updatedAt: campaign.updatedAt
     },

@@ -371,14 +371,18 @@ async function runJobWithinTrace(job: LeasedJob) {
 
       case "job.run_campaign_discovery": {
         const campaignId = readString(job.payload_json, "campaignId");
-        const additionalGuidance =
-          readOptionalString(job.payload_json, "additionalGuidance") ?? null;
+        const runCap = readOptionalNumber(job.payload_json, "runCap");
+        const cooldownBetweenDiscoverySeconds = readOptionalNumber(
+          job.payload_json,
+          "cooldownBetweenDiscoverySeconds"
+        );
         await completeRunCampaignDiscoveryJob({
           job,
           runId: run.id,
           workerId,
           campaignId,
-          additionalGuidance,
+          ...(runCap !== undefined ? { runCap } : {}),
+          ...(cooldownBetweenDiscoverySeconds !== undefined ? { cooldownBetweenDiscoverySeconds } : {}),
           dispatcher: agentDispatcher
         });
         break;
@@ -585,6 +589,12 @@ function readString(payload: Record<string, unknown>, key: string): string {
 function readOptionalString(payload: Record<string, unknown>, key: string): string | undefined {
   const value = payload[key];
   if (typeof value !== "string" || value.length === 0) return undefined;
+  return value;
+}
+
+function readOptionalNumber(payload: Record<string, unknown>, key: string): number | undefined {
+  const value = payload[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return value;
 }
 
