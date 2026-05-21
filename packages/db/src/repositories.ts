@@ -3162,7 +3162,7 @@ export type ApproveContactCandidateResult =
   | {
       ok: false;
       failure: {
-        code: "not_found" | "not_pending" | "email_required";
+        code: "not_found" | "not_pending" | "email_required" | "email_suppressed";
         message: string;
       };
     };
@@ -3208,6 +3208,24 @@ export async function approveContactCandidateCommand(input: {
         failure: {
           code: "email_required",
           message: `Candidate ${existing.id} has no email; supply one in the approve payload`
+        }
+      };
+    }
+
+    const [activeSuppression] = await tx
+      .select({ id: suppressionEntries.id, reason: suppressionEntries.reason })
+      .from(suppressionEntries)
+      .where(and(
+        sql`lower(${suppressionEntries.email}) = ${email}`,
+        eq(suppressionEntries.active, true)
+      ))
+      .limit(1);
+    if (activeSuppression) {
+      return {
+        ok: false as const,
+        failure: {
+          code: "email_suppressed",
+          message: `Email ${email} is actively suppressed (${activeSuppression.reason})`
         }
       };
     }
@@ -3271,17 +3289,19 @@ export async function approveContactCandidateCommand(input: {
     // front lets us report contactCreated honestly and preserves the
     // existing fullName/roleTitle that another flow may have curated.
     const [existingContact] = await tx
-      .select({ id: contacts.id })
+      .select({ id: contacts.id, organizationId: contacts.organizationId })
       .from(contacts)
       .where(eq(contacts.email, email))
       .limit(1);
 
     let contactId: string;
     let contactCreated: boolean;
+    let contactOrganizationId: string | null;
 
     if (existingContact) {
       contactId = existingContact.id;
       contactCreated = false;
+      contactOrganizationId = existingContact.organizationId;
     } else {
       const inserted = await tx
         .insert(contacts)
@@ -3292,14 +3312,16 @@ export async function approveContactCandidateCommand(input: {
           roleTitle
         })
         .onConflictDoNothing({ target: contacts.email })
-        .returning({ id: contacts.id });
+        .returning({ id: contacts.id, organizationId: contacts.organizationId });
       if (inserted.length > 0) {
-        contactId = expectOne(inserted, "contact insert").id;
+        const insertedContact = expectOne(inserted, "contact insert");
+        contactId = insertedContact.id;
+        contactOrganizationId = insertedContact.organizationId;
         contactCreated = true;
       } else {
         // Lost the race to a concurrent insert; re-read.
         const [raced] = await tx
-          .select({ id: contacts.id })
+          .select({ id: contacts.id, organizationId: contacts.organizationId })
           .from(contacts)
           .where(eq(contacts.email, email))
           .limit(1);
@@ -3307,8 +3329,25 @@ export async function approveContactCandidateCommand(input: {
           throw new Error(`contacts row vanished after onConflictDoNothing: ${email}`);
         }
         contactId = raced.id;
+        contactOrganizationId = raced.organizationId;
         contactCreated = false;
       }
+    }
+
+    let primaryContactSet = false;
+    if (existing.organizationId && contactOrganizationId === existing.organizationId) {
+      const primaryUpdates = await tx
+        .update(organizations)
+        .set({
+          primaryContactId: contactId,
+          updatedAt: new Date()
+        })
+        .where(and(
+          eq(organizations.id, existing.organizationId),
+          isNull(organizations.primaryContactId)
+        ))
+        .returning({ id: organizations.id });
+      primaryContactSet = primaryUpdates.length > 0;
     }
 
     // Race guard: if the operator submitted two approve calls with distinct
@@ -3336,7 +3375,8 @@ export async function approveContactCandidateCommand(input: {
         payloadJson: {
           ...(payload as unknown as Record<string, unknown>),
           contactId,
-          contactCreated
+          contactCreated,
+          primaryContactSet
         },
         updatedAt: new Date()
       })
@@ -3352,6 +3392,7 @@ export async function approveContactCandidateCommand(input: {
         candidateId: existing.id,
         contactId,
         contactCreated,
+        primaryContactSet,
         email,
         ...(existing.organizationId ? { organizationId: existing.organizationId } : {})
       }
@@ -3746,7 +3787,15 @@ export type GenerateDraftResult =
     }
   | {
       ok: false;
-      failure: { code: "organization_not_found" | "campaign_not_found" | "contact_not_found"; message: string };
+      failure: {
+        code:
+          | "organization_not_found"
+          | "campaign_not_found"
+          | "contact_not_found"
+          | "contact_not_for_organization"
+          | "no_contact_for_organization";
+        message: string;
+      };
     };
 
 export async function generateDraftCommand(input: {
@@ -3758,7 +3807,7 @@ export async function generateDraftCommand(input: {
 
   return db.transaction(async (tx) => {
     const [organization] = await tx
-      .select({ id: organizations.id })
+      .select({ id: organizations.id, primaryContactId: organizations.primaryContactId })
       .from(organizations)
       .where(eq(organizations.id, payload.organizationId))
       .limit(1);
@@ -3772,9 +3821,10 @@ export async function generateDraftCommand(input: {
       };
     }
 
+    let resolvedContactId: string;
     if (payload.contactId) {
       const [contact] = await tx
-        .select({ id: contacts.id })
+        .select({ id: contacts.id, organizationId: contacts.organizationId })
         .from(contacts)
         .where(eq(contacts.id, payload.contactId))
         .limit(1);
@@ -3787,6 +3837,46 @@ export async function generateDraftCommand(input: {
           }
         };
       }
+      if (contact.organizationId !== organization.id) {
+        return {
+          ok: false as const,
+          failure: {
+            code: "contact_not_for_organization",
+            message: `Contact ${payload.contactId} is not attached to organization ${organization.id}`
+          }
+        };
+      }
+      resolvedContactId = contact.id;
+    } else {
+      const [primaryContact] = organization.primaryContactId
+        ? await tx
+          .select({ id: contacts.id })
+          .from(contacts)
+          .where(and(
+            eq(contacts.id, organization.primaryContactId),
+            eq(contacts.organizationId, organization.id)
+          ))
+          .limit(1)
+        : [];
+      const [fallbackContact] = primaryContact
+        ? [primaryContact]
+        : await tx
+          .select({ id: contacts.id })
+          .from(contacts)
+          .where(eq(contacts.organizationId, organization.id))
+          .orderBy(asc(contacts.createdAt))
+          .limit(1);
+
+      if (!fallbackContact) {
+        return {
+          ok: false as const,
+          failure: {
+            code: "no_contact_for_organization",
+            message: `Promote a contact candidate before requesting a draft for organization ${organization.id}`
+          }
+        };
+      }
+      resolvedContactId = fallbackContact.id;
     }
 
     if (payload.campaignId) {
@@ -3813,6 +3903,10 @@ export async function generateDraftCommand(input: {
     const idempotencyKey = payload.idempotencyKey
       ?? buildGenerateDraftIdempotencyKey(organization.id, new Date(), briefHash);
     const correlationId = randomUUID();
+    const effectivePayload: GenerateDraftPayload = {
+      ...payload,
+      contactId: resolvedContactId
+    };
 
     const insertedCommands = await tx
       .insert(commands)
@@ -3823,7 +3917,7 @@ export async function generateDraftCommand(input: {
         actorId: input.actorId,
         targetEntityType: "organization",
         targetEntityId: organization.id,
-        payloadJson: payload as unknown as Record<string, unknown>,
+        payloadJson: effectivePayload as unknown as Record<string, unknown>,
         idempotencyKey,
         correlationId
       })
@@ -3872,7 +3966,7 @@ export async function generateDraftCommand(input: {
           operatorBrief: payload.operatorBrief,
           ...(payload.campaignId ? { campaignId: payload.campaignId } : {}),
           ...(payload.threadId ? { threadId: payload.threadId } : {}),
-          ...(payload.contactId ? { contactId: payload.contactId } : {})
+          contactId: resolvedContactId
         },
         concurrencyKey: `generate_draft:${organization.id}`,
         correlationId

@@ -90,6 +90,7 @@ export const organizations = pgTable("organizations", {
   name: text("name").notNull(),
   domain: text("domain"),
   countryCode: text("country_code"),
+  primaryContactId: uuid("primary_contact_id"),
   createdAt: createdAt(),
   updatedAt: updatedAt()
 }, (table) => ({
