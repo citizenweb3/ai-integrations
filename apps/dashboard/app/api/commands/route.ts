@@ -10,6 +10,7 @@ import {
   generateDraftCommand,
   generateWarmDraftCommand,
   markClaimResolvedCommand,
+  mergeThreadsCommand,
   pauseAllSendsCommand,
   recomputeQualityScoreCommand,
   recordDraftFeedbackCommand,
@@ -217,6 +218,31 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           threadCreated: result.threadCreated,
           inboundMessageId: result.inboundMessageId,
           resolvedWorkItemId: result.resolvedWorkItemId,
+          deduplicated: result.deduplicated
+        });
+      }
+      return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
+    }
+
+    case "merge_threads": {
+      const result = traceCommandResult(traceSpan, await mergeThreadsCommand({
+        ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
+        payload: parsed.data.payload
+      }));
+      if (!result.ok) {
+        if (isJson) {
+          return NextResponse.json({ error: result.failure }, { status: 409 });
+        }
+        const redirect = safeRedirectUrl(request);
+        redirect.searchParams.set("error", `${result.failure.code}: ${result.failure.message}`);
+        return NextResponse.redirect(redirect, { status: 303 });
+      }
+      if (isJson) {
+        return NextResponse.json({
+          commandId: result.command.id,
+          primaryThreadId: result.primaryThreadId,
+          secondaryThreadId: result.secondaryThreadId,
+          moved: result.moved,
           deduplicated: result.deduplicated
         });
       }
@@ -1214,6 +1240,23 @@ function formDataToCommand(formData: FormData) {
         ...(createNewThread ? { createNewThread: true } : {}),
         ...(campaignId ? { campaignId } : {}),
         ...(organizationId ? { organizationId } : {}),
+        ...(idempotencyKey ? { idempotencyKey } : {})
+      }
+    };
+  }
+
+  if (commandType === "merge_threads") {
+    const primaryThreadId = String(formData.get("primaryThreadId") ?? "").trim();
+    const secondaryThreadId = String(formData.get("secondaryThreadId") ?? "").trim();
+    const reason = String(formData.get("reason") ?? "").trim();
+    const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
+    return {
+      commandType,
+      ...base,
+      payload: {
+        primaryThreadId,
+        secondaryThreadId,
+        reason,
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
     };

@@ -147,6 +147,20 @@ export default async function WorkItemDetailPage({ params }: Props) {
             {item.inboundMessage.subject ? (
               <InfoRow label="Subject" value={item.inboundMessage.subject} />
             ) : null}
+            {item.inboundMessage.attachments.length > 0 ? (
+              <div className="mt-4">
+                <div className="text-xs uppercase tracking-wider opacity-60 mb-2">Attachments</div>
+                <ul className="space-y-1 text-xs">
+                  {item.inboundMessage.attachments.map((attachment, index) => (
+                    <li key={`${attachment.providerAttachmentId ?? attachment.filename ?? "attachment"}:${index}`} className="break-all">
+                      {attachment.filename ?? attachment.providerAttachmentId ?? "unnamed attachment"}
+                      {attachment.size !== null ? ` · ${attachment.size} bytes` : ""}
+                      {attachment.contentType ? ` · ${attachment.contentType}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <div className="mt-4">
               <div className="text-xs uppercase tracking-wider opacity-60 mb-2">Body</div>
               {item.inboundMessage.rawText ? (

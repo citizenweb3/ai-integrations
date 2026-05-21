@@ -144,6 +144,7 @@ export const threads = pgTable("threads", {
   organizationId: uuid("organization_id").references(() => organizations.id),
   status: text("status").notNull().default("open"),
   providerThreadKey: text("provider_thread_key"),
+  mergedIntoThreadId: uuid("merged_into_thread_id"),
   createdAt: createdAt(),
   updatedAt: updatedAt()
 });
@@ -293,6 +294,13 @@ export const inboundMessages = pgTable("inbound_messages", {
   rfc822MessageId: text("rfc822_message_id"),
   inReplyTo: text("in_reply_to"),
   referencesJson: jsonb("references_json").$type<string[]>().notNull().default([]),
+  attachmentsJson: jsonb("attachments_json").$type<Array<{
+    filename: string | null;
+    contentType: string | null;
+    size: number | null;
+    contentId: string | null;
+    providerAttachmentId: string | null;
+  }>>().notNull().default([]),
   replyClass: text("reply_class"),
   replyClassConfidence: text("reply_class_confidence"),
   classifiedAt: timestamp("classified_at", { withTimezone: true }),

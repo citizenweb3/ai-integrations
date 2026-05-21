@@ -49,6 +49,7 @@ export const operatorCommandTypes = [
   "request_research_more",
   "skip_draft",
   "attach_inbound_to_thread",
+  "merge_threads",
   "mark_thread_manual_hold",
   "return_thread_to_agent",
   "close_thread",
@@ -616,6 +617,18 @@ export const attachInboundToThreadPayloadSchema = z
     { message: "Provide exactly one of threadId or createNewThread" }
   );
 
+export const mergeThreadsPayloadSchema = z
+  .object({
+    primaryThreadId: z.string().uuid(),
+    secondaryThreadId: z.string().uuid(),
+    reason: z.string().trim().min(3).max(2000),
+    idempotencyKey: z.string().trim().min(1).max(200).optional()
+  })
+  .refine(
+    (value) => value.primaryThreadId !== value.secondaryThreadId,
+    { message: "primaryThreadId and secondaryThreadId must differ", path: ["secondaryThreadId"] }
+  );
+
 export const createDraftPayloadSchema = z.object({
   campaignId: z.string().uuid().optional(),
   threadId: z.string().uuid().optional(),
@@ -1047,6 +1060,11 @@ export const createCommandRequestSchema = z.discriminatedUnion("commandType", [
     payload: attachInboundToThreadPayloadSchema
   }),
   z.object({
+    commandType: z.literal("merge_threads"),
+    actorId: z.string().uuid().optional(),
+    payload: mergeThreadsPayloadSchema
+  }),
+  z.object({
     commandType: z.literal("suppress_contact"),
     actorId: z.string().uuid().optional(),
     payload: suppressContactPayloadSchema
@@ -1151,6 +1169,14 @@ export function buildAttachInboundToThreadIdempotencyKey(
   return `attach_inbound:${inboundMessageId}:${threadTarget}:${stateVersion.toISOString()}:v1`;
 }
 
+export function buildMergeThreadsIdempotencyKey(
+  primaryThreadId: string,
+  secondaryThreadId: string,
+  reasonHash: string
+): string {
+  return `merge_threads:${primaryThreadId}:${secondaryThreadId}:${reasonHash}:v1`;
+}
+
 export function buildWorkItemActionIdempotencyKey(
   workItemId: string,
   action: WorkItemAction,
@@ -1185,6 +1211,7 @@ export type PauseAllSendsPayload = z.infer<typeof pauseAllSendsPayloadSchema>;
 export type ResumeAllSendsPayload = z.infer<typeof resumeAllSendsPayloadSchema>;
 export type ApproveDraftForSendPayload = z.infer<typeof approveDraftForSendPayloadSchema>;
 export type AttachInboundToThreadPayload = z.infer<typeof attachInboundToThreadPayloadSchema>;
+export type MergeThreadsPayload = z.infer<typeof mergeThreadsPayloadSchema>;
 export type CreateDraftPayload = z.infer<typeof createDraftPayloadSchema>;
 export type RequestManualEditSavePayload = z.infer<typeof requestManualEditSavePayloadSchema>;
 export type MarkClaimResolvedPayload = z.infer<typeof markClaimResolvedPayloadSchema>;
