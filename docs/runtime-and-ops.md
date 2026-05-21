@@ -26,7 +26,8 @@ The worker pool string (`urgent,drafting,background,telegram`) determines which 
 
 ### Dashboard
 - `DASHBOARD_PORT` — bound port inside the container (Compose maps `3001:3000`).
-- `RESEND_WEBHOOK_SECRET` — Svix-format secret, validated on every `/webhooks/resend/events` POST. The webhook handler returns `401` on signature mismatch and `200` on dedupe-key collision (replay-safe).
+- `RESEND_WEBHOOK_SECRET_DELIVERY` — Svix-format secret, validated on every `/webhooks/resend/events` POST. The webhook handler returns `401` on signature mismatch and `200` on dedupe-key collision (replay-safe).
+- `RESEND_WEBHOOK_SECRET_INBOUND` — Svix-format secret, validated on every `/webhooks/resend/inbound` POST. Rotate independently from the delivery secret.
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL` — used by `sendEmailDispatcher`. Empty `RESEND_API_KEY` short-circuits to a non-retryable failed send (the worker won't burn retries against a missing key).
 
 ### Worker
