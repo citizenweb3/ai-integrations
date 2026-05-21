@@ -6,6 +6,7 @@ import {
   closeDb,
   eventLog,
   getDb,
+  ingestResendWebhookEvent,
   jobs,
   pruneWebhookEventNonces,
   webhookEventNonces,
@@ -265,6 +266,60 @@ test("webhook routes reject event types from the other channel without claiming 
   context.cleanupProviderEventIds.push(JSON.parse(deliveryOnInboundBody).id);
   context.cleanupProviderEventIds.push(JSON.parse(inboundOnDeliveryBody).id);
   context.cleanupSvixIds.push(deliveryOnInboundSvixId, inboundOnDeliverySvixId);
+});
+
+test("inbound route rejects bare received alias without claiming nonce", async (t) => {
+  const context = await withWebhookSecret(t);
+  const body = JSON.stringify({
+    id: `evt_${randomUUID()}`,
+    type: "received",
+    data: {
+      email_id: `email_${randomUUID()}`,
+      from: "reply@example.com",
+      to: "bare-received@example.com",
+      subject: "Re: alias",
+      text: "Reply"
+    }
+  });
+  const svixId = `msg_${randomUUID()}`;
+
+  const result = await resendInboundWebhookPost(signedRequest({
+    svixId,
+    body,
+    secretBytes: inboundSecretBytes,
+    path: "/webhooks/resend/inbound"
+  }));
+  assert.equal(result.status, 400);
+  assert.match((await result.json()).error, /not allowed on inbound webhook/);
+
+  const nonces = await getDb()
+    .select({ svixId: webhookEventNonces.svixId })
+    .from(webhookEventNonces)
+    .where(eq(webhookEventNonces.svixId, svixId));
+  assert.equal(nonces.length, 0);
+  context.cleanupSvixIds.push(svixId);
+});
+
+test("failed ingest rolls back claimed webhook nonce", async (t) => {
+  const svixId = `msg_${randomUUID()}`;
+  const dedupeKey = `resend:test:${randomUUID()}`;
+  t.after(async () => {
+    await getDb().delete(webhookEventNonces).where(eq(webhookEventNonces.svixId, svixId));
+  });
+
+  await assert.rejects(() => ingestResendWebhookEvent({
+    svixId,
+    eventType: "email.delivered",
+    dedupeKey,
+    rawHeadersJson: {},
+    rawBodyJson: { unencodable: BigInt(1) } as Record<string, unknown>
+  }));
+
+  const nonces = await getDb()
+    .select({ svixId: webhookEventNonces.svixId })
+    .from(webhookEventNonces)
+    .where(eq(webhookEventNonces.svixId, svixId));
+  assert.equal(nonces.length, 0);
 });
 
 function signedRequest(input: { svixId: string; body: string; secretBytes: Buffer; path: string }): Request {

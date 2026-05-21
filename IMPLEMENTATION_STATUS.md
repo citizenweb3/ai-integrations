@@ -619,12 +619,14 @@ Critical path: **S8.1 (payload integrity — closes the DevTools-tamper hole tha
 
 **Current behavior (verified via MCP):**
 
-- **Single webhook route handles BOTH delivery events AND inbound emails** (`apps/dashboard/app/webhooks/resend/events/route.ts:1-276`):
-  - `POST /webhooks/resend/events` accepts every Resend event type (`email.sent`, `email.delivered`, `email.bounced`, `email.complained`, `email.opened`, `email.clicked`, `email.received`).
-  - **Svix-format signature verification** (lines 97-138): headers `svix-id` + `svix-timestamp` + `svix-signature` required. Timestamp drift cap `±300s`. Secret decoded from `whsec_<base64>` prefix → Buffer. HMAC-SHA256 over `${id}.${timestamp}.${rawBody}`; `timingSafeEqual` compare against each `v1,<b64>` signature in the header. Missing secret → 503; bad signature/drift → 401.
-  - **Dedupe key tiering** (lines 79-95): `resend:event:<providerEventId>` (preferred) → `resend:message-event:<msgId>:<eventType>:<timestamp>` → `resend:body:<sha256(stableStringify(body))>` (worst case; whole body fingerprint).
-  - **Suppression auto-classify on ingest** (lines 145-157): regex on lowercased event type → `complaint | hard_bounce | unsubscribe` — written synchronously inside `ingestResendWebhookEvent` BEFORE the job processes. Producer-side suppression: bounce/complaint/unsubscribe headers immediately add a `suppression_entries` row.
-  - **Header redaction** (lines 222-236) for `rawHeadersJson`: `authorization`, `cookie`, `set-cookie`, `svix-*` → `[redacted]`.
+- **Resend delivery and inbound webhooks are split by route and signing secret**:
+  - `POST /webhooks/resend/events` validates `RESEND_WEBHOOK_SECRET_DELIVERY` and rejects inbound `email.received` events before nonce claim.
+  - `POST /webhooks/resend/inbound` validates `RESEND_WEBHOOK_SECRET_INBOUND` and accepts only `email.received`; the bare `received` alias is rejected so route behavior matches worker processing.
+  - **Svix-format signature verification**: headers `svix-id` + `svix-timestamp` + `svix-signature` required. Timestamp drift cap `±300s`. Secret decoded from `whsec_<base64>` prefix → Buffer. HMAC-SHA256 over `${id}.${timestamp}.${rawBody}`; `timingSafeEqual` compare against each `v1,<b64>` signature in the header. Missing secret → 503; bad signature/drift → 401.
+  - **Dedupe key tiering**: `resend:event:<providerEventId>` (preferred) → `resend:message-event:<msgId>:<eventType>:<timestamp>` → `resend:body:<sha256(stableStringify(body))>` (worst case; whole body fingerprint).
+  - **Replay defence**: `svix-id` nonce claim and webhook ingest/job enqueue run in one DB transaction; same-`svix-id` replay returns `{deduplicated:true}`, and failed ingest rolls the nonce back so Resend can retry.
+  - **Suppression auto-classify on ingest**: regex on lowercased event type → `complaint | hard_bounce | unsubscribe` — written synchronously inside `ingestResendWebhookEvent` BEFORE the job processes. Producer-side suppression: bounce/complaint/unsubscribe headers immediately add a `suppression_entries` row.
+  - **Header redaction** for `rawHeadersJson`: `authorization`, `cookie`, `set-cookie`, `svix-*` → `[redacted]`.
 - `ingestResendWebhookEvent` (`packages/db/src/repositories.ts:565-710`):
   - Insert `webhook_events` (status `'received'`) `onConflictDoNothing({target: dedupeKey})`. Dedup hit → `webhook_event_duplicate_ignored` audit, return `{deduplicated:true}`.
   - **Inline suppression insert** (lines 624-636) if `suppressionReason` + `recipientEmail`. `suppressionEntries.onConflictDoNothing()` (idempotent on `(email)` unique constraint).
@@ -667,8 +669,8 @@ Critical path: **S8.1 (payload integrity — closes the DevTools-tamper hole tha
 
 **Gaps vs. canonical §11 / §35 / §44 / §47 / §65:**
 
-- [G9.1] **Single webhook secret for delivery + inbound channels.** `RESEND_WEBHOOK_SECRET` validates BOTH endpoints. If Resend supports separate signing secrets per event subscription (typical: inbound vs delivery have separate webhooks in Resend dashboard), they're collapsed onto one secret. Rotation of the inbound secret would forcibly drop delivery events too.
-- [G9.2] **No replay-window persistence.** `±300s` timestamp drift is the only replay defence. There is no nonce / event-id store that REJECTS replays of within-window requests with the same `svix-id`. Resend's Svix client does cache successful event-ids on retry, but a leaked signing secret + a fast attacker would replay events freely. Cross-ref §47.
+- [done][G9.1] **Single webhook secret for delivery + inbound channels.** Closed by split routes/secrets: `RESEND_WEBHOOK_SECRET_DELIVERY` for `/webhooks/resend/events` and `RESEND_WEBHOOK_SECRET_INBOUND` for `/webhooks/resend/inbound`.
+- [done][G9.2] **No replay-window persistence.** Closed by DB-backed `svix-id` nonce claim inside the same transaction as webhook ingest/job enqueue.
 - [G9.3] **Sync suppression-insert inside webhook ingest path.** `suppression_entries` is inserted by the webhook route BEFORE `process_webhook_event` runs (lines 624-636 of `ingestResendWebhookEvent`). The `pending_suppression_webhook` guardrail (Step 8) becomes irrelevant for these events — the suppression already exists. Asymmetric: events that need parsing (`processInboundWebhookEvent`'s suppression branches) defer; events whose suppression reason is in the event type race ahead. Acceptable but means the guardrail name is misleading for half the cases.
 - [G9.4] **Inbound `rawText` is unsanitized.** `data.text || data.html || rawBody.text`. HTML body taken raw (no DOM strip, no quoted-reply trim, no signature delimit). Classifier prompt receives ~4000-char prefix of this raw text — if the inbound's first 4000 chars are quoted prior message (long `>` history at the top, e.g., Gmail bottom-quote-on-top default), classifier sees the WRONG text.
 - [G9.5] **`matchInboundByHeaders` is header-only.** No subject-match fallback (`Re: <subj>` lookup against outbound subjects), no From+To heuristic, no recipient-domain narrowing, no in-window match (recent outbound to sender's domain within N hours). If outbound's `rfc822_message_id` is wrong/missing/changed, OR if the replying client strips References/In-Reply-To (some mobile clients do), every inbound dumps into the unmatched work_item queue.
@@ -694,7 +696,7 @@ Critical path: **S8.1 (payload integrity — closes the DevTools-tamper hole tha
 
 **Minimum production fix:**
 
-- [done] [S9.1] **Separate inbound vs delivery webhook secrets.** Two routes (`/webhooks/resend/inbound` and `/webhooks/resend/events`) with two secrets (`RESEND_WEBHOOK_SECRET_INBOUND`, `RESEND_WEBHOOK_SECRET_DELIVERY`). Inbound subscription in Resend dashboard pointed at the inbound route only. Closes G9.1.
+- [done] [S9.1] **Separate inbound vs delivery webhook secrets.** Two routes (`/webhooks/resend/inbound` and `/webhooks/resend/events`) with two secrets (`RESEND_WEBHOOK_SECRET_INBOUND`, `RESEND_WEBHOOK_SECRET_DELIVERY`). Inbound subscription in Resend dashboard pointed at the inbound route only. Cross-channel event types are rejected before nonce claim, and nonce claim is atomic with ingest/job enqueue. Closes G9.1 and G9.2.
 - [done] [S9.2] **Reply-unsubscribe writes hard reason.** Change line 8275 of `applyReplyClassRouting` from `reason: 'user_unsubscribe'` to `reason: 'unsubscribe'` (matching `hardSuppressionReasons`). Migration: backfill existing `user_unsubscribe` rows. Closes G9.8. **Compliance-critical.**
 - [S9.3] **Quote-strip + signature-strip before classifier prompt.** Replace `truncate(inbound.rawText, 4000)` with `truncate(stripQuotedReplyAndSignature(rawText), 4000)`. Implement `stripQuotedReplyAndSignature` (handles `On <date>, <name> wrote:`, `-- ` signature delimiter, `> ` quoted lines). Closes G9.4 + G9.24.
 - [S9.4] **Auto-enqueue `classify_reply` on `attach_inbound_to_thread` resolution.** In `attachInboundToThreadCommand` post-attachment block, call `enqueueClassifyReplyJob(tx, {inboundMessageId, threadId, correlationId})`. Closes G9.7.
