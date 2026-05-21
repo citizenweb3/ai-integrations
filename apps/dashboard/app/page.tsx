@@ -4,6 +4,7 @@ import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
+import { inputClass, textareaClass } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -78,14 +79,62 @@ export default async function DashboardHome() {
               name="name"
               placeholder="AI integration services outreach"
               required
-              className="rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm md:col-span-2"
+              className={`${inputClass} md:col-span-2`}
             />
             <textarea
               name="objective"
               placeholder="Sell our AI integration services to..."
               required
               rows={3}
-              className="rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm md:col-span-2"
+              className={`${textareaClass} md:col-span-2`}
+            />
+            <textarea
+              name="targetSegments"
+              placeholder="Target segments"
+              rows={3}
+              className={textareaClass}
+            />
+            <textarea
+              name="operatorNotes"
+              placeholder="Operator notes"
+              rows={3}
+              className={textareaClass}
+            />
+            <textarea
+              name="discoverySourceHints"
+              placeholder="Discovery source hints"
+              rows={3}
+              className={textareaClass}
+            />
+            <textarea
+              name="discoveryExclusions"
+              placeholder="Discovery exclusions"
+              rows={3}
+              className={textareaClass}
+            />
+            <input
+              name="allowedRegions"
+              placeholder="Allowed regions"
+              aria-label="Allowed regions"
+              className={inputClass}
+            />
+            <input
+              name="maxOrganizationsToDiscover"
+              type="number"
+              aria-label="Max organizations to discover"
+              min={1}
+              max={500}
+              defaultValue={25}
+              className={inputClass}
+            />
+            <input
+              name="cooldownBetweenDiscoverySeconds"
+              type="number"
+              aria-label="Cooldown between discovery seconds"
+              min={0}
+              max={604800}
+              defaultValue={3600}
+              className={`${inputClass} md:col-span-2`}
             />
             <button
               type="submit"

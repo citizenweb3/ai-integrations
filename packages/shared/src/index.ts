@@ -277,6 +277,8 @@ export const eventTypes = [
   "campaign_discovery_started",
   "campaign_discovery_completed",
   "campaign_discovery_router_failed",
+  "campaign_discovery_cap_reached",
+  "campaign_discovery_cooldown_started",
   "discovery_candidate_proposed",
   "discovery_candidate_accepted",
   "discovery_candidate_rejected",
@@ -532,6 +534,11 @@ export const startCampaignPayloadSchema = z.object({
   objective: z.string().trim().min(1).max(2000),
   targetSegments: z.array(z.string().trim().min(1).max(200)).default([]),
   operatorNotes: z.string().trim().max(4000).optional(),
+  discoverySourceHints: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
+  discoveryExclusions: z.array(z.string().trim().min(1).max(500)).max(50).default([]),
+  allowedRegions: z.array(z.string().trim().min(1).max(120)).max(25).default([]),
+  maxOrganizationsToDiscover: z.number().int().min(1).max(500).default(25),
+  cooldownBetweenDiscoverySeconds: z.number().int().min(0).max(604800).default(3600),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 
@@ -692,12 +699,9 @@ export const rejectContactCandidatePayloadSchema = z.object({
 // Canonical §67 prospect discovery — operator triggers a discovery pass
 // for a campaign. The worker enqueues `job.run_campaign_discovery`,
 // which invokes the `campaign_discovery` ADK stage with the campaign
-// brief (objective + target_segments). Optional `additionalGuidance`
-// lets the operator nudge the agent ("focus on EU mid-market", "skip
-// agencies") without editing the campaign brief.
+// brief and persistent discovery hints stored on the campaign row.
 export const runCampaignDiscoveryPayloadSchema = z.object({
   campaignId: z.string().uuid(),
-  additionalGuidance: z.string().trim().max(4000).optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 
@@ -890,16 +894,14 @@ export function buildRejectContactCandidateIdempotencyKey(
 
 export function buildRunCampaignDiscoveryIdempotencyKey(
   campaignId: string,
-  guidanceHash: string,
+  scopeVersion: number,
   triggeredAt: Date
 ): string {
-  // Guidance hash splits two distinct discovery runs the operator may
-  // submit within the same millisecond with different additional
-  // guidance. Triggered-at is the trailing state-version slot per the
-  // shared `<scope>:<id>:...:<state_version>:v1` convention so repeated
-  // submits with the same brief collapse but re-runs after operator
-  // review do not.
-  return `run_campaign_discovery:${campaignId}:${guidanceHash}:${triggeredAt.toISOString()}:v1`;
+  // Scope version changes when persistent discovery hints/exclusions
+  // change. Triggered-at remains the trailing state-version slot per the
+  // shared `<scope>:<id>:...:<state_version>:v1` convention; the active
+  // discovery cooldown handles same-scope rapid replays.
+  return `run_campaign_discovery:${campaignId}:scope_v${scopeVersion}:${triggeredAt.toISOString()}:v1`;
 }
 
 export function buildAcceptDiscoveryCandidateIdempotencyKey(

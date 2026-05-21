@@ -253,14 +253,14 @@ S1–S5 ≈ 1–1.5 days. S6 only after warm-reply path works.
 
 **Minimum production fix:**
 
-- [S2.1] Remove `additionalGuidance` from UI form, command payload (`runCampaignDiscoveryCommand`), and prompt (`buildCampaignDiscoveryPrompt`). Replace with structured scope fields on the campaign row.
-- [S2.2] Migration: `campaigns.discovery_source_hints jsonb`, `campaigns.discovery_exclusions text[]`, `campaigns.allowed_regions text[]`. Surface in `/campaigns/new` + edit-scope form. Reference in `buildCampaignDiscoveryPrompt` as a `<persistent_hints>` section.
-- [S2.3] Run-level cap derived from campaign caps + current state: `runCap = min(25, max_organizations_to_discover − count(non-terminal candidates))`. Router stops past cap, emits `campaign_discovery_cap_reached`. Reject command up front if `runCap ≤ 0`.
+- [done:T-026C] [S2.1] Remove `additionalGuidance` from UI form, command payload (`runCampaignDiscoveryCommand`), and prompt (`buildCampaignDiscoveryPrompt`). Replace with structured scope fields on the campaign row.
+- [done:T-026C] [S2.2] Migration: `campaigns.discovery_source_hints jsonb`, `campaigns.discovery_exclusions text[]`, `campaigns.allowed_regions text[]`, plus `discovery_scope_version`. Current surface is the existing campaign create form + campaign detail readback; the full `/campaigns/new` + edit-scope form remains with Step 1 UI polish.
+- [done:T-026C] [S2.3] Run-level cap derived from campaign caps + current state: `runCap = min(25, max_organizations_to_discover − count(non-terminal candidates))`. Router stops past cap and emits `campaign_discovery_cap_reached`. Command rejects up front if `runCap ≤ 0`.
 - [S2.4] Pick the surface model in the design and stick with it. Recommended: pull-only via `/campaigns/[id]` (current behavior) **plus** a top-level "Campaigns needing review" tile on `/` that lists campaigns with non-zero `needs_review` count. Skip per-candidate work_items — they would flood `/inbox`.
 - [S2.5] Audit `normalizeProposal` for vertex/google redirect URL filtering; if missing, add it and emit `campaign_discovery_router_failed{reason:'all_sourceRefs_redirected'}` when post-filter list is empty.
 - [S2.6] Stalled-expansion tick (depends on Step 1 S6): if two consecutive discovery runs return `proposalsTotal=0`, emit work_item `campaign_discovery_stalled`.
-- [S2.7] Discovery cooldown: after a successful run insert `policy_state_entries(scope='campaign', scopeId=<campaignId>, stateType='discovery_cooldown', expiresAt=now()+cooldown_seconds)`. Reject `run_campaign_discovery` if active entry exists.
-- [S2.8] Re-key idempotency on `(campaignId, scopeVersion, triggeredAt)` once G2.0 ships — `scopeVersion` increments whenever the campaign's `discovery_source_hints` / `discovery_exclusions` change. Same-scope replays inside cooldown dedupe; scope edits force a fresh key.
+- [done:T-026C] [S2.7] Discovery cooldown: after a successful run insert `policy_state_entries(scope='campaign', scopeId=<campaignId>, stateType='discovery_cooldown', expiresAt=now()+cooldown_seconds)`. Reject `run_campaign_discovery` if an active entry exists.
+- [done:T-026C] [S2.8] Re-key idempotency on `(campaignId, scopeVersion, triggeredAt)` and include `scope_vN` in the key. Same-scope rapid replays are blocked by the persisted discovery cooldown; future scope edits should increment `discovery_scope_version`.
 
 S2.1+S2.2+S2.5+S2.7 ≈ 0.5–1 day. S2.3 depends on Step 1 S1. S2.6 deferred with Step 1 S6.
 

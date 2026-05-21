@@ -741,6 +741,21 @@ function resolveApproveFromEmail(): string | null {
   return value || null;
 }
 
+function splitFormList(formData: FormData, name: string): string[] {
+  const rawValues = formData.getAll(name)
+    .flatMap((value) => String(value ?? "").split(/[\n,]/g))
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  return [...new Set(rawValues)];
+}
+
+function optionalPositiveInteger(formData: FormData, name: string): number | undefined {
+  const raw = String(formData.get(name) ?? "").trim();
+  if (!raw) return undefined;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) ? value : undefined;
+}
+
 function formDataToCommand(formData: FormData) {
   const commandType = String(formData.get("commandType") ?? formData.get("command_type") ?? "start_campaign");
   const actorId = String(formData.get("actorId") ?? "").trim();
@@ -1137,14 +1152,12 @@ function formDataToCommand(formData: FormData) {
 
   if (commandType === "run_campaign_discovery") {
     const campaignId = String(formData.get("campaignId") ?? "").trim();
-    const additionalGuidance = String(formData.get("additionalGuidance") ?? "").trim();
     const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
     return {
       commandType,
       ...base,
       payload: {
         campaignId,
-        ...(additionalGuidance ? { additionalGuidance } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
     };
@@ -1196,7 +1209,13 @@ function formDataToCommand(formData: FormData) {
     payload: {
       name: String(formData.get("name") ?? ""),
       objective: String(formData.get("objective") ?? ""),
-      targetSegments: []
+      targetSegments: splitFormList(formData, "targetSegments"),
+      operatorNotes: String(formData.get("operatorNotes") ?? "").trim() || undefined,
+      discoverySourceHints: splitFormList(formData, "discoverySourceHints"),
+      discoveryExclusions: splitFormList(formData, "discoveryExclusions"),
+      allowedRegions: splitFormList(formData, "allowedRegions"),
+      maxOrganizationsToDiscover: optionalPositiveInteger(formData, "maxOrganizationsToDiscover") ?? 25,
+      cooldownBetweenDiscoverySeconds: optionalPositiveInteger(formData, "cooldownBetweenDiscoverySeconds") ?? 3600
     }
   };
 }

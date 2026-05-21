@@ -75,6 +75,16 @@ export default async function CampaignDetailPage({
   );
   const pending =
     view.candidatesByStatus.proposed.length + view.candidatesByStatus.needs_review.length;
+  const activeDiscoveryCount =
+    view.candidatesByStatus.proposed.length +
+    view.candidatesByStatus.accepted.length +
+    view.candidatesByStatus.needs_review.length +
+    view.candidatesByStatus.queued_for_enrichment.length +
+    view.candidatesByStatus.enriched.length;
+  const remainingDiscoveryCapacity = Math.max(
+    0,
+    view.campaign.maxOrganizationsToDiscover - activeDiscoveryCount
+  );
   const replyClassBreakdown = Object.entries(view.progress.replyClassCounts)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([replyClass, count]) => `${formatReplyClass(replyClass)}: ${count}`)
@@ -163,6 +173,31 @@ export default async function CampaignDetailPage({
                 : <span className="opacity-50">none</span>
             }
           />
+          <InfoRow
+            label="Discovery source hints"
+            value={formatListValue(view.campaign.discoverySourceHints)}
+          />
+          <InfoRow
+            label="Discovery exclusions"
+            value={formatListValue(view.campaign.discoveryExclusions)}
+          />
+          <InfoRow
+            label="Allowed regions"
+            value={formatListValue(view.campaign.allowedRegions)}
+          />
+          <InfoRow
+            label="Discovery cap"
+            value={`${activeDiscoveryCount}/${view.campaign.maxOrganizationsToDiscover}`}
+          />
+          <InfoRow
+            label="Discovery remaining"
+            value={remainingDiscoveryCapacity}
+          />
+          <InfoRow
+            label="Discovery cooldown"
+            value={`${view.campaign.cooldownBetweenDiscoverySeconds}s`}
+          />
+          <InfoRow label="Scope version" value={view.campaign.discoveryScopeVersion} />
           <InfoRow label="Created" value={view.campaign.createdAt.toISOString()} />
           <InfoRow label="Last update" value={view.campaign.updatedAt.toISOString()} />
         </Card>
@@ -170,17 +205,11 @@ export default async function CampaignDetailPage({
         <Card>
           <BlockTitle title="Run discovery" className="mb-4 text-left" />
           <p className="text-sm font-light opacity-70 mb-4">
-            Enqueue <code>job.run_campaign_discovery</code>. The agent searches for prospect organisations matching this campaign&apos;s segments + objective and emits proposals into the panels below.
+            Enqueue <code>job.run_campaign_discovery</code> using the persisted campaign scope.
           </p>
           <form action="/api/commands" method="post" className="space-y-3">
             <input type="hidden" name="commandType" value="run_campaign_discovery" />
             <input type="hidden" name="campaignId" value={view.campaign.id} />
-            <textarea
-              className={textareaClass}
-              name="additionalGuidance"
-              placeholder="Optional guidance for this run (regions to focus on, exclusions, etc.)"
-              maxLength={4000}
-            />
             <Button type="submit">Run discovery</Button>
           </form>
 
@@ -224,6 +253,10 @@ export default async function CampaignDetailPage({
       </PageBody>
     </>
   );
+}
+
+function formatListValue(values: string[]) {
+  return values.length > 0 ? values.join(", ") : <span className="opacity-50">none</span>;
 }
 
 function formatReplyClass(replyClass: string): string {
