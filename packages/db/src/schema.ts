@@ -587,6 +587,7 @@ export const researchSnapshots = pgTable("research_snapshots", {
   organizationId: uuid("organization_id").notNull().references(() => organizations.id),
   snapshotVersion: integer("snapshot_version").notNull().default(1),
   status: text("status").notNull().default("draft"),
+  questionsJson: jsonb("questions_json").$type<string[]>().notNull().default([]),
   createdAt: createdAt()
 }, (table) => ({
   orgVersionUidx: uniqueIndex("research_snapshots_org_version_uidx").on(
@@ -638,11 +639,13 @@ export const researchContactCandidates = pgTable("research_contact_candidates", 
   // taxonomy evolves faster than a CHECK constraint would survive.
   source: text("source"),
   evidenceUrl: text("evidence_url"),
+  sourceRefs: jsonb("source_refs").$type<Array<{ url: string; title?: string; snippet?: string }>>().notNull().default([]),
   agentRunId: uuid("agent_run_id").references(() => agentRuns.id),
   // Set when status='converted'; back-pointer to the contacts row so the
   // candidate's audit trail survives the conversion.
   convertedContactId: uuid("converted_contact_id").references(() => contacts.id),
   notes: text("notes"),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: createdAt(),
   updatedAt: updatedAt()
 }, (table) => ({
@@ -650,7 +653,11 @@ export const researchContactCandidates = pgTable("research_contact_candidates", 
     .on(table.organizationId, sql`lower(${table.email})`)
     .where(sql`${table.email} is not null and ${table.status} in ('pending','approved')`),
   orgStatusIdx: index("research_contact_candidates_org_status_idx")
-    .on(table.organizationId, table.status, table.createdAt)
+    .on(table.organizationId, table.status, table.createdAt),
+  orgNameActiveIdx: index("research_contact_candidates_org_name_active_idx")
+    .on(table.organizationId, sql`lower(${table.fullName})`)
+    .where(sql`${table.email} is null and ${table.status} in ('pending','approved')`),
+  lastSeenIdx: index("research_contact_candidates_last_seen_idx").on(table.lastSeenAt)
 }));
 
 // Prospect discovery (Tickets 3.1/3.2, canonical §67). One row per

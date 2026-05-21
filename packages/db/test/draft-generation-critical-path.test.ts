@@ -535,6 +535,66 @@ async function clearT012Artifacts() {
     : [];
   const agentRunIds = agentRunRows.map((row) => row.id);
 
+  await db.execute(sql`
+    delete from event_log
+    where entity_id in (
+      select rd.id
+      from rag_documents rd
+      join organizations o on o.id = rd.organization_id
+      where o.name like 't012-%'
+    )
+    or job_id in (
+      select j.id
+      from jobs j
+      join rag_documents rd on rd.id = j.target_entity_id
+      join organizations o on o.id = rd.organization_id
+      where o.name like 't012-%'
+    )
+  `);
+  await db.execute(sql`
+    delete from job_runs
+    where job_id in (
+      select j.id
+      from jobs j
+      join rag_documents rd on rd.id = j.target_entity_id
+      join organizations o on o.id = rd.organization_id
+      where o.name like 't012-%'
+    )
+  `);
+  await db.execute(sql`
+    delete from jobs
+    where target_entity_type = 'rag_document'
+      and target_entity_id in (
+        select rd.id
+        from rag_documents rd
+        join organizations o on o.id = rd.organization_id
+        where o.name like 't012-%'
+      )
+  `);
+  await db.execute(sql`
+    delete from rag_embeddings
+    where chunk_id in (
+      select rc.id
+      from rag_chunks rc
+      join rag_documents rd on rd.id = rc.document_id
+      join organizations o on o.id = rd.organization_id
+      where o.name like 't012-%'
+    )
+  `);
+  await db.execute(sql`
+    delete from rag_chunks
+    where document_id in (
+      select rd.id
+      from rag_documents rd
+      join organizations o on o.id = rd.organization_id
+      where o.name like 't012-%'
+    )
+  `);
+  await db.execute(sql`
+    delete from rag_documents
+    where organization_id in (select id from organizations where name like 't012-%')
+  `);
+
   const claimRows = draftIds.length > 0
     ? await db.select({ id: draftClaims.id }).from(draftClaims).where(inArray(draftClaims.draftId, draftIds))
     : [];

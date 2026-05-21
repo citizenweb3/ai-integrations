@@ -55,6 +55,13 @@ Output strict JSON with fields:
         "role": string|null,
         "source": string|null,
         "evidenceUrl": string|null,
+        "sourceRefs": [
+          {
+            "url": string,
+            "title": string|null,
+            "snippet": string|null
+          }
+        ],
         "confidence": "low"|"medium"|"high",
         "notes": string|null
       }
@@ -84,6 +91,10 @@ the worker drops them.
     enrichment.
   - `evidenceUrl`: the URL where you saw the person listed. Required
     whenever the candidate is included.
+  - `sourceRefs`: one or more source objects for the person. Include the
+    same URL as `evidenceUrl` plus any corroborating public profile,
+    conference, press, or company page. Use primary URLs, never
+    google/vertex redirect URLs.
   - `source`: short tag describing the page kind (e.g.
     `website_team_page`, `linkedin_profile`, `press_release`,
     `conference_bio`). Free-form, but stable across runs for the same
@@ -289,6 +300,13 @@ Output strict JSON:
         "role": string|null,
         "source": string|null,
         "evidenceUrl": string|null,
+        "sourceRefs": [
+          {
+            "url": string,
+            "title": string|null,
+            "snippet": string|null
+          }
+        ],
         "confidence": "low"|"medium"|"high",
         "notes": string|null
       }
@@ -298,7 +316,8 @@ Output strict JSON:
 `contactCandidates` follows the same conservative rules as the base
 research stage: include `email` ONLY if it appears verbatim on a primary
 source (no name-pattern guessing); `evidenceUrl` required when the
-candidate is included; cap at 8 entries; empty array is correct when no
+candidate is included; `sourceRefs` should carry the evidence URL plus
+any corroborating public source refs; cap at 8 entries; empty array is correct when no
 public contact info exists.
 
 Confidence rubric matches the base research stage (high = primary source,
