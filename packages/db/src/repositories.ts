@@ -622,7 +622,10 @@ export async function createStartCampaignCommand(input: {
           commandId,
           targetEntityType: "campaign",
           targetEntityId: campaignId,
-          payloadJson: { campaignId },
+          payloadJson: {
+            campaignId,
+            discoveryScopeVersion: 1
+          },
           concurrencyKey: `campaign:${campaignId}`,
           correlationId
         })
@@ -686,6 +689,12 @@ export async function updateCampaignScopeCommand(input: {
   actorId?: string;
   payload: UpdateCampaignScopePayload;
 }): Promise<UpdateCampaignScopeResult> {
+  if (input.payload.idempotencyKey && !input.payload.idempotencyKey.startsWith("update_campaign_scope:")) {
+    throw new Error(
+      `idempotencyKey must start with "update_campaign_scope:" (got: ${input.payload.idempotencyKey.slice(0, 32)})`
+    );
+  }
+
   const db = getDb();
   const commandId = randomUUID();
   const jobId = randomUUID();
@@ -698,6 +707,9 @@ export async function updateCampaignScopeCommand(input: {
 
   const existing = await getExistingCommandResult(idempotencyKey);
   if (existing) {
+    if (existing.command.commandType !== "update_campaign_scope") {
+      throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
+    }
     const [job] = await db
       .select()
       .from(jobs)
@@ -803,7 +815,10 @@ export async function updateCampaignScopeCommand(input: {
           commandId,
           targetEntityType: "campaign",
           targetEntityId: campaign.id,
-          payloadJson: { campaignId: campaign.id },
+          payloadJson: {
+            campaignId: campaign.id,
+            discoveryScopeVersion: nextCampaign.discoveryScopeVersion
+          },
           concurrencyKey: `campaign:${campaign.id}`,
           correlationId
         })
@@ -835,6 +850,9 @@ export async function updateCampaignScopeCommand(input: {
     if (isUniqueViolation(error)) {
       const concurrentExisting = await getExistingCommandResult(idempotencyKey);
       if (concurrentExisting) {
+        if (concurrentExisting.command.commandType !== "update_campaign_scope") {
+          throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
+        }
         const [job] = await db
           .select()
           .from(jobs)
@@ -8727,6 +8745,45 @@ export async function completeCampaignExpansionJob(input: {
       if (!campaign) {
         throw new NonRetryableJobError(`Campaign ${input.campaignId} not found`);
       }
+      if (campaign.status !== "drafting_scope") {
+        await tx.insert(eventLog).values({
+          eventType: "campaign_expansion_completed",
+          entityType: "campaign",
+          entityId: campaign.id,
+          jobId: input.job.id,
+          correlationId: input.job.correlation_id,
+          payloadJson: {
+            workerId: input.workerId,
+            skipped: true,
+            reason: "campaign_not_drafting_scope",
+            campaignStatus: campaign.status,
+            discoveryJobId: null,
+            runCap: 0
+          }
+        });
+        return;
+      }
+
+      const jobScopeVersion = readOptionalJobNumber(input.job.payload_json, "discoveryScopeVersion");
+      if (jobScopeVersion !== null && jobScopeVersion !== campaign.discoveryScopeVersion) {
+        await tx.insert(eventLog).values({
+          eventType: "campaign_expansion_completed",
+          entityType: "campaign",
+          entityId: campaign.id,
+          jobId: input.job.id,
+          correlationId: input.job.correlation_id,
+          payloadJson: {
+            workerId: input.workerId,
+            skipped: true,
+            reason: "stale_scope_version",
+            jobScopeVersion,
+            discoveryScopeVersion: campaign.discoveryScopeVersion,
+            discoveryJobId: null,
+            runCap: 0
+          }
+        });
+        return;
+      }
 
       const readiness = validateCampaignScopeReadiness(campaign);
       if (!readiness.ready) {
@@ -8769,6 +8826,11 @@ export async function completeCampaignExpansionJob(input: {
       });
     }
   });
+}
+
+function readOptionalJobNumber(payload: JsonRecord, key: string): number | null {
+  const value = payload[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 type CampaignScopeReadinessRow = typeof campaigns.$inferSelect;
@@ -17970,12 +18032,20 @@ function buildStartCampaignIdempotencyKey(payload: StartCampaignPayload): string
   const normalized = JSON.stringify({
     name: payload.name.trim(),
     objective: payload.objective.trim(),
+    offerSummary: payload.offerSummary?.trim() ?? null,
+    desiredCta: payload.desiredCta?.trim() ?? null,
     targetSegments: [...payload.targetSegments].sort(),
+    forbiddenClaims: [...(payload.forbiddenClaims ?? [])].sort(),
+    senderIdentityId: payload.senderIdentityId ?? null,
+    policyProfileId: payload.policyProfileId ?? null,
     operatorNotes: payload.operatorNotes?.trim() ?? null,
     discoverySourceHints: [...(payload.discoverySourceHints ?? [])].sort(),
     discoveryExclusions: [...(payload.discoveryExclusions ?? [])].sort(),
     allowedRegions: [...(payload.allowedRegions ?? [])].sort(),
     maxOrganizationsToDiscover: payload.maxOrganizationsToDiscover ?? 25,
+    maxConcurrentEnrichments: payload.maxConcurrentEnrichments ?? 3,
+    maxConcurrentDrafts: payload.maxConcurrentDrafts ?? 5,
+    maxOpenDraftReviews: payload.maxOpenDraftReviews ?? 25,
     cooldownBetweenDiscoverySeconds: payload.cooldownBetweenDiscoverySeconds ?? 3600
   });
   return `start_campaign:${createHash("sha256").update(normalized).digest("hex")}`;

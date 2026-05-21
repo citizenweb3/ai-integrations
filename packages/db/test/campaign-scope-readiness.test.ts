@@ -106,7 +106,7 @@ test("campaign expansion requires complete scope before activating discovery", a
       maxConcurrentDrafts: 6,
       maxOpenDraftReviews: 18,
       cooldownBetweenDiscoverySeconds: 1800,
-      idempotencyKey: `t026e-update-ready-${suffix}`
+      idempotencyKey: `update_campaign_scope:t026e-update-ready-${suffix}`
     }
   });
   assert.equal(updated.ok, true);
@@ -162,12 +162,178 @@ test("campaign expansion requires complete scope before activating discovery", a
     payload: {
       campaignId: created.campaign.id,
       objective: "This active campaign should not be editable.",
-      idempotencyKey: `t026e-update-active-${suffix}`
+      idempotencyKey: `update_campaign_scope:t026e-update-active-${suffix}`
     }
   });
   assert.equal(rejectedUpdate.ok, false);
   if (rejectedUpdate.ok) assert.fail("active campaign update should fail");
   assert.equal(rejectedUpdate.failure.code, "campaign_not_editable");
+});
+
+test("start campaign idempotency includes expanded scope fields", async (t) => {
+  const db = getDb();
+  await clearT026EArtifacts();
+  t.after(clearT026EArtifacts);
+
+  const suffix = randomUUID();
+  const first = await createStartCampaignCommand({
+    payload: {
+      name: `t026e-idem-${suffix}`,
+      objective: "Keep the old hash fields identical.",
+      offerSummary: "First offer.",
+      desiredCta: "First CTA.",
+      targetSegments: ["T026E"],
+      forbiddenClaims: ["Do not claim first"],
+      discoverySourceHints: ["same hint"],
+      discoveryExclusions: [],
+      allowedRegions: [],
+      maxOrganizationsToDiscover: 25,
+      maxConcurrentEnrichments: 3,
+      maxConcurrentDrafts: 5,
+      maxOpenDraftReviews: 25,
+      cooldownBetweenDiscoverySeconds: 3600
+    }
+  });
+  const second = await createStartCampaignCommand({
+    payload: {
+      name: `t026e-idem-${suffix}`,
+      objective: "Keep the old hash fields identical.",
+      offerSummary: "Second offer.",
+      desiredCta: "Second CTA.",
+      targetSegments: ["T026E"],
+      forbiddenClaims: ["Do not claim second"],
+      discoverySourceHints: ["same hint"],
+      discoveryExclusions: [],
+      allowedRegions: [],
+      maxOrganizationsToDiscover: 25,
+      maxConcurrentEnrichments: 7,
+      maxConcurrentDrafts: 9,
+      maxOpenDraftReviews: 33,
+      cooldownBetweenDiscoverySeconds: 3600
+    }
+  });
+
+  assert.equal(first.deduplicated, false);
+  assert.equal(second.deduplicated, false);
+  assert.notEqual(second.campaign.id, first.campaign.id);
+
+  const rows = await db
+    .select({ offerSummary: campaigns.offerSummary, maxConcurrentDrafts: campaigns.maxConcurrentDrafts })
+    .from(campaigns)
+    .where(sql`${campaigns.name} like 't026e-idem-%'`);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(
+    rows.map((row) => [row.offerSummary, row.maxConcurrentDrafts]).sort(),
+    [["First offer.", 5], ["Second offer.", 9]].sort()
+  );
+});
+
+test("campaign expansion ignores stale scope-version jobs and active duplicates", async (t) => {
+  const db = getDb();
+  await clearT026EArtifacts();
+  t.after(clearT026EArtifacts);
+
+  const suffix = randomUUID();
+  const created = await createStartCampaignCommand({
+    payload: {
+      name: `t026e-stale-${suffix}`,
+      objective: "Expansion should only run the current scope version.",
+      targetSegments: [],
+      forbiddenClaims: [],
+      discoverySourceHints: [],
+      discoveryExclusions: [],
+      allowedRegions: [],
+      maxOrganizationsToDiscover: 10,
+      maxConcurrentEnrichments: 3,
+      maxConcurrentDrafts: 5,
+      maxOpenDraftReviews: 25,
+      cooldownBetweenDiscoverySeconds: 3600,
+      idempotencyKey: `t026e-start-stale-${suffix}`
+    }
+  });
+
+  const partial = await updateCampaignScopeCommand({
+    payload: {
+      campaignId: created.campaign.id,
+      offerSummary: "Partial offer, still missing CTA and segments.",
+      idempotencyKey: `update_campaign_scope:t026e-update-partial-${suffix}`
+    }
+  });
+  assert.equal(partial.ok, true);
+  if (!partial.ok) assert.fail(partial.failure.message);
+  assert.equal(partial.campaign.discoveryScopeVersion, 2);
+
+  const ready = await updateCampaignScopeCommand({
+    payload: {
+      campaignId: created.campaign.id,
+      desiredCta: "Ask for a workflow review.",
+      targetSegments: ["T026E ready segment"],
+      maxOrganizationsToDiscover: 10,
+      idempotencyKey: `update_campaign_scope:t026e-update-stale-ready-${suffix}`
+    }
+  });
+  assert.equal(ready.ok, true);
+  if (!ready.ok) assert.fail(ready.failure.message);
+  assert.equal(ready.campaign.discoveryScopeVersion, 3);
+
+  await runExpansionJobForCampaign(created.campaign.id, 1);
+  await runExpansionJobForCampaign(created.campaign.id, 2);
+
+  const [stillDrafting] = await db
+    .select({ status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.id, created.campaign.id))
+    .limit(1);
+  assert.deepEqual(stillDrafting, { status: "drafting_scope" });
+  assert.equal(await countDiscoveryJobs(created.campaign.id), 0);
+
+  await runExpansionJobForCampaign(created.campaign.id, 3);
+  const [active] = await db
+    .select({ status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.id, created.campaign.id))
+    .limit(1);
+  assert.deepEqual(active, { status: "active" });
+  assert.equal(await countDiscoveryJobs(created.campaign.id), 1);
+
+  await insertQueuedExpansionJob(created.campaign.id, 3);
+  await runExpansionJobForCampaign(created.campaign.id, 3);
+  assert.equal(await countDiscoveryJobs(created.campaign.id), 1);
+});
+
+test("update campaign scope rejects cross-command idempotency keys", async (t) => {
+  await clearT026EArtifacts();
+  t.after(clearT026EArtifacts);
+
+  const suffix = randomUUID();
+  const created = await createStartCampaignCommand({
+    payload: {
+      name: `t026e-prefix-${suffix}`,
+      objective: "Validate update idempotency key prefixes.",
+      targetSegments: [],
+      forbiddenClaims: [],
+      discoverySourceHints: [],
+      discoveryExclusions: [],
+      allowedRegions: [],
+      maxOrganizationsToDiscover: 25,
+      maxConcurrentEnrichments: 3,
+      maxConcurrentDrafts: 5,
+      maxOpenDraftReviews: 25,
+      cooldownBetweenDiscoverySeconds: 3600,
+      idempotencyKey: `t026e-start-prefix-${suffix}`
+    }
+  });
+
+  await assert.rejects(
+    () => updateCampaignScopeCommand({
+      payload: {
+        campaignId: created.campaign.id,
+        objective: "This should not run.",
+        idempotencyKey: `start_campaign:t026e-wrong-prefix-${suffix}`
+      }
+    }),
+    /idempotencyKey must start with "update_campaign_scope:"/
+  );
 });
 
 test("draft generation and approval hard-block non-active campaign scope", async (t) => {
@@ -262,7 +428,10 @@ test("draft generation and approval hard-block non-active campaign scope", async
   assert.equal(approval.failures?.some((failure) => failure.code === "campaign_not_active"), true);
 });
 
-async function runExpansionJobForCampaign(campaignId: string): Promise<void> {
+async function runExpansionJobForCampaign(
+  campaignId: string,
+  scopeVersion?: number
+): Promise<void> {
   const db = getDb();
   const workerId = `t026e-worker-${randomUUID()}`;
   const [queuedJob] = await db
@@ -271,7 +440,10 @@ async function runExpansionJobForCampaign(campaignId: string): Promise<void> {
     .where(and(
       eq(jobs.jobType, "job.start_campaign_expansion"),
       eq(jobs.targetEntityId, campaignId),
-      eq(jobs.status, "queued")
+      eq(jobs.status, "queued"),
+      ...(scopeVersion !== undefined
+        ? [sql`${jobs.payloadJson}->>'discoveryScopeVersion' = ${String(scopeVersion)}`]
+        : [])
     ))
     .limit(1);
   assert.ok(queuedJob);
@@ -316,6 +488,35 @@ async function runExpansionJobForCampaign(campaignId: string): Promise<void> {
     workerId,
     campaignId
   });
+}
+
+async function insertQueuedExpansionJob(campaignId: string, scopeVersion: number): Promise<void> {
+  const db = getDb();
+  await db.insert(jobs).values({
+    jobType: "job.start_campaign_expansion",
+    status: "queued",
+    workerPool: "drafting",
+    targetEntityType: "campaign",
+    targetEntityId: campaignId,
+    payloadJson: {
+      campaignId,
+      discoveryScopeVersion: scopeVersion
+    },
+    concurrencyKey: `campaign:${campaignId}`,
+    correlationId: randomUUID()
+  });
+}
+
+async function countDiscoveryJobs(campaignId: string): Promise<number> {
+  const db = getDb();
+  const rows = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(
+      eq(jobs.jobType, "job.run_campaign_discovery"),
+      eq(jobs.targetEntityId, campaignId)
+    ));
+  return rows.length;
 }
 
 async function clearT026EArtifacts(): Promise<void> {
