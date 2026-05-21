@@ -1,4 +1,4 @@
-import { claimWebhookEventNonce, ingestResendWebhookEvent } from "@bizdev/db";
+import { ingestResendWebhookEvent } from "@bizdev/db";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
@@ -35,10 +35,6 @@ export async function handleResendWebhook(request: Request, channel: ResendWebho
     );
   }
 
-  if (!await claimWebhookEventNonce(signatureResult.svixId)) {
-    return NextResponse.json({ deduplicated: true });
-  }
-
   const providerEventId = readString(parsedBody.value, ["id"])
     ?? readString(parsedBody.value, ["event_id"])
     ?? readString(parsedBody.value, ["eventId"]);
@@ -48,6 +44,7 @@ export async function handleResendWebhook(request: Request, channel: ResendWebho
   const suppressionReason = classifySuppressionReason(eventType);
 
   const result = await ingestResendWebhookEvent({
+    svixId: signatureResult.svixId,
     eventType,
     dedupeKey: buildDedupeKey({
       eventType,
@@ -62,6 +59,10 @@ export async function handleResendWebhook(request: Request, channel: ResendWebho
     ...(recipientEmail ? { recipientEmail } : {}),
     ...(suppressionReason ? { suppressionReason } : {})
   });
+
+  if (result.deduplicated && !result.webhookEventId) {
+    return NextResponse.json({ deduplicated: true });
+  }
 
   return NextResponse.json({
     received: true,
@@ -173,7 +174,7 @@ function classifySuppressionReason(eventType: string): string | undefined {
 
 function isEventTypeAllowedForChannel(channel: ResendWebhookChannel, eventType: string): boolean {
   const normalized = eventType.toLowerCase();
-  const isInbound = normalized === "email.received" || normalized === "received";
+  const isInbound = normalized === "email.received";
   return channel === "inbound" ? isInbound : !isInbound;
 }
 

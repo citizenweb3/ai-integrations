@@ -231,6 +231,7 @@ export type QueueDepthWatchdogResult = {
 };
 
 export type IngestResendWebhookEventInput = {
+  svixId: string;
   eventType: string;
   dedupeKey: string;
   rawHeadersJson: JsonRecord;
@@ -1469,6 +1470,22 @@ export async function ingestResendWebhookEvent(
   const correlationId = randomUUID();
 
   return db.transaction(async (tx) => {
+    const insertedNonce = await tx
+      .insert(webhookEventNonces)
+      .values({ svixId: input.svixId })
+      .onConflictDoNothing({ target: webhookEventNonces.svixId })
+      .returning({ svixId: webhookEventNonces.svixId });
+
+    if (insertedNonce.length === 0) {
+      return {
+        webhookEventId: null,
+        jobId: null,
+        deduplicated: true,
+        suppressionApplied: false,
+        suppressionCreated: false
+      };
+    }
+
     const insertedEvents = await tx
       .insert(webhookEvents)
       .values({
