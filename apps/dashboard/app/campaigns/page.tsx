@@ -2,7 +2,7 @@ import { listCampaignsForDashboard } from "@bizdev/db";
 import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
-import { Badge, PageBody } from "@/components/ui";
+import { Badge, PageBody, PillLink } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +22,7 @@ export default async function CampaignsIndexPage() {
         }
         title="Campaigns"
         subtitle={`${items.length} campaign${items.length === 1 ? "" : "s"}. Open one to run prospect discovery and triage proposed organisations.`}
+        actions={<PillLink href="/campaigns/new" primary>New campaign</PillLink>}
       />
 
       <PageBody>
@@ -29,6 +30,11 @@ export default async function CampaignsIndexPage() {
           <Card>
             <p className="font-light opacity-80">
               No campaigns yet. Create one via the start_campaign command.
+              {" "}
+              <Link href="/campaigns/new" className="text-[hsl(var(--primary))]">
+                Open the scope form
+              </Link>
+              .
             </p>
           </Card>
         ) : (

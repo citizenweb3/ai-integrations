@@ -246,6 +246,7 @@ async function insertReviewFixture(input: {
     .insert(campaigns)
     .values({
       name: `t013-campaign-${suffix}`,
+      status: "active",
       objective: "Review Step 7 operator safety.",
       targetSegments: ["T013"],
       operatorNotes: null

@@ -31,6 +31,7 @@ export const commandStatuses = [
 
 export const operatorCommandTypes = [
   "start_campaign",
+  "update_campaign_scope",
   "pause_campaign",
   "resume_campaign",
   "close_campaign",
@@ -191,6 +192,7 @@ export const eventTypes = [
   "command_accepted",
   "command_deduplicated",
   "campaign_created",
+  "campaign_scope_updated",
   "campaign_scope_incomplete",
   "campaign_expansion_started",
   "campaign_expansion_completed",
@@ -495,6 +497,7 @@ export const nonOverridableGuardrailCodes = [
   "invalid_recipient",
   "claims_no_org_context",
   "autosend_readiness_not_ready",
+  "campaign_not_active",
   "campaign_archived",
   "pending_suppression_webhook",
   "active_suppression_hard",
@@ -534,13 +537,43 @@ export const outboundMessageStatuses = [
 export const startCampaignPayloadSchema = z.object({
   name: z.string().trim().min(1).max(200),
   objective: z.string().trim().min(1).max(2000),
+  offerSummary: z.string().trim().max(2000).optional(),
+  desiredCta: z.string().trim().max(500).optional(),
   targetSegments: z.array(z.string().trim().min(1).max(200)).default([]),
+  forbiddenClaims: z.array(z.string().trim().min(1).max(500)).max(50).default([]),
+  senderIdentityId: z.string().uuid().optional(),
+  policyProfileId: z.string().uuid().optional(),
   operatorNotes: z.string().trim().max(4000).optional(),
   discoverySourceHints: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
   discoveryExclusions: z.array(z.string().trim().min(1).max(500)).max(50).default([]),
   allowedRegions: z.array(z.string().trim().min(1).max(120)).max(25).default([]),
   maxOrganizationsToDiscover: z.number().int().min(1).max(500).default(25),
+  maxConcurrentEnrichments: z.number().int().min(1).max(100).default(3),
+  maxConcurrentDrafts: z.number().int().min(1).max(100).default(5),
+  maxOpenDraftReviews: z.number().int().min(1).max(500).default(25),
   cooldownBetweenDiscoverySeconds: z.number().int().min(0).max(604800).default(3600),
+  idempotencyKey: z.string().trim().min(1).max(200).optional()
+});
+
+export const updateCampaignScopePayloadSchema = z.object({
+  campaignId: z.string().uuid(),
+  name: z.string().trim().min(1).max(200).optional(),
+  objective: z.string().trim().min(1).max(2000).optional(),
+  offerSummary: z.string().trim().max(2000).nullable().optional(),
+  desiredCta: z.string().trim().max(500).nullable().optional(),
+  targetSegments: z.array(z.string().trim().min(1).max(200)).optional(),
+  forbiddenClaims: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
+  senderIdentityId: z.string().uuid().nullable().optional(),
+  policyProfileId: z.string().uuid().nullable().optional(),
+  operatorNotes: z.string().trim().max(4000).nullable().optional(),
+  discoverySourceHints: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
+  discoveryExclusions: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
+  allowedRegions: z.array(z.string().trim().min(1).max(120)).max(25).optional(),
+  maxOrganizationsToDiscover: z.number().int().min(1).max(500).optional(),
+  maxConcurrentEnrichments: z.number().int().min(1).max(100).optional(),
+  maxConcurrentDrafts: z.number().int().min(1).max(100).optional(),
+  maxOpenDraftReviews: z.number().int().min(1).max(500).optional(),
+  cooldownBetweenDiscoverySeconds: z.number().int().min(0).max(604800).optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 
@@ -975,11 +1008,23 @@ export function buildRequestResearchMoreIdempotencyKey(
   return `request_research_more:${organizationId}:${draftId ?? "no_draft"}:${claimIdsHash}:${noteHash}:v1`;
 }
 
+export function buildUpdateCampaignScopeIdempotencyKey(
+  campaignId: string,
+  scopeHash: string
+): string {
+  return `update_campaign_scope:${campaignId}:${scopeHash}:v1`;
+}
+
 export const createCommandRequestSchema = z.discriminatedUnion("commandType", [
   z.object({
     commandType: z.literal("start_campaign"),
     actorId: z.string().uuid().optional(),
     payload: startCampaignPayloadSchema
+  }),
+  z.object({
+    commandType: z.literal("update_campaign_scope"),
+    actorId: z.string().uuid().optional(),
+    payload: updateCampaignScopePayloadSchema
   }),
   z.object({
     commandType: z.literal("pause_all_sends"),
@@ -1135,6 +1180,7 @@ export type WorkItemAction = (typeof workItemActions)[number];
 export type OutboundMessageStatus = (typeof outboundMessageStatuses)[number];
 export type SuppressionReason = (typeof suppressionReasons)[number];
 export type StartCampaignPayload = z.infer<typeof startCampaignPayloadSchema>;
+export type UpdateCampaignScopePayload = z.infer<typeof updateCampaignScopePayloadSchema>;
 export type PauseAllSendsPayload = z.infer<typeof pauseAllSendsPayloadSchema>;
 export type ResumeAllSendsPayload = z.infer<typeof resumeAllSendsPayloadSchema>;
 export type ApproveDraftForSendPayload = z.infer<typeof approveDraftForSendPayloadSchema>;
