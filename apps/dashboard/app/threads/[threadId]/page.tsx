@@ -149,6 +149,17 @@ export default async function ThreadDetailPage({ params }: Props) {
                     </span>
                   </div>
                   {m.subject ? <div className="text-xs opacity-60">Subject: {m.subject}</div> : null}
+                  {m.kind === "inbound" && m.attachments.length > 0 ? (
+                    <ul className="space-y-1 text-xs opacity-80">
+                      {m.attachments.map((attachment, index) => (
+                        <li key={`${attachment.providerAttachmentId ?? attachment.filename ?? "attachment"}:${index}`} className="break-all">
+                          {attachment.filename ?? attachment.providerAttachmentId ?? "unnamed attachment"}
+                          {attachment.size !== null ? ` · ${attachment.size} bytes` : ""}
+                          {attachment.contentType ? ` · ${attachment.contentType}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                   {(m.kind === "inbound" ? m.rawText : m.body) ? (
                     <pre className="m-0 p-3 bg-black/40 rounded-lg text-xs whitespace-pre-wrap break-words font-mono max-h-80 overflow-auto">
                       {m.kind === "inbound" ? m.rawText : m.body}

@@ -10,6 +10,7 @@ import {
   buildGenerateWarmDraftIdempotencyKey,
   buildMarkClaimResolvedIdempotencyKey,
   buildManualEditSaveIdempotencyKey,
+  buildMergeThreadsIdempotencyKey,
   buildPauseAllSendsIdempotencyKey,
   buildRecomputeQualityScoreIdempotencyKey,
   buildRecordDraftFeedbackIdempotencyKey,
@@ -36,6 +37,7 @@ import {
   type GenerateDraftPayload,
   type GenerateWarmDraftPayload,
   type MarkClaimResolvedPayload,
+  type MergeThreadsPayload,
   type OutboundMessageStatus,
   type OverridableGuardrailCode,
   type PauseAllSendsPayload,
@@ -142,6 +144,7 @@ export type WorkItemDetail = {
     fromEmail: string;
     subject: string | null;
     rawText: string | null;
+    attachments: InboundAttachmentManifestItem[];
     webhookEventId: string | null;
     threadId: string | null;
     createdAt: Date;
@@ -158,6 +161,13 @@ export type WorkItemDetail = {
 
 type JsonRecord = Record<string, unknown>;
 type DbTransaction = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
+type InboundAttachmentManifestItem = {
+  filename: string | null;
+  contentType: string | null;
+  size: number | null;
+  contentId: string | null;
+  providerAttachmentId: string | null;
+};
 
 export type LeasedJob = {
   id: string;
@@ -2795,6 +2805,11 @@ function readSnapshotString(record: Record<string, unknown>, key: string): strin
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function readSnapshotNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 export async function applyWorkItemActionCommand(input: {
   workItemId: string;
   action: WorkItemAction;
@@ -3136,6 +3151,248 @@ export async function attachInboundToThreadCommand(input: {
       threadCreated,
       inboundMessageId: payload.inboundMessageId,
       resolvedWorkItemId,
+      idempotencyKey,
+      deduplicated: false
+    };
+  });
+}
+
+export type MergeThreadsResult =
+  | {
+      ok: true;
+      command: typeof commands.$inferSelect;
+      primaryThreadId: string;
+      secondaryThreadId: string;
+      moved: {
+        inboundMessages: number;
+        outboundMessages: number;
+        drafts: number;
+        workItems: number;
+        participants: number;
+      };
+      idempotencyKey: string;
+      deduplicated: boolean;
+    }
+  | {
+      ok: false;
+      failure: {
+        code: "primary_thread_not_found" | "secondary_thread_not_found" | "same_thread" | "thread_already_merged";
+        message: string;
+      };
+    };
+
+export async function mergeThreadsCommand(input: {
+  payload: MergeThreadsPayload;
+  actorId?: string;
+}): Promise<MergeThreadsResult> {
+  const { payload } = input;
+  const db = getDb();
+  const reasonHash = createHash("sha256").update(payload.reason.trim()).digest("hex").slice(0, 16);
+  const idempotencyKey = payload.idempotencyKey
+    ?? buildMergeThreadsIdempotencyKey(payload.primaryThreadId, payload.secondaryThreadId, reasonHash);
+
+  if (payload.idempotencyKey && !payload.idempotencyKey.startsWith("merge_threads:")) {
+    throw new Error(
+      `idempotencyKey must start with "merge_threads:" (got: ${payload.idempotencyKey.slice(0, 32)})`
+    );
+  }
+
+  return db.transaction(async (tx) => {
+    const [replayedCommand] = await tx
+      .select()
+      .from(commands)
+      .where(eq(commands.idempotencyKey, idempotencyKey))
+      .limit(1);
+    if (replayedCommand) {
+      if (replayedCommand.commandType !== "merge_threads") {
+        throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
+      }
+      return {
+        ok: true as const,
+        command: replayedCommand,
+        primaryThreadId: readSnapshotString(replayedCommand.payloadJson, "primaryThreadId") ?? payload.primaryThreadId,
+        secondaryThreadId: readSnapshotString(replayedCommand.payloadJson, "secondaryThreadId") ?? payload.secondaryThreadId,
+        moved: {
+          inboundMessages: readSnapshotNumber(replayedCommand.payloadJson, "movedInboundMessages"),
+          outboundMessages: readSnapshotNumber(replayedCommand.payloadJson, "movedOutboundMessages"),
+          drafts: readSnapshotNumber(replayedCommand.payloadJson, "movedDrafts"),
+          workItems: readSnapshotNumber(replayedCommand.payloadJson, "movedWorkItems"),
+          participants: readSnapshotNumber(replayedCommand.payloadJson, "movedParticipants")
+        },
+        idempotencyKey,
+        deduplicated: true
+      };
+    }
+
+    if (payload.primaryThreadId === payload.secondaryThreadId) {
+      return {
+        ok: false as const,
+        failure: { code: "same_thread", message: "primaryThreadId and secondaryThreadId must differ" }
+      };
+    }
+
+    const [primaryThread] = await tx
+      .select()
+      .from(threads)
+      .where(eq(threads.id, payload.primaryThreadId))
+      .limit(1);
+    if (!primaryThread) {
+      return {
+        ok: false as const,
+        failure: { code: "primary_thread_not_found", message: `Primary thread ${payload.primaryThreadId} not found` }
+      };
+    }
+
+    const [secondaryThread] = await tx
+      .select()
+      .from(threads)
+      .where(eq(threads.id, payload.secondaryThreadId))
+      .limit(1);
+    if (!secondaryThread) {
+      return {
+        ok: false as const,
+        failure: { code: "secondary_thread_not_found", message: `Secondary thread ${payload.secondaryThreadId} not found` }
+      };
+    }
+
+    if (primaryThread.mergedIntoThreadId) {
+      return {
+        ok: false as const,
+        failure: { code: "thread_already_merged", message: `Primary thread ${payload.primaryThreadId} is already merged` }
+      };
+    }
+    if (secondaryThread.mergedIntoThreadId) {
+      return {
+        ok: false as const,
+        failure: { code: "thread_already_merged", message: `Secondary thread ${payload.secondaryThreadId} is already merged` }
+      };
+    }
+
+    const insertedCommands = await tx
+      .insert(commands)
+      .values({
+        source: "operator",
+        commandType: "merge_threads",
+        status: "completed",
+        actorId: input.actorId,
+        targetEntityType: "thread",
+        targetEntityId: payload.primaryThreadId,
+        payloadJson: payload as unknown as Record<string, unknown>,
+        idempotencyKey,
+        correlationId: randomUUID()
+      })
+      .onConflictDoNothing({ target: commands.idempotencyKey })
+      .returning();
+
+    if (insertedCommands.length === 0) {
+      const [existingCommand] = await tx
+        .select()
+        .from(commands)
+        .where(eq(commands.idempotencyKey, idempotencyKey))
+        .limit(1);
+      if (!existingCommand || existingCommand.commandType !== "merge_threads") {
+        throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
+      }
+      return {
+        ok: true as const,
+        command: existingCommand,
+        primaryThreadId: readSnapshotString(existingCommand.payloadJson, "primaryThreadId") ?? payload.primaryThreadId,
+        secondaryThreadId: readSnapshotString(existingCommand.payloadJson, "secondaryThreadId") ?? payload.secondaryThreadId,
+        moved: {
+          inboundMessages: readSnapshotNumber(existingCommand.payloadJson, "movedInboundMessages"),
+          outboundMessages: readSnapshotNumber(existingCommand.payloadJson, "movedOutboundMessages"),
+          drafts: readSnapshotNumber(existingCommand.payloadJson, "movedDrafts"),
+          workItems: readSnapshotNumber(existingCommand.payloadJson, "movedWorkItems"),
+          participants: readSnapshotNumber(existingCommand.payloadJson, "movedParticipants")
+        },
+        idempotencyKey,
+        deduplicated: true
+      };
+    }
+
+    const command = expectOne(insertedCommands, "merge threads command");
+    const movedInboundMessages = (await tx
+      .update(inboundMessages)
+      .set({ threadId: payload.primaryThreadId })
+      .where(eq(inboundMessages.threadId, payload.secondaryThreadId))
+      .returning({ id: inboundMessages.id })).length;
+    const movedOutboundMessages = (await tx
+      .update(outboundMessages)
+      .set({ threadId: payload.primaryThreadId, updatedAt: new Date() })
+      .where(eq(outboundMessages.threadId, payload.secondaryThreadId))
+      .returning({ id: outboundMessages.id })).length;
+    const movedDrafts = (await tx
+      .update(drafts)
+      .set({ threadId: payload.primaryThreadId, updatedAt: new Date() })
+      .where(eq(drafts.threadId, payload.secondaryThreadId))
+      .returning({ id: drafts.id })).length;
+    const movedWorkItems = (await tx
+      .update(workItems)
+      .set({ threadId: payload.primaryThreadId, updatedAt: new Date() })
+      .where(eq(workItems.threadId, payload.secondaryThreadId))
+      .returning({ id: workItems.id })).length;
+    const movedParticipants = (await tx
+      .update(threadParticipants)
+      .set({ threadId: payload.primaryThreadId })
+      .where(eq(threadParticipants.threadId, payload.secondaryThreadId))
+      .returning({ id: threadParticipants.id })).length;
+
+    await tx
+      .update(threads)
+      .set({ updatedAt: new Date() })
+      .where(eq(threads.id, payload.primaryThreadId));
+    await tx
+      .update(threads)
+      .set({
+        status: "merged",
+        mergedIntoThreadId: payload.primaryThreadId,
+        updatedAt: new Date()
+      })
+      .where(eq(threads.id, payload.secondaryThreadId));
+
+    const moved = {
+      inboundMessages: movedInboundMessages,
+      outboundMessages: movedOutboundMessages,
+      drafts: movedDrafts,
+      workItems: movedWorkItems,
+      participants: movedParticipants
+    };
+
+    await tx.insert(eventLog).values({
+      eventType: "threads_merged",
+      entityType: "thread",
+      entityId: payload.primaryThreadId,
+      commandId: command.id,
+      correlationId: command.correlationId,
+      payloadJson: {
+        primaryThreadId: payload.primaryThreadId,
+        secondaryThreadId: payload.secondaryThreadId,
+        reason: payload.reason.trim(),
+        moved
+      }
+    });
+
+    await tx
+      .update(commands)
+      .set({
+        payloadJson: {
+          ...(payload as unknown as Record<string, unknown>),
+          movedInboundMessages,
+          movedOutboundMessages,
+          movedDrafts,
+          movedWorkItems,
+          movedParticipants
+        },
+        updatedAt: new Date()
+      })
+      .where(eq(commands.id, command.id));
+
+    return {
+      ok: true as const,
+      command,
+      primaryThreadId: payload.primaryThreadId,
+      secondaryThreadId: payload.secondaryThreadId,
+      moved,
       idempotencyKey,
       deduplicated: false
     };
@@ -10695,6 +10952,9 @@ async function applyReplyClassRouting(
 ): Promise<Array<Record<string, unknown>>> {
   const actions: Array<Record<string, unknown>> = [];
   const subjectHint = input.subject ? `: ${input.subject}` : "";
+  const preexistingHardSuppression = input.fromEmail
+    ? await findActiveHardSuppression(tx, input.fromEmail)
+    : null;
 
   switch (input.replyClass) {
     case "positive_interest":
@@ -10935,6 +11195,20 @@ async function applyReplyClassRouting(
       // recorded on the row + emitted in `reply_classified` so future
       // analytics can see them.
       break;
+  }
+
+  if (preexistingHardSuppression && input.fromEmail) {
+    await supersedeHardSuppressedInboundWorkItems(tx, {
+      inboundMessageId: input.inboundMessageId,
+      fromEmail: input.fromEmail,
+      correlationId: input.correlationId,
+      suppression: preexistingHardSuppression
+    });
+    actions.push({
+      kind: "hard_suppressed_sender_superseded_work_items",
+      suppressionId: preexistingHardSuppression.id,
+      suppressionReason: preexistingHardSuppression.reason
+    });
   }
 
   return actions;
@@ -14018,6 +14292,67 @@ function extractInboundRfc822Headers(rawBody: JsonRecord, data: JsonRecord): Inb
   };
 }
 
+function extractInboundAttachmentManifest(data: JsonRecord): InboundAttachmentManifestItem[] {
+  const attachments = data.attachments;
+  if (!Array.isArray(attachments)) return [];
+
+  return attachments
+    .map((attachment): InboundAttachmentManifestItem | null => {
+      if (!isRecord(attachment)) return null;
+      const filename = readString(attachment, "filename")
+        ?? readString(attachment, "name")
+        ?? readString(attachment, "fileName")
+        ?? null;
+      const contentType = readString(attachment, "content_type")
+        ?? readString(attachment, "contentType")
+        ?? readString(attachment, "mime_type")
+        ?? readString(attachment, "mimeType")
+        ?? null;
+      const size = readFiniteNumber(attachment.size)
+        ?? readFiniteNumber(attachment.size_bytes)
+        ?? readFiniteNumber(attachment.sizeBytes)
+        ?? null;
+      const contentId = readString(attachment, "content_id")
+        ?? readString(attachment, "contentId")
+        ?? null;
+      const providerAttachmentId = readString(attachment, "id")
+        ?? readString(attachment, "attachment_id")
+        ?? readString(attachment, "attachmentId")
+        ?? null;
+      if (!filename && !contentType && size === null && !contentId && !providerAttachmentId) return null;
+      return { filename, contentType, size, contentId, providerAttachmentId };
+    })
+    .filter((item): item is InboundAttachmentManifestItem => item !== null)
+    .slice(0, 50);
+}
+
+function readInboundAttachmentManifest(value: unknown): InboundAttachmentManifestItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((attachment): InboundAttachmentManifestItem | null => {
+      if (!isRecord(attachment)) return null;
+      return {
+        filename: typeof attachment.filename === "string" && attachment.filename ? attachment.filename : null,
+        contentType: typeof attachment.contentType === "string" && attachment.contentType ? attachment.contentType : null,
+        size: readFiniteNumber(attachment.size) ?? null,
+        contentId: typeof attachment.contentId === "string" && attachment.contentId ? attachment.contentId : null,
+        providerAttachmentId: typeof attachment.providerAttachmentId === "string" && attachment.providerAttachmentId
+          ? attachment.providerAttachmentId
+          : null
+      };
+    })
+    .filter((item): item is InboundAttachmentManifestItem => item !== null);
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
 async function processInboundWebhookEvent(
   tx: DbTransaction,
   input: {
@@ -14054,6 +14389,7 @@ async function processInboundWebhookEvent(
   }
 
   const inboundHeaders = extractInboundRfc822Headers(input.rawBody, data);
+  const attachments = extractInboundAttachmentManifest(data);
   const inboundMessage = expectOne(await tx
     .insert(inboundMessages)
     .values({
@@ -14063,7 +14399,8 @@ async function processInboundWebhookEvent(
       rawText: readString(data, "text") ?? readString(data, "html") ?? readString(input.rawBody, "text"),
       ...(inboundHeaders.rfc822MessageId ? { rfc822MessageId: inboundHeaders.rfc822MessageId } : {}),
       ...(inboundHeaders.inReplyTo ? { inReplyTo: inboundHeaders.inReplyTo } : {}),
-      referencesJson: inboundHeaders.references
+      referencesJson: inboundHeaders.references,
+      attachmentsJson: attachments
     })
     .returning(), "inbound message");
 
@@ -14074,7 +14411,8 @@ async function processInboundWebhookEvent(
     correlationId: input.correlationId,
     payloadJson: {
       webhookEventId: input.webhookEventId,
-      fromEmail
+      fromEmail,
+      attachmentCount: attachments.length
     }
   });
 
@@ -14085,10 +14423,12 @@ async function processInboundWebhookEvent(
   // triage with a more specific reason code.
   const matchResult = await matchInboundByHeaders(tx, {
     inReplyTo: inboundHeaders.inReplyTo,
-    references: inboundHeaders.references
+    references: inboundHeaders.references,
+    subject: inboundMessage.subject ?? null,
+    fromEmail
   });
 
-  if (matchResult.kind === "matched_strong") {
+  if (matchResult.kind === "matched_strong" || matchResult.kind === "matched_subject_fallback") {
     await tx
       .update(inboundMessages)
       .set({ threadId: matchResult.threadId })
@@ -14106,9 +14446,10 @@ async function processInboundWebhookEvent(
       correlationId: input.correlationId,
       payloadJson: {
         threadId: matchResult.threadId,
-        method: "headers_first",
+        method: matchResult.kind === "matched_strong" ? "headers_first" : "subject_fallback",
         matchedOutboundIds: matchResult.matchedOutboundIds,
-        matchedMessageIds: matchResult.matchedMessageIds
+        ...(matchResult.kind === "matched_strong" ? { matchedMessageIds: matchResult.matchedMessageIds } : {}),
+        ...(matchResult.kind === "matched_subject_fallback" ? { normalizedSubject: matchResult.normalizedSubject } : {})
       }
     });
 
@@ -14127,7 +14468,7 @@ async function processInboundWebhookEvent(
     return;
   }
 
-  if (matchResult.kind === "ambiguous") {
+  if (matchResult.kind === "ambiguous" || matchResult.kind === "ambiguous_subject_fallback") {
     const inserted = await createWorkItem(tx, {
       type: "thread_match_ambiguous",
       priority: 85,
@@ -14135,8 +14476,10 @@ async function processInboundWebhookEvent(
       sourceEntityId: inboundMessage.id,
       inboundMessageId: inboundMessage.id,
       title: "Inbound reply matches multiple threads",
-      summary: `Headers map to ${matchResult.candidateThreadIds.length} candidate threads. Operator must pick one.`,
-      reasonCode: "thread_match_ambiguous",
+      summary: matchResult.kind === "ambiguous"
+        ? `Headers map to ${matchResult.candidateThreadIds.length} candidate threads. Operator must pick one.`
+        : `Subject fallback maps to ${matchResult.candidateThreadIds.length} candidate threads. Operator must pick one.`,
+      reasonCode: matchResult.kind === "ambiguous" ? "thread_match_ambiguous" : "subject_match_ambiguous",
       actionLabel: "Resolve ambiguity",
       dedupeKey: `inbound:${inboundMessage.id}:thread-match-ambiguous`
     });
@@ -14150,6 +14493,11 @@ async function processInboundWebhookEvent(
         priority: 80
       });
     }
+    await supersedeHardSuppressedInboundWorkItems(tx, {
+      inboundMessageId: inboundMessage.id,
+      fromEmail,
+      correlationId: input.correlationId
+    });
     return;
   }
 
@@ -14176,57 +14524,250 @@ async function processInboundWebhookEvent(
       priority: 80
     });
   }
+  await finalizeUnmatchedInboundWorkItems(tx, {
+    inboundMessageId: inboundMessage.id,
+    fromEmail,
+    subject: inboundMessage.subject ?? null,
+    correlationId: input.correlationId
+  });
 }
 
 type InboundHeadersMatchResult =
   | { kind: "matched_strong"; threadId: string; matchedOutboundIds: string[]; matchedMessageIds: string[] }
+  | { kind: "matched_subject_fallback"; threadId: string; matchedOutboundIds: string[]; normalizedSubject: string }
   | { kind: "ambiguous"; candidateThreadIds: string[] }
+  | { kind: "ambiguous_subject_fallback"; candidateThreadIds: string[]; normalizedSubject: string }
   | { kind: "no_match" };
 
 async function matchInboundByHeaders(
   tx: DbTransaction,
-  input: { inReplyTo: string | null; references: string[] }
+  input: { inReplyTo: string | null; references: string[]; subject: string | null; fromEmail: string }
 ): Promise<InboundHeadersMatchResult> {
   const candidateMessageIds = new Set<string>();
   if (input.inReplyTo) candidateMessageIds.add(input.inReplyTo);
   for (const ref of input.references) candidateMessageIds.add(ref);
-  if (candidateMessageIds.size === 0) return { kind: "no_match" };
 
-  const messageIds = [...candidateMessageIds];
+  const messageIds = [...candidateMessageIds].slice(0, 50);
+  if (messageIds.length > 0) {
+    const matched = await tx
+      .select({
+        id: outboundMessages.id,
+        threadId: outboundMessages.threadId,
+        rfc822MessageId: outboundMessages.rfc822MessageId
+      })
+      .from(outboundMessages)
+      .where(and(
+        inArray(outboundMessages.rfc822MessageId, messageIds),
+        sql`${outboundMessages.threadId} is not null`
+      ));
+
+    if (matched.length > 0) {
+      const threadIds = new Set<string>();
+      const matchedOutboundIds: string[] = [];
+      const matchedMessageIds: string[] = [];
+      for (const row of matched) {
+        if (row.threadId) threadIds.add(row.threadId);
+        matchedOutboundIds.push(row.id);
+        if (row.rfc822MessageId) matchedMessageIds.push(row.rfc822MessageId);
+      }
+
+      if (threadIds.size === 1) {
+        const [threadId] = [...threadIds];
+        return {
+          kind: "matched_strong",
+          threadId: threadId!,
+          matchedOutboundIds,
+          matchedMessageIds
+        };
+      }
+
+      return { kind: "ambiguous", candidateThreadIds: [...threadIds] };
+    }
+  }
+
+  return matchInboundBySubjectFallback(tx, {
+    subject: input.subject,
+    fromEmail: input.fromEmail
+  });
+}
+
+async function matchInboundBySubjectFallback(
+  tx: DbTransaction,
+  input: { subject: string | null; fromEmail: string }
+): Promise<InboundHeadersMatchResult> {
+  const normalizedSubject = normalizeReplySubject(input.subject);
+  if (!normalizedSubject) return { kind: "no_match" };
+
+  const normalizedFromEmail = input.fromEmail.trim().toLowerCase();
   const matched = await tx
     .select({
       id: outboundMessages.id,
-      threadId: outboundMessages.threadId,
-      rfc822MessageId: outboundMessages.rfc822MessageId
+      threadId: outboundMessages.threadId
     })
     .from(outboundMessages)
-    .where(and(
-      inArray(outboundMessages.rfc822MessageId, messageIds),
-      sql`${outboundMessages.threadId} is not null`
-    ));
+    .where(sql`
+      lower(${outboundMessages.recipientEmail}) = ${normalizedFromEmail}
+      and ${outboundMessages.threadId} is not null
+      and ${outboundMessages.createdAt} > now() - interval '30 days'
+      and lower(btrim(coalesce(${outboundMessages.payloadSnapshotJson}->>'subject', ''))) = ${normalizedSubject}
+    `);
 
   if (matched.length === 0) return { kind: "no_match" };
 
   const threadIds = new Set<string>();
   const matchedOutboundIds: string[] = [];
-  const matchedMessageIds: string[] = [];
   for (const row of matched) {
     if (row.threadId) threadIds.add(row.threadId);
     matchedOutboundIds.push(row.id);
-    if (row.rfc822MessageId) matchedMessageIds.push(row.rfc822MessageId);
   }
 
   if (threadIds.size === 1) {
     const [threadId] = [...threadIds];
     return {
-      kind: "matched_strong",
+      kind: "matched_subject_fallback",
       threadId: threadId!,
       matchedOutboundIds,
-      matchedMessageIds
+      normalizedSubject
     };
   }
 
-  return { kind: "ambiguous", candidateThreadIds: [...threadIds] };
+  return {
+    kind: "ambiguous_subject_fallback",
+    candidateThreadIds: [...threadIds],
+    normalizedSubject
+  };
+}
+
+function normalizeReplySubject(subject: string | null): string | null {
+  if (!subject) return null;
+  const normalized = subject
+    .trim()
+    .replace(/^(\s*(re|fw|fwd)\s*:\s*)+/i, "")
+    .trim()
+    .toLowerCase();
+  return normalized || null;
+}
+
+async function finalizeUnmatchedInboundWorkItems(
+  tx: DbTransaction,
+  input: { inboundMessageId: string; fromEmail: string; subject: string | null; correlationId: string }
+): Promise<void> {
+  if (await supersedeHardSuppressedInboundWorkItems(tx, input)) return;
+  await collapseUnmatchedInboundNoise(tx, input);
+}
+
+async function supersedeHardSuppressedInboundWorkItems(
+  tx: DbTransaction,
+  input: {
+    inboundMessageId: string;
+    fromEmail: string;
+    correlationId: string;
+    suppression?: { id: string; reason: string } | null;
+  }
+): Promise<boolean> {
+  const normalized = input.fromEmail.trim().toLowerCase();
+  const activeHardSuppression = input.suppression ?? await findActiveHardSuppression(tx, normalized);
+  if (!activeHardSuppression) return false;
+
+  const superseded = await tx
+    .update(workItems)
+    .set({
+      status: "superseded",
+      reasonCode: "sender_hard_suppressed",
+      resolvedAt: new Date(),
+      updatedAt: new Date()
+    })
+    .where(sql`
+      ${workItems.inboundMessageId} = ${input.inboundMessageId}
+      and ${workItems.status} not in ('resolved', 'dismissed', 'superseded')
+    `)
+    .returning({ id: workItems.id, type: workItems.type });
+
+  await tx.insert(eventLog).values({
+    eventType: "inbound_from_suppressed_contact",
+    entityType: "inbound_message",
+    entityId: input.inboundMessageId,
+    correlationId: input.correlationId,
+    payloadJson: {
+      fromEmail: normalized,
+      suppressionId: activeHardSuppression.id,
+      suppressionReason: activeHardSuppression.reason,
+      supersededWorkItemIds: superseded.map((row) => row.id),
+      supersededWorkItemTypes: superseded.map((row) => row.type)
+    }
+  });
+  return true;
+}
+
+async function findActiveHardSuppression(
+  tx: DbTransaction,
+  email: string
+): Promise<{ id: string; reason: string } | null> {
+  const normalized = email.trim().toLowerCase();
+  const [activeHardSuppression] = await tx
+    .select({ id: suppressionEntries.id, reason: suppressionEntries.reason })
+    .from(suppressionEntries)
+    .where(and(
+      sql`lower(${suppressionEntries.email}) = ${normalized}`,
+      eq(suppressionEntries.active, true),
+      inArray(suppressionEntries.reason, [...hardSuppressionReasons])
+    ))
+    .limit(1);
+  return activeHardSuppression ?? null;
+}
+
+async function collapseUnmatchedInboundNoise(
+  tx: DbTransaction,
+  input: { inboundMessageId: string; fromEmail: string; subject: string | null; correlationId: string }
+): Promise<void> {
+  const normalized = input.fromEmail.trim().toLowerCase();
+  const burstRows = await tx
+    .select({ id: workItems.id, inboundMessageId: workItems.inboundMessageId })
+    .from(workItems)
+    .innerJoin(inboundMessages, eq(workItems.inboundMessageId, inboundMessages.id))
+    .where(and(
+      eq(workItems.type, "unmatched_inbound_message"),
+      sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`,
+      sql`${workItems.createdAt} >= now() - interval '24 hours'`,
+      sql`lower(${inboundMessages.fromEmail}) = ${normalized}`
+    ));
+  if (burstRows.length <= 5) return;
+
+  const supersededIds = burstRows.map((row) => row.id);
+  await tx
+    .update(workItems)
+    .set({
+      status: "superseded",
+      reasonCode: "inbound_volume_cap",
+      resolvedAt: new Date(),
+      updatedAt: new Date()
+    })
+    .where(inArray(workItems.id, supersededIds));
+
+  const summaryCreated = await createWorkItem(tx, {
+    type: "unmatched_inbound_summary",
+    priority: 75,
+    sourceEntityType: "inbound_message",
+    sourceEntityId: input.inboundMessageId,
+    inboundMessageId: input.inboundMessageId,
+    title: "Inbound reply burst needs summary review",
+    summary: `${burstRows.length} unmatched inbound replies from ${normalized} arrived in 24 hours.${input.subject ? ` Latest subject: ${input.subject}` : ""}`,
+    reasonCode: "inbound_volume_cap",
+    actionLabel: "Review summary",
+    dedupeKey: `inbound:${normalized}:volume-cap:${new Date().toISOString().slice(0, 10)}`
+  });
+
+  await tx.insert(eventLog).values({
+    eventType: "unmatched_inbound_collapsed",
+    entityType: "inbound_message",
+    entityId: input.inboundMessageId,
+    correlationId: input.correlationId,
+    payloadJson: {
+      fromEmail: normalized,
+      supersededWorkItemIds: supersededIds,
+      summaryCreated
+    }
+  });
 }
 
 // Idempotent participant insert by (threadId, email). New participants are
@@ -16938,6 +17479,7 @@ export async function getWorkItemDetail(id: string): Promise<WorkItemDetail | nu
           fromEmail: inboundMessage.fromEmail,
           subject: inboundMessage.subject ?? null,
           rawText: inboundMessage.rawText ?? null,
+          attachments: readInboundAttachmentManifest(inboundMessage.attachmentsJson),
           webhookEventId: inboundMessage.webhookEventId ?? null,
           threadId: inboundMessage.threadId ?? null,
           createdAt: inboundMessage.createdAt
@@ -17891,6 +18433,7 @@ export type ThreadDetail = {
   campaignId: string | null;
   organizationId: string | null;
   providerThreadKey: string | null;
+  mergedIntoThreadId: string | null;
   createdAt: Date;
   updatedAt: Date;
   participants: Array<{
@@ -17908,6 +18451,7 @@ export type ThreadDetail = {
         fromEmail: string;
         subject: string | null;
         rawText: string | null;
+        attachments: InboundAttachmentManifestItem[];
       }
     | {
         kind: "outbound";
@@ -17952,7 +18496,8 @@ export async function getThreadDetail(id: string): Promise<ThreadDetail | null> 
       at: m.createdAt,
       fromEmail: m.fromEmail,
       subject: m.subject ?? null,
-      rawText: m.rawText ?? null
+      rawText: m.rawText ?? null,
+      attachments: readInboundAttachmentManifest(m.attachmentsJson)
     })),
     ...outboundRows.map((m) => {
       const snapshot = m.payloadSnapshotJson ?? {};
@@ -17978,6 +18523,7 @@ export async function getThreadDetail(id: string): Promise<ThreadDetail | null> 
     campaignId: row.campaignId ?? null,
     organizationId: row.organizationId ?? null,
     providerThreadKey: row.providerThreadKey ?? null,
+    mergedIntoThreadId: row.mergedIntoThreadId ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     participants: participantRows.map((p) => ({
