@@ -202,32 +202,32 @@ Audit conducted 2026-05-12 against canonical design (esp. §20 Campaign-Oriented
 
 ### Step 1 — `start_campaign` / campaign lifecycle / expansion
 
-**Current behavior (verified via MCP, `repositories.ts:194-281` + `:6704-6724`):**
+**Current behavior (updated by T-026E):**
 
-- `createStartCampaignCommand` accepts only `{name, objective, targetSegments[], operatorNotes?}`, inserts a campaign row at status `drafting_scope`, enqueues `job.start_campaign_expansion` in pool `drafting`, emits event `command_accepted`.
-- `completeCampaignExpansionJob` is a no-op: a single `UPDATE campaigns SET status='active'` + `campaign_expansion_completed` event. No discovery enqueue, no readiness validation, no initial seed, no expansion caps.
-- Dashboard form at `/` (`page.tsx:74-97`) posts only `name` + `objective`; everything else is defaulted in `formDataToCommand` to empty.
+- `createStartCampaignCommand` accepts the expanded campaign scope (`offerSummary`, `desiredCta`, `forbiddenClaims`, sender/policy IDs, persistent discovery hints/exclusions/regions, and bounded expansion caps), inserts `drafting_scope`, enqueues `job.start_campaign_expansion`, and emits `command_accepted`.
+- `completeCampaignExpansionJob` validates readiness. Incomplete scope leaves the campaign in `drafting_scope`, opens/updates a `campaign_scope_incomplete` work item, and emits `campaign_scope_incomplete`; ready scope flips to `active`, resolves the work item, and seeds the first `job.run_campaign_discovery` subject to remaining campaign capacity.
+- Dashboard has a full `/campaigns/new` scope form plus a `/campaigns/[id]` edit-scope form while status is `drafting_scope`. The detail page shows the expanded scope and only exposes manual discovery when the campaign is `active`.
 
 **Gaps vs. §20 canonical:**
 
-- [G1.1] **Campaign scope schema is missing fields.** `campaigns` table has no `offer_summary`, `desired_cta`, `forbidden_claims[]`, `sender_identity_id`, `policy_profile_id`, `discovery_source_hints`. These are required by §20.2 "Campaign Scope Object" and feed the draft prompt + guardrails downstream.
-- [G1.2] **Expansion caps schema is missing.** No `max_organizations_to_discover`, `max_concurrent_enrichments`, `max_concurrent_drafts`, `max_open_draft_reviews`, `cooldown_between_discovery_seconds`. §20.4 "Bounded Expansion" requires these per campaign.
-- [G1.3] **Readiness validator absent.** §20.3 says `start_campaign_expansion` must verify scope completeness before promoting to `active` and otherwise create a `campaign_scope_incomplete` work item. Today the job blindly flips to `active`.
-- [G1.4] **Initial discovery enqueue absent.** §20.4 expects the expansion handler to seed the first `run_campaign_discovery` job (subject to caps). Today operator must manually click "Run discovery".
-- [G1.5] **Status gating absent.** Commands `run_campaign_discovery`, `accept_discovery_candidate`, etc. don't check `campaign.status in ('active')`. A campaign in `drafting_scope` / `paused` / `closed` accepts everything.
+- [G1.1 done:T-026E] **Campaign scope schema is missing fields.** `campaigns` now carries `offer_summary`, `desired_cta`, `forbidden_claims[]`, `sender_identity_id`, `policy_profile_id`; persistent discovery hints/exclusions/regions shipped in T-026C.
+- [G1.2 done:T-026C/T-026E] **Expansion caps schema is missing.** `max_organizations_to_discover` and cooldown shipped in T-026C; `max_concurrent_enrichments`, `max_concurrent_drafts`, and `max_open_draft_reviews` shipped in T-026E.
+- [G1.3 done:T-026E] **Readiness validator absent.** `job.start_campaign_expansion` now validates scope completeness and opens `campaign_scope_incomplete` work items instead of blindly activating.
+- [G1.4 done:T-026E] **Initial discovery enqueue absent.** Ready expansion activates the campaign and seeds the first `job.run_campaign_discovery` within remaining capacity.
+- [G1.5 done:T-026B/T-026C/T-026E] **Status gating absent.** Discovery run, discovery accept/reject, cold draft generation, and approve-for-send now require active campaigns; approve uses non-overridable `campaign_not_active`.
 - [G1.6] **Bounded expansion tick absent.** §20.4 specifies a recurring `tick_campaign_expansion` job that re-evaluates caps and enqueues more discovery / draft generation. Not implemented.
-- [G1.7] **UI for scope is impoverished.** Dashboard form has 2 inputs vs. §20.2's full scope object; no `/campaigns/new` page; no edit-scope flow on `/campaigns/[id]`.
+- [G1.7 done:T-026E] **UI for scope is impoverished.** `/campaigns/new` and `/campaigns/[id]` now expose the expanded scope; home keeps a compact create path.
 
 **Minimum production fix (S-series, sequenced):**
 
-- [S1] Schema migration: add scope columns (`offer_summary text`, `desired_cta text`, `forbidden_claims text[]`, `sender_identity_id uuid`, `policy_profile_id uuid`, `discovery_source_hints jsonb`) + caps columns to `campaigns`.
-- [S2] Extend `startCampaignCommand` zod payload + form + `formDataToCommand` to capture the new fields.
-- [S3] Replace `completeCampaignExpansionJob` no-op with a `validateCampaignScopeReadiness(campaignId)` step → on incomplete: emit `campaign_scope_incomplete` work item + leave status `drafting_scope`; on ready: flip to `active` AND enqueue first `job.run_campaign_discovery` honoring `max_organizations_to_discover`.
-- [S4] Add `assertCampaignActive(campaignId)` guard inside `runCampaignDiscoveryCommand`, `acceptDiscoveryCandidateCommand`, `generateDraftCommand`, `approveDraftForSendCommand` (rejects with reason `campaign_not_active`).
-- [S5] Build `/campaigns/new` page with full scope form; expose `update_campaign_scope` operator command for edits while in `drafting_scope`.
+- [x] [S1 done:T-026C/T-026E] Schema migration: add scope columns (`offer_summary text`, `desired_cta text`, `forbidden_claims text[]`, `sender_identity_id uuid`, `policy_profile_id uuid`, `discovery_source_hints jsonb`) + caps columns to `campaigns`.
+- [x] [S2 done:T-026E] Extend `startCampaignCommand` zod payload + form + `formDataToCommand` to capture the new fields.
+- [x] [S3 done:T-026E] Replace `completeCampaignExpansionJob` no-op with a `validateCampaignScopeReadiness(campaignId)` step → on incomplete: emit `campaign_scope_incomplete` work item + leave status `drafting_scope`; on ready: flip to `active` AND enqueue first `job.run_campaign_discovery` honoring `max_organizations_to_discover`.
+- [x] [S4 done:T-026B/T-026C/T-026E] Add `assertCampaignActive(campaignId)` guard inside `runCampaignDiscoveryCommand`, `acceptDiscoveryCandidateCommand`, `generateDraftCommand`, `approveDraftForSendCommand` (rejects with reason `campaign_not_active`).
+- [x] [S5 done:T-026E] Build `/campaigns/new` page with full scope form; expose `update_campaign_scope` operator command for edits while in `drafting_scope`.
 - [S6] (Deferred) Recurring `tick_campaign_expansion` cron-enqueued job — defer until after first end-to-end send succeeds; without it, ops can manually re-trigger discovery.
 
-S1–S5 ≈ 1–1.5 days. S6 only after warm-reply path works.
+S1–S5 shipped across T-026C/T-026E. S6 only after warm-reply path works.
 
 ### Step 2 — `run_campaign_discovery` / agent search / dedupe / policy gate
 

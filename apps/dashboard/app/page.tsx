@@ -74,7 +74,14 @@ export default async function DashboardHome() {
 
         <Card>
           <BlockTitle title="Create campaign command" className="mb-4 text-left" />
+          <p className="text-sm font-light opacity-70 mb-4">
+            Full scope form:{" "}
+            <Link href="/campaigns/new" className="text-[hsl(var(--primary))]">
+              /campaigns/new
+            </Link>
+          </p>
           <form className="grid grid-cols-1 md:grid-cols-2 gap-3" action="/api/commands" method="post">
+            <input type="hidden" name="commandType" value="start_campaign" />
             <input
               name="name"
               placeholder="AI integration services outreach"
@@ -89,6 +96,18 @@ export default async function DashboardHome() {
               className={`${textareaClass} md:col-span-2`}
             />
             <textarea
+              name="offerSummary"
+              placeholder="Offer summary"
+              rows={3}
+              className={textareaClass}
+            />
+            <textarea
+              name="desiredCta"
+              placeholder="Desired CTA"
+              rows={3}
+              className={textareaClass}
+            />
+            <textarea
               name="targetSegments"
               placeholder="Target segments"
               rows={3}
@@ -97,6 +116,12 @@ export default async function DashboardHome() {
             <textarea
               name="operatorNotes"
               placeholder="Operator notes"
+              rows={3}
+              className={textareaClass}
+            />
+            <textarea
+              name="forbiddenClaims"
+              placeholder="Forbidden claims"
               rows={3}
               className={textareaClass}
             />
@@ -128,13 +153,40 @@ export default async function DashboardHome() {
               className={inputClass}
             />
             <input
+              name="maxConcurrentEnrichments"
+              type="number"
+              aria-label="Max concurrent enrichments"
+              min={1}
+              max={100}
+              defaultValue={3}
+              className={inputClass}
+            />
+            <input
+              name="maxConcurrentDrafts"
+              type="number"
+              aria-label="Max concurrent drafts"
+              min={1}
+              max={100}
+              defaultValue={5}
+              className={inputClass}
+            />
+            <input
+              name="maxOpenDraftReviews"
+              type="number"
+              aria-label="Max open draft reviews"
+              min={1}
+              max={500}
+              defaultValue={25}
+              className={inputClass}
+            />
+            <input
               name="cooldownBetweenDiscoverySeconds"
               type="number"
               aria-label="Cooldown between discovery seconds"
               min={0}
               max={604800}
               defaultValue={3600}
-              className={`${inputClass} md:col-span-2`}
+              className={inputClass}
             />
             <button
               type="submit"

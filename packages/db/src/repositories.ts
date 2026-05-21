@@ -22,6 +22,7 @@ import {
   buildResolvePolicyStateIdempotencyKey,
   buildRunCampaignDiscoveryIdempotencyKey,
   buildSuppressContactIdempotencyKey,
+  buildUpdateCampaignScopeIdempotencyKey,
   buildWorkItemActionIdempotencyKey,
   type AcceptDiscoveryCandidatePayload,
   type ApproveContactCandidatePayload,
@@ -51,6 +52,7 @@ import {
   type ResolvePolicyStatePayload,
   type StartCampaignPayload,
   type SuppressContactPayload,
+  type UpdateCampaignScopePayload,
   type WorkItemAction,
   computeJobBackoffSeconds,
   eventTypes,
@@ -575,12 +577,20 @@ export async function createStartCampaignCommand(input: {
           id: campaignId,
           name: input.payload.name,
           objective: input.payload.objective,
+          offerSummary: input.payload.offerSummary,
+          desiredCta: input.payload.desiredCta,
           targetSegments: input.payload.targetSegments,
+          forbiddenClaims: input.payload.forbiddenClaims ?? [],
+          senderIdentityId: input.payload.senderIdentityId,
+          policyProfileId: input.payload.policyProfileId,
           operatorNotes: input.payload.operatorNotes,
           discoverySourceHints: input.payload.discoverySourceHints ?? [],
           discoveryExclusions: input.payload.discoveryExclusions ?? [],
           allowedRegions: input.payload.allowedRegions ?? [],
           maxOrganizationsToDiscover: input.payload.maxOrganizationsToDiscover ?? 25,
+          maxConcurrentEnrichments: input.payload.maxConcurrentEnrichments ?? 3,
+          maxConcurrentDrafts: input.payload.maxConcurrentDrafts ?? 5,
+          maxOpenDraftReviews: input.payload.maxOpenDraftReviews ?? 25,
           cooldownBetweenDiscoverySeconds: input.payload.cooldownBetweenDiscoverySeconds ?? 3600,
           status: "drafting_scope"
         })
@@ -638,6 +648,209 @@ export async function createStartCampaignCommand(input: {
       const concurrentExisting = await getExistingCommandResult(idempotencyKey);
       if (concurrentExisting) {
         return { ...concurrentExisting, deduplicated: true };
+      }
+    }
+    throw error;
+  }
+}
+
+export type UpdateCampaignScopeResult =
+  | {
+      ok: true;
+      campaign: typeof campaigns.$inferSelect;
+      command: typeof commands.$inferSelect;
+      job: typeof jobs.$inferSelect;
+      idempotencyKey: string;
+      deduplicated: boolean;
+    }
+  | {
+      ok: false;
+      failure: {
+        code: "campaign_not_found" | "campaign_not_editable";
+        message: string;
+      };
+    };
+
+function campaignScopeHash(payload: UpdateCampaignScopePayload): string {
+  return createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function hasOwn<T extends object>(obj: T, key: keyof T): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+export async function updateCampaignScopeCommand(input: {
+  actorId?: string;
+  payload: UpdateCampaignScopePayload;
+}): Promise<UpdateCampaignScopeResult> {
+  const db = getDb();
+  const commandId = randomUUID();
+  const jobId = randomUUID();
+  const correlationId = randomUUID();
+  const idempotencyKey = input.payload.idempotencyKey
+    ?? buildUpdateCampaignScopeIdempotencyKey(
+      input.payload.campaignId,
+      campaignScopeHash(input.payload)
+    );
+
+  const existing = await getExistingCommandResult(idempotencyKey);
+  if (existing) {
+    const [job] = await db
+      .select()
+      .from(jobs)
+      .where(eq(jobs.commandId, existing.command.id))
+      .limit(1);
+    if (!job) {
+      throw new Error(`Dedup hit but job missing for command ${existing.command.id}`);
+    }
+    return {
+      ok: true as const,
+      campaign: existing.campaign,
+      command: existing.command,
+      job,
+      idempotencyKey,
+      deduplicated: true
+    };
+  }
+
+  try {
+    return await db.transaction(async (tx) => {
+      const [campaign] = await tx
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, input.payload.campaignId))
+        .for("update")
+        .limit(1);
+      if (!campaign) {
+        return {
+          ok: false as const,
+          failure: {
+            code: "campaign_not_found",
+            message: `Campaign ${input.payload.campaignId} not found`
+          }
+        };
+      }
+      if (campaign.status !== "drafting_scope") {
+        return {
+          ok: false as const,
+          failure: {
+            code: "campaign_not_editable",
+            message: `Campaign ${campaign.id} is ${campaign.status}; scope edits are allowed only while drafting_scope`
+          }
+        };
+      }
+
+      const payload = input.payload;
+      const updatedCampaigns = await tx
+        .update(campaigns)
+        .set({
+          ...(payload.name !== undefined ? { name: payload.name } : {}),
+          ...(payload.objective !== undefined ? { objective: payload.objective } : {}),
+          ...(hasOwn(payload, "offerSummary") ? { offerSummary: payload.offerSummary ?? null } : {}),
+          ...(hasOwn(payload, "desiredCta") ? { desiredCta: payload.desiredCta ?? null } : {}),
+          ...(payload.targetSegments !== undefined ? { targetSegments: payload.targetSegments } : {}),
+          ...(payload.forbiddenClaims !== undefined ? { forbiddenClaims: payload.forbiddenClaims } : {}),
+          ...(hasOwn(payload, "senderIdentityId") ? { senderIdentityId: payload.senderIdentityId ?? null } : {}),
+          ...(hasOwn(payload, "policyProfileId") ? { policyProfileId: payload.policyProfileId ?? null } : {}),
+          ...(hasOwn(payload, "operatorNotes") ? { operatorNotes: payload.operatorNotes ?? null } : {}),
+          ...(payload.discoverySourceHints !== undefined ? { discoverySourceHints: payload.discoverySourceHints } : {}),
+          ...(payload.discoveryExclusions !== undefined ? { discoveryExclusions: payload.discoveryExclusions } : {}),
+          ...(payload.allowedRegions !== undefined ? { allowedRegions: payload.allowedRegions } : {}),
+          ...(payload.maxOrganizationsToDiscover !== undefined
+            ? { maxOrganizationsToDiscover: payload.maxOrganizationsToDiscover }
+            : {}),
+          ...(payload.maxConcurrentEnrichments !== undefined
+            ? { maxConcurrentEnrichments: payload.maxConcurrentEnrichments }
+            : {}),
+          ...(payload.maxConcurrentDrafts !== undefined ? { maxConcurrentDrafts: payload.maxConcurrentDrafts } : {}),
+          ...(payload.maxOpenDraftReviews !== undefined ? { maxOpenDraftReviews: payload.maxOpenDraftReviews } : {}),
+          ...(payload.cooldownBetweenDiscoverySeconds !== undefined
+            ? { cooldownBetweenDiscoverySeconds: payload.cooldownBetweenDiscoverySeconds }
+            : {}),
+          discoveryScopeVersion: sql`${campaigns.discoveryScopeVersion} + 1`,
+          updatedAt: new Date()
+        })
+        .where(eq(campaigns.id, campaign.id))
+        .returning();
+      const nextCampaign = expectOne(updatedCampaigns, "campaign scope update");
+
+      const command = expectOne(await tx
+        .insert(commands)
+        .values({
+          id: commandId,
+          source: "operator",
+          commandType: "update_campaign_scope",
+          status: "accepted",
+          actorId: input.actorId,
+          targetEntityType: "campaign",
+          targetEntityId: campaign.id,
+          payloadJson: payload as unknown as Record<string, unknown>,
+          idempotencyKey,
+          correlationId
+        })
+        .returning(), "update_campaign_scope command");
+
+      const job = expectOne(await tx
+        .insert(jobs)
+        .values({
+          id: jobId,
+          jobType: "job.start_campaign_expansion",
+          status: "queued",
+          workerPool: "drafting",
+          commandId,
+          targetEntityType: "campaign",
+          targetEntityId: campaign.id,
+          payloadJson: { campaignId: campaign.id },
+          concurrencyKey: `campaign:${campaign.id}`,
+          correlationId
+        })
+        .returning(), "update_campaign_scope expansion job");
+
+      await tx.insert(eventLog).values({
+        eventType: "campaign_scope_updated",
+        entityType: "campaign",
+        entityId: campaign.id,
+        commandId,
+        jobId,
+        correlationId,
+        payloadJson: {
+          previousScopeVersion: campaign.discoveryScopeVersion,
+          discoveryScopeVersion: nextCampaign.discoveryScopeVersion
+        }
+      });
+
+      return {
+        ok: true as const,
+        campaign: nextCampaign,
+        command,
+        job,
+        idempotencyKey,
+        deduplicated: false
+      };
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      const concurrentExisting = await getExistingCommandResult(idempotencyKey);
+      if (concurrentExisting) {
+        const [job] = await db
+          .select()
+          .from(jobs)
+          .where(eq(jobs.commandId, concurrentExisting.command.id))
+          .limit(1);
+        if (!job) {
+          throw new Error(`Dedup hit but job missing for command ${concurrentExisting.command.id}`);
+        }
+        return {
+          ok: true as const,
+          campaign: concurrentExisting.campaign,
+          command: concurrentExisting.command,
+          job,
+          idempotencyKey,
+          deduplicated: true
+        };
       }
     }
     throw error;
@@ -1381,6 +1594,7 @@ export type PreSendGuardrailFailure = {
     | "autosend_readiness_not_ready"
     | "autosend_readiness_blocked_by_policy"
     | "campaign_paused"
+    | "campaign_not_active"
     | "campaign_archived"
     | "thread_active_send"
     | "unresolved_send_ambiguity"
@@ -1519,6 +1733,16 @@ export async function evaluatePreSendGuardrails(input: {
         metadata: {
           campaignId: draftRowForGuardrail.campaignId,
           campaignStatus: campaignRow.status,
+          overridable: false
+        }
+      });
+    } else if (!campaignRow || campaignRow.status !== "active") {
+      failures.push({
+        code: "campaign_not_active",
+        message: `Campaign ${draftRowForGuardrail.campaignId} is ${campaignRow?.status ?? "missing"} and cannot send`,
+        metadata: {
+          campaignId: draftRowForGuardrail.campaignId,
+          campaignStatus: campaignRow?.status ?? null,
           overridable: false
         }
       });
@@ -3796,6 +4020,7 @@ export type GenerateDraftResult =
         code:
           | "organization_not_found"
           | "campaign_not_found"
+          | "campaign_not_active"
           | "contact_not_found"
           | "contact_not_for_organization"
           | "no_contact_for_organization";
@@ -3886,7 +4111,7 @@ export async function generateDraftCommand(input: {
 
     if (payload.campaignId) {
       const [campaign] = await tx
-        .select({ id: campaigns.id })
+        .select({ id: campaigns.id, status: campaigns.status })
         .from(campaigns)
         .where(eq(campaigns.id, payload.campaignId))
         .limit(1);
@@ -3896,6 +4121,15 @@ export async function generateDraftCommand(input: {
           failure: {
             code: "campaign_not_found",
             message: `Campaign ${payload.campaignId} not found`
+          }
+        };
+      }
+      if (campaign.status !== "active") {
+        return {
+          ok: false as const,
+          failure: {
+            code: "campaign_not_active",
+            message: `Campaign ${payload.campaignId} is ${campaign.status}; draft generation requires active campaigns`
           }
         };
       }
@@ -8483,17 +8717,180 @@ export async function completeCampaignExpansionJob(input: {
     job: input.job,
     runId: input.runId,
     workerId: input.workerId,
-    eventType: "campaign_expansion_completed",
-    eventEntityType: "campaign",
-    eventEntityId: input.campaignId,
-    eventPayload: { workerId: input.workerId },
     domainEffect: async (tx) => {
+      const [campaign] = await tx
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, input.campaignId))
+        .for("update")
+        .limit(1);
+      if (!campaign) {
+        throw new NonRetryableJobError(`Campaign ${input.campaignId} not found`);
+      }
+
+      const readiness = validateCampaignScopeReadiness(campaign);
+      if (!readiness.ready) {
+        await upsertCampaignScopeIncompleteWorkItem(tx, campaign, readiness.missing);
+        await tx.insert(eventLog).values({
+          eventType: "campaign_scope_incomplete",
+          entityType: "campaign",
+          entityId: campaign.id,
+          jobId: input.job.id,
+          correlationId: input.job.correlation_id,
+          payloadJson: {
+            workerId: input.workerId,
+            missing: readiness.missing
+          }
+        });
+        return;
+      }
+
+      await resolveCampaignScopeIncompleteWorkItem(tx, campaign.id);
       await tx
         .update(campaigns)
         .set({ status: "active", updatedAt: new Date() })
-        .where(eq(campaigns.id, input.campaignId));
+        .where(eq(campaigns.id, campaign.id));
+
+      const seeded = await enqueueInitialCampaignDiscoveryJob(tx, {
+        campaign,
+        correlationId: input.job.correlation_id
+      });
+      await tx.insert(eventLog).values({
+        eventType: "campaign_expansion_completed",
+        entityType: "campaign",
+        entityId: campaign.id,
+        jobId: input.job.id,
+        correlationId: input.job.correlation_id,
+        payloadJson: {
+          workerId: input.workerId,
+          discoveryJobId: seeded?.jobId ?? null,
+          runCap: seeded?.runCap ?? 0
+        }
+      });
     }
   });
+}
+
+type CampaignScopeReadinessRow = typeof campaigns.$inferSelect;
+
+function validateCampaignScopeReadiness(campaign: CampaignScopeReadinessRow): {
+  ready: boolean;
+  missing: string[];
+} {
+  const missing: string[] = [];
+  if (!campaign.name.trim()) missing.push("name");
+  if (!campaign.objective.trim()) missing.push("objective");
+  if (!campaign.offerSummary?.trim()) missing.push("offer_summary");
+  if (!campaign.desiredCta?.trim()) missing.push("desired_cta");
+  if (!Array.isArray(campaign.targetSegments) || campaign.targetSegments.length === 0) {
+    missing.push("target_segments");
+  }
+  if (campaign.maxOrganizationsToDiscover <= 0) missing.push("max_organizations_to_discover");
+  if (campaign.maxConcurrentEnrichments <= 0) missing.push("max_concurrent_enrichments");
+  if (campaign.maxConcurrentDrafts <= 0) missing.push("max_concurrent_drafts");
+  if (campaign.maxOpenDraftReviews <= 0) missing.push("max_open_draft_reviews");
+  return { ready: missing.length === 0, missing };
+}
+
+async function upsertCampaignScopeIncompleteWorkItem(
+  tx: DbTransaction,
+  campaign: CampaignScopeReadinessRow,
+  missing: readonly string[]
+): Promise<void> {
+  const now = new Date();
+  await tx
+    .insert(workItems)
+    .values({
+      type: "campaign_scope_incomplete",
+      status: "open",
+      priority: 75,
+      sourceEntityType: "campaign",
+      sourceEntityId: campaign.id,
+      campaignId: campaign.id,
+      title: `Complete campaign scope: ${campaign.name}`,
+      summary: `Missing required scope fields: ${missing.join(", ")}`,
+      reasonCode: "campaign_scope_incomplete",
+      actionLabel: "Edit scope",
+      dedupeKey: `campaign_scope_incomplete:${campaign.id}`
+    })
+    .onConflictDoUpdate({
+      target: workItems.dedupeKey,
+      set: {
+        status: "open",
+        priority: 75,
+        title: `Complete campaign scope: ${campaign.name}`,
+        summary: `Missing required scope fields: ${missing.join(", ")}`,
+        updatedAt: now,
+        resolvedAt: null
+      }
+    });
+}
+
+async function resolveCampaignScopeIncompleteWorkItem(
+  tx: DbTransaction,
+  campaignId: string
+): Promise<void> {
+  await tx
+    .update(workItems)
+    .set({ status: "resolved", resolvedAt: new Date(), updatedAt: new Date() })
+    .where(and(
+      eq(workItems.dedupeKey, `campaign_scope_incomplete:${campaignId}`),
+      sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`
+    ));
+}
+
+async function enqueueInitialCampaignDiscoveryJob(
+  tx: DbTransaction,
+  input: {
+    campaign: CampaignScopeReadinessRow;
+    correlationId: string;
+  }
+): Promise<{ jobId: string; runCap: number } | null> {
+  const [candidateCountRow] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(discoveryCandidates)
+    .where(and(
+      eq(discoveryCandidates.campaignId, input.campaign.id),
+      inArray(discoveryCandidates.status, DISCOVERY_NON_TERMINAL_STATUSES)
+    ));
+  const activeCandidateCount = Number(candidateCountRow?.count ?? 0);
+  const remainingCapacity = input.campaign.maxOrganizationsToDiscover - activeCandidateCount;
+  const runCap = Math.max(0, Math.min(DISCOVERY_CANDIDATES_PER_RUN_CAP, remainingCapacity));
+  if (runCap <= 0) return null;
+
+  const [existingDiscoveryJob] = await tx
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(
+      eq(jobs.jobType, "job.run_campaign_discovery"),
+      eq(jobs.targetEntityType, "campaign"),
+      eq(jobs.targetEntityId, input.campaign.id),
+      inArray(jobs.status, ["queued", "leased", "running"])
+    ))
+    .limit(1);
+  if (existingDiscoveryJob) {
+    return { jobId: existingDiscoveryJob.id, runCap };
+  }
+
+  const job = expectOne(await tx
+    .insert(jobs)
+    .values({
+      jobType: "job.run_campaign_discovery",
+      status: "queued",
+      workerPool: "background",
+      targetEntityType: "campaign",
+      targetEntityId: input.campaign.id,
+      payloadJson: {
+        campaignId: input.campaign.id,
+        runCap,
+        discoveryScopeVersion: input.campaign.discoveryScopeVersion,
+        cooldownBetweenDiscoverySeconds: input.campaign.cooldownBetweenDiscoverySeconds
+      },
+      concurrencyKey: `campaign_discovery:${input.campaign.id}`,
+      correlationId: input.correlationId
+    })
+    .returning({ id: jobs.id }), "initial campaign discovery job");
+  return { jobId: job.id, runCap };
 }
 
 export type AgentStreamEvent = {
@@ -18131,12 +18528,20 @@ export type CampaignDiscoveryView = {
     name: string;
     status: string;
     objective: string;
+    offerSummary: string | null;
+    desiredCta: string | null;
     targetSegments: string[];
+    forbiddenClaims: string[];
+    senderIdentityId: string | null;
+    policyProfileId: string | null;
     operatorNotes: string | null;
     discoverySourceHints: string[];
     discoveryExclusions: string[];
     allowedRegions: string[];
     maxOrganizationsToDiscover: number;
+    maxConcurrentEnrichments: number;
+    maxConcurrentDrafts: number;
+    maxOpenDraftReviews: number;
     cooldownBetweenDiscoverySeconds: number;
     discoveryScopeVersion: number;
     createdAt: Date;
@@ -18283,12 +18688,20 @@ export async function getCampaignDiscoveryView(
       name: campaign.name,
       status: campaign.status,
       objective: campaign.objective,
+      offerSummary: campaign.offerSummary,
+      desiredCta: campaign.desiredCta,
       targetSegments: Array.isArray(campaign.targetSegments) ? campaign.targetSegments : [],
+      forbiddenClaims: Array.isArray(campaign.forbiddenClaims) ? campaign.forbiddenClaims : [],
+      senderIdentityId: campaign.senderIdentityId,
+      policyProfileId: campaign.policyProfileId,
       operatorNotes: campaign.operatorNotes,
       discoverySourceHints: Array.isArray(campaign.discoverySourceHints) ? campaign.discoverySourceHints : [],
       discoveryExclusions: Array.isArray(campaign.discoveryExclusions) ? campaign.discoveryExclusions : [],
       allowedRegions: Array.isArray(campaign.allowedRegions) ? campaign.allowedRegions : [],
       maxOrganizationsToDiscover: campaign.maxOrganizationsToDiscover,
+      maxConcurrentEnrichments: campaign.maxConcurrentEnrichments,
+      maxConcurrentDrafts: campaign.maxConcurrentDrafts,
+      maxOpenDraftReviews: campaign.maxOpenDraftReviews,
       cooldownBetweenDiscoverySeconds: campaign.cooldownBetweenDiscoverySeconds,
       discoveryScopeVersion: campaign.discoveryScopeVersion,
       createdAt: campaign.createdAt,

@@ -8,6 +8,7 @@ import {
 } from "@bizdev/shared";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
@@ -48,6 +49,8 @@ const PANEL_ORDER: DiscoveryCandidateStatus[] = [
   "accepted"
 ];
 
+type CampaignDiscoveryViewModel = NonNullable<Awaited<ReturnType<typeof getCampaignDiscoveryView>>>;
+
 const REJECTION_REASON_LABELS: Record<DiscoveryRejectionReasonCode, string> = {
   out_of_segment: "Out of segment",
   dead_company: "Dead company",
@@ -85,6 +88,8 @@ export default async function CampaignDetailPage({
     0,
     view.campaign.maxOrganizationsToDiscover - activeDiscoveryCount
   );
+  const isActiveCampaign = view.campaign.status === "active";
+  const isDraftingScope = view.campaign.status === "drafting_scope";
   const replyClassBreakdown = Object.entries(view.progress.replyClassCounts)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([replyClass, count]) => `${formatReplyClass(replyClass)}: ${count}`)
@@ -155,8 +160,29 @@ export default async function CampaignDetailPage({
         </Card>
 
         <Card>
-          <BlockTitle title="Campaign" className="mb-4 text-left" />
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <BlockTitle title="Campaign" className="text-left" />
+            {isDraftingScope ? <Badge tone="warning">Scope draft</Badge> : null}
+          </div>
           <InfoRow label="Status" value={view.campaign.status} />
+          <InfoRow
+            label="Offer summary"
+            value={
+              view.campaign.offerSummary
+                ? view.campaign.offerSummary
+                : <span className="opacity-50">none</span>
+            }
+            className="items-start"
+          />
+          <InfoRow
+            label="Desired CTA"
+            value={
+              view.campaign.desiredCta
+                ? view.campaign.desiredCta
+                : <span className="opacity-50">none</span>
+            }
+            className="items-start"
+          />
           <InfoRow
             label="Segments"
             value={
@@ -172,6 +198,18 @@ export default async function CampaignDetailPage({
                 ? view.campaign.operatorNotes
                 : <span className="opacity-50">none</span>
             }
+          />
+          <InfoRow
+            label="Forbidden claims"
+            value={formatListValue(view.campaign.forbiddenClaims)}
+          />
+          <InfoRow
+            label="Sender identity"
+            value={view.campaign.senderIdentityId ?? <span className="opacity-50">none</span>}
+          />
+          <InfoRow
+            label="Policy profile"
+            value={view.campaign.policyProfileId ?? <span className="opacity-50">none</span>}
           />
           <InfoRow
             label="Discovery source hints"
@@ -197,21 +235,35 @@ export default async function CampaignDetailPage({
             label="Discovery cooldown"
             value={`${view.campaign.cooldownBetweenDiscoverySeconds}s`}
           />
+          <InfoRow
+            label="Concurrency caps"
+            value={`enrich ${view.campaign.maxConcurrentEnrichments} / draft ${view.campaign.maxConcurrentDrafts} / review ${view.campaign.maxOpenDraftReviews}`}
+          />
           <InfoRow label="Scope version" value={view.campaign.discoveryScopeVersion} />
           <InfoRow label="Created" value={view.campaign.createdAt.toISOString()} />
           <InfoRow label="Last update" value={view.campaign.updatedAt.toISOString()} />
         </Card>
 
+        {isDraftingScope ? <CampaignScopeForm campaign={view.campaign} /> : null}
+
         <Card>
           <BlockTitle title="Run discovery" className="mb-4 text-left" />
-          <p className="text-sm font-light opacity-70 mb-4">
-            Enqueue <code>job.run_campaign_discovery</code> using the persisted campaign scope.
-          </p>
-          <form action="/api/commands" method="post" className="space-y-3">
-            <input type="hidden" name="commandType" value="run_campaign_discovery" />
-            <input type="hidden" name="campaignId" value={view.campaign.id} />
-            <Button type="submit">Run discovery</Button>
-          </form>
+          {isActiveCampaign ? (
+            <>
+              <p className="text-sm font-light opacity-70 mb-4">
+                Enqueue <code>job.run_campaign_discovery</code> using the persisted campaign scope.
+              </p>
+              <form action="/api/commands" method="post" className="space-y-3">
+                <input type="hidden" name="commandType" value="run_campaign_discovery" />
+                <input type="hidden" name="campaignId" value={view.campaign.id} />
+                <Button type="submit">Run discovery</Button>
+              </form>
+            </>
+          ) : (
+            <p className="text-sm font-light opacity-70">
+              Discovery can run after the campaign scope is complete and the campaign is active.
+            </p>
+          )}
 
           {view.recentDiscoveryRuns.length > 0 ? (
             <div className="mt-6">
@@ -257,6 +309,176 @@ export default async function CampaignDetailPage({
 
 function formatListValue(values: string[]) {
   return values.length > 0 ? values.join(", ") : <span className="opacity-50">none</span>;
+}
+
+function formatMultilineValue(values: string[]) {
+  return values.join("\n");
+}
+
+function CampaignScopeForm({ campaign }: { campaign: CampaignDiscoveryViewModel["campaign"] }) {
+  return (
+    <Card>
+      <BlockTitle title="Edit scope" className="mb-4 text-left" />
+      <form action="/api/commands" method="post" className="space-y-5">
+        <input type="hidden" name="commandType" value="update_campaign_scope" />
+        <input type="hidden" name="campaignId" value={campaign.id} />
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <ScopeLabel label="Name">
+            <input className={inputClass} name="name" defaultValue={campaign.name} required />
+          </ScopeLabel>
+          <ScopeLabel label="Objective">
+            <input className={inputClass} name="objective" defaultValue={campaign.objective} required />
+          </ScopeLabel>
+        </div>
+
+        <ScopeLabel label="Offer summary">
+          <textarea
+            className={textareaClass}
+            name="offerSummary"
+            defaultValue={campaign.offerSummary ?? ""}
+            required
+          />
+        </ScopeLabel>
+
+        <ScopeLabel label="Desired CTA">
+          <textarea
+            className={textareaClass}
+            name="desiredCta"
+            defaultValue={campaign.desiredCta ?? ""}
+            required
+          />
+        </ScopeLabel>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <ScopeLabel label="Target segments">
+            <textarea
+              className={textareaClass}
+              name="targetSegments"
+              defaultValue={formatMultilineValue(campaign.targetSegments)}
+              required
+            />
+          </ScopeLabel>
+          <ScopeLabel label="Forbidden claims">
+            <textarea
+              className={textareaClass}
+              name="forbiddenClaims"
+              defaultValue={formatMultilineValue(campaign.forbiddenClaims)}
+            />
+          </ScopeLabel>
+        </div>
+
+        <ScopeLabel label="Operator notes">
+          <textarea
+            className={textareaClass}
+            name="operatorNotes"
+            defaultValue={campaign.operatorNotes ?? ""}
+          />
+        </ScopeLabel>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <ScopeLabel label="Source hints">
+            <textarea
+              className={textareaClass}
+              name="discoverySourceHints"
+              defaultValue={formatMultilineValue(campaign.discoverySourceHints)}
+            />
+          </ScopeLabel>
+          <ScopeLabel label="Exclusions">
+            <textarea
+              className={textareaClass}
+              name="discoveryExclusions"
+              defaultValue={formatMultilineValue(campaign.discoveryExclusions)}
+            />
+          </ScopeLabel>
+          <ScopeLabel label="Allowed regions">
+            <textarea
+              className={textareaClass}
+              name="allowedRegions"
+              defaultValue={formatMultilineValue(campaign.allowedRegions)}
+            />
+          </ScopeLabel>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <ScopeLabel label="Sender identity ID">
+            <input className={inputClass} name="senderIdentityId" defaultValue={campaign.senderIdentityId ?? ""} />
+          </ScopeLabel>
+          <ScopeLabel label="Policy profile ID">
+            <input className={inputClass} name="policyProfileId" defaultValue={campaign.policyProfileId ?? ""} />
+          </ScopeLabel>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <ScopeLabel label="Org cap">
+            <input
+              className={inputClass}
+              type="number"
+              min={1}
+              name="maxOrganizationsToDiscover"
+              defaultValue={campaign.maxOrganizationsToDiscover}
+            />
+          </ScopeLabel>
+          <ScopeLabel label="Enrich cap">
+            <input
+              className={inputClass}
+              type="number"
+              min={1}
+              name="maxConcurrentEnrichments"
+              defaultValue={campaign.maxConcurrentEnrichments}
+            />
+          </ScopeLabel>
+          <ScopeLabel label="Draft cap">
+            <input
+              className={inputClass}
+              type="number"
+              min={1}
+              name="maxConcurrentDrafts"
+              defaultValue={campaign.maxConcurrentDrafts}
+            />
+          </ScopeLabel>
+          <ScopeLabel label="Review cap">
+            <input
+              className={inputClass}
+              type="number"
+              min={1}
+              name="maxOpenDraftReviews"
+              defaultValue={campaign.maxOpenDraftReviews}
+            />
+          </ScopeLabel>
+        </div>
+
+        <ScopeLabel label="Discovery cooldown seconds" className="max-w-xs">
+          <input
+            className={inputClass}
+            type="number"
+            min={0}
+            name="cooldownBetweenDiscoverySeconds"
+            defaultValue={campaign.cooldownBetweenDiscoverySeconds}
+          />
+        </ScopeLabel>
+
+        <Button type="submit">Save scope</Button>
+      </form>
+    </Card>
+  );
+}
+
+function ScopeLabel({
+  label,
+  className = "",
+  children
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className={`block space-y-2 ${className}`}>
+      <span className="block text-xs uppercase tracking-[0.18em] opacity-70">{label}</span>
+      {children}
+    </label>
+  );
 }
 
 function formatReplyClass(replyClass: string): string {

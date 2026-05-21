@@ -24,6 +24,7 @@ import {
   runCampaignDiscoveryCommand,
   suppressContactCommand,
   traceOperation,
+  updateCampaignScopeCommand,
   type TraceSpanHandle
 } from "@bizdev/db";
 import { createCommandRequestSchema } from "@bizdev/shared";
@@ -91,6 +92,29 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload
       }));
+      if (isJson) {
+        return NextResponse.json({
+          campaignId: result.campaign.id,
+          commandId: result.command.id,
+          jobId: result.job.id
+        });
+      }
+      return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
+    }
+
+    case "update_campaign_scope": {
+      const result = traceCommandResult(traceSpan, await updateCampaignScopeCommand({
+        ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
+        payload: parsed.data.payload
+      }));
+      if (!result.ok) {
+        if (isJson) {
+          return NextResponse.json({ error: result.failure }, { status: 409 });
+        }
+        const redirect = safeRedirectUrl(request);
+        redirect.searchParams.set("error", `${result.failure.code}: ${result.failure.message}`);
+        return NextResponse.redirect(redirect, { status: 303 });
+      }
       if (isJson) {
         return NextResponse.json({
           campaignId: result.campaign.id,
@@ -756,10 +780,55 @@ function optionalPositiveInteger(formData: FormData, name: string): number | und
   return Number.isFinite(value) ? value : undefined;
 }
 
+function optionalText(formData: FormData, name: string): string | undefined {
+  const value = String(formData.get(name) ?? "").trim();
+  return value || undefined;
+}
+
+function nullableText(formData: FormData, name: string): string | null {
+  const value = String(formData.get(name) ?? "").trim();
+  return value || null;
+}
+
+function nullableUuid(formData: FormData, name: string): string | null {
+  const value = String(formData.get(name) ?? "").trim();
+  return value || null;
+}
+
 function formDataToCommand(formData: FormData) {
   const commandType = String(formData.get("commandType") ?? formData.get("command_type") ?? "start_campaign");
   const actorId = String(formData.get("actorId") ?? "").trim();
   const base = actorId ? { actorId } : {};
+
+  if (commandType === "update_campaign_scope") {
+    const campaignId = String(formData.get("campaignId") ?? "").trim();
+    const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
+    return {
+      commandType,
+      ...base,
+      payload: {
+        campaignId,
+        name: String(formData.get("name") ?? "").trim(),
+        objective: String(formData.get("objective") ?? "").trim(),
+        offerSummary: nullableText(formData, "offerSummary"),
+        desiredCta: nullableText(formData, "desiredCta"),
+        targetSegments: splitFormList(formData, "targetSegments"),
+        forbiddenClaims: splitFormList(formData, "forbiddenClaims"),
+        senderIdentityId: nullableUuid(formData, "senderIdentityId"),
+        policyProfileId: nullableUuid(formData, "policyProfileId"),
+        operatorNotes: nullableText(formData, "operatorNotes"),
+        discoverySourceHints: splitFormList(formData, "discoverySourceHints"),
+        discoveryExclusions: splitFormList(formData, "discoveryExclusions"),
+        allowedRegions: splitFormList(formData, "allowedRegions"),
+        maxOrganizationsToDiscover: optionalPositiveInteger(formData, "maxOrganizationsToDiscover") ?? 25,
+        maxConcurrentEnrichments: optionalPositiveInteger(formData, "maxConcurrentEnrichments") ?? 3,
+        maxConcurrentDrafts: optionalPositiveInteger(formData, "maxConcurrentDrafts") ?? 5,
+        maxOpenDraftReviews: optionalPositiveInteger(formData, "maxOpenDraftReviews") ?? 25,
+        cooldownBetweenDiscoverySeconds: optionalPositiveInteger(formData, "cooldownBetweenDiscoverySeconds") ?? 3600,
+        ...(idempotencyKey ? { idempotencyKey } : {})
+      }
+    };
+  }
 
   if (commandType === "create_draft") {
     const subject = String(formData.get("subject") ?? "").trim();
@@ -1209,12 +1278,20 @@ function formDataToCommand(formData: FormData) {
     payload: {
       name: String(formData.get("name") ?? ""),
       objective: String(formData.get("objective") ?? ""),
+      ...(optionalText(formData, "offerSummary") ? { offerSummary: optionalText(formData, "offerSummary") } : {}),
+      ...(optionalText(formData, "desiredCta") ? { desiredCta: optionalText(formData, "desiredCta") } : {}),
       targetSegments: splitFormList(formData, "targetSegments"),
+      forbiddenClaims: splitFormList(formData, "forbiddenClaims"),
+      ...(optionalText(formData, "senderIdentityId") ? { senderIdentityId: optionalText(formData, "senderIdentityId") } : {}),
+      ...(optionalText(formData, "policyProfileId") ? { policyProfileId: optionalText(formData, "policyProfileId") } : {}),
       operatorNotes: String(formData.get("operatorNotes") ?? "").trim() || undefined,
       discoverySourceHints: splitFormList(formData, "discoverySourceHints"),
       discoveryExclusions: splitFormList(formData, "discoveryExclusions"),
       allowedRegions: splitFormList(formData, "allowedRegions"),
       maxOrganizationsToDiscover: optionalPositiveInteger(formData, "maxOrganizationsToDiscover") ?? 25,
+      maxConcurrentEnrichments: optionalPositiveInteger(formData, "maxConcurrentEnrichments") ?? 3,
+      maxConcurrentDrafts: optionalPositiveInteger(formData, "maxConcurrentDrafts") ?? 5,
+      maxOpenDraftReviews: optionalPositiveInteger(formData, "maxOpenDraftReviews") ?? 25,
       cooldownBetweenDiscoverySeconds: optionalPositiveInteger(formData, "cooldownBetweenDiscoverySeconds") ?? 3600
     }
   };
