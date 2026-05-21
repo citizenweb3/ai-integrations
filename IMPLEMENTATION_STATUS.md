@@ -289,11 +289,11 @@ S2.1+S2.2+S2.5+S2.7 ≈ 0.5–1 day. S2.3 depends on Step 1 S1. S2.6 deferred wi
 
 **Minimum production fix:**
 
-- [S3.1] Reduce to: post-filter check in `normalizeProposal` — if `sourceRefs.length === 0` after `isGroundingTrackerUrl` pass, return `null` so router falls through to `proposal_rejected_no_source_refs`. Closes residual G2.5.
+- [done:T-026B] [S3.1] Reduce to: post-filter check in `normalizeProposal` — if `sourceRefs.length === 0` after `isGroundingTrackerUrl` pass, reject the proposal before insert; redirected-only refs emit `campaign_discovery_router_failed{reason:'all_sourceRefs_redirected'}`. Closes residual G2.5.
 - [S3.2] Accept UI expansion: add `countryCode` + `region` override fields; add "Link to existing organization" picker (domain/name prefix search → top-N candidates → operator selects).
 - [S3.3] `buildDefaultResearchSnapshotPrompt` signature: `{orgName, domain, campaignName, objective, targetSegments, desiredCta, operatorNotes}` → embed campaign context in a `<campaign_context>` block of the enrichment prompt. Depends on Step 1 S1 (extended scope schema).
-- [S3.4] Migration: add `discovery_candidates.rejection_reason_code text NULL`; introduce zod enum `discoveryRejectionReasonCodes = ['out_of_segment', 'dead_company', 'competitor', 'existing_customer', 'wrong_geo', 'private_pii', 'other']`. Reject UI = dropdown + optional free-text notes. Backfill existing `rejectionReason` parser as part of the migration.
-- [S3.5] Status gating: `assertCampaignActive(candidate.campaignId)` at the top of accept/reject txns. Failure code `campaign_not_active`.
+- [done:T-026B] [S3.4] Migration: add `discovery_candidates.rejection_reason_code text NULL`; introduce zod enum `discoveryRejectionReasonCodes = ['out_of_segment', 'dead_company', 'competitor', 'existing_customer', 'wrong_geo', 'private_pii', 'other']`. Reject UI = dropdown + optional free-text notes. Backfill existing `rejectionReason` parser as part of the migration.
+- [done:T-026B] [S3.5] Status gating: `assertCampaignActive(candidate.campaignId)` at the top of accept/reject txns. Failure code `campaign_not_active`.
 - [S3.6] **Contact promotion chain (Tickets 3.4 / 3.5 / 3.6).** Post-accept: enqueue `job.discover_contacts` for the materialized org. Router writes `research_contact_candidate` rows. Operator review on the org page promotes selected candidates to `contacts`. Cold-draft gate requires at least one promoted contact before `generate_cold_draft` is acceptable. Sized as its own slice (1–2 days) — defer-but-blocking on first cold-send E2E.
 - [S3.7] `linkToOrganizationId` UI: server action `searchOrganizations({domainOrNamePrefix, limit:5})` exposed under accept form. Replaces hidden auto-link path with operator-driven link.
 - [S3.8] `skipEnrichment` flag in accept payload + checkbox in UI. Pre-fill the checkbox when `latest research_snapshot` for the resolved org is < 30 days old.

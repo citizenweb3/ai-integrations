@@ -4983,6 +4983,23 @@ const ACCEPTABLE_DISCOVERY_STATUSES_FOR_REJECT: ReadonlySet<DiscoveryCandidateSt
   "duplicate"
 ]);
 
+async function readInactiveCampaignFailure(
+  tx: DbTransaction,
+  campaignId: string
+): Promise<{ code: "campaign_not_active"; message: string } | null> {
+  const [campaign] = await tx
+    .select({ status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.id, campaignId))
+    .limit(1);
+  if (campaign?.status === "active") return null;
+
+  return {
+    code: "campaign_not_active",
+    message: `Campaign ${campaignId} is ${campaign?.status ?? "missing"}; discovery candidate actions require active campaigns`
+  };
+}
+
 export type RunCampaignDiscoveryResult =
   | {
       ok: true;
@@ -5137,6 +5154,7 @@ export type AcceptDiscoveryCandidateResult =
           | "candidate_not_found"
           | "candidate_not_acceptable"
           | "link_organization_not_found"
+          | "campaign_not_active"
           | "stale_state";
         message: string;
       };
@@ -5182,6 +5200,13 @@ export async function acceptDiscoveryCandidateCommand(input: {
           code: "candidate_not_found",
           message: `Discovery candidate ${payload.candidateId} not found`
         }
+      };
+    }
+    const campaignFailure = await readInactiveCampaignFailure(tx, candidate.campaignId);
+    if (campaignFailure) {
+      return {
+        ok: false as const,
+        failure: campaignFailure
       };
     }
     if (!ACCEPTABLE_DISCOVERY_STATUSES_FOR_ACCEPT.has(candidate.status as DiscoveryCandidateStatus)) {
@@ -5492,6 +5517,7 @@ export type RejectDiscoveryCandidateResult =
         code:
           | "candidate_not_found"
           | "candidate_not_rejectable"
+          | "campaign_not_active"
           | "stale_state";
         message: string;
       };
@@ -5520,6 +5546,13 @@ export async function rejectDiscoveryCandidateCommand(input: {
         }
       };
     }
+    const campaignFailure = await readInactiveCampaignFailure(tx, candidate.campaignId);
+    if (campaignFailure) {
+      return {
+        ok: false as const,
+        failure: campaignFailure
+      };
+    }
     if (!ACCEPTABLE_DISCOVERY_STATUSES_FOR_REJECT.has(candidate.status as DiscoveryCandidateStatus)) {
       return {
         ok: false as const,
@@ -5533,6 +5566,10 @@ export async function rejectDiscoveryCandidateCommand(input: {
     const idempotencyKey = payload.idempotencyKey
       ?? buildRejectDiscoveryCandidateIdempotencyKey(candidate.id, candidate.updatedAt);
     const correlationId = randomUUID();
+    const rejectionReasonCode = payload.reasonCode ?? "other";
+    const rejectionReason = payload.reasonText?.trim()
+      ? payload.reasonText.trim().slice(0, 1000)
+      : null;
 
     const insertedCommands = await tx
       .insert(commands)
@@ -5543,7 +5580,10 @@ export async function rejectDiscoveryCandidateCommand(input: {
         actorId: input.actorId,
         targetEntityType: "discovery_candidate",
         targetEntityId: candidate.id,
-        payloadJson: payload as unknown as Record<string, unknown>,
+        payloadJson: {
+          ...(payload as unknown as Record<string, unknown>),
+          reasonCode: rejectionReasonCode
+        },
         idempotencyKey,
         correlationId
       })
@@ -5572,17 +5612,14 @@ export async function rejectDiscoveryCandidateCommand(input: {
 
     // The canonical 8-status taxonomy has no `rejected_by_operator` slot;
     // operator-driven rejection reuses `rejected_by_policy` (the terminal
-    // "will not pursue" bucket) with a structured rejectionReason +
-    // event subType='operator' so audit/analytics can split policy-gate
-    // vs operator rejections without a schema change.
-    const rejectionReason = payload.reasonText
-      ? `operator:${payload.reasonText.slice(0, 1000)}`
-      : "operator";
+    // "will not pursue" bucket). `rejectionReasonCode` carries analytics;
+    // `rejectionReason` stays free-text operator notes.
     const updated = await tx
       .update(discoveryCandidates)
       .set({
         status: "rejected_by_policy",
         rejectionReason,
+        rejectionReasonCode,
         updatedAt: new Date()
       })
       .where(and(
@@ -5619,6 +5656,7 @@ export async function rejectDiscoveryCandidateCommand(input: {
         subType: "operator",
         candidateId: candidate.id,
         campaignId: candidate.campaignId,
+        reasonCode: rejectionReasonCode,
         previousStatus: candidate.status,
         ...(payload.reasonText ? { reasonText: payload.reasonText } : {})
       }
@@ -10581,6 +10619,8 @@ type NormalizedProposal = {
   fitRationale: string | null;
   confidence: string | null;
   sourceRefs: Array<{ url: string; title?: string; snippet?: string }>;
+  sourceRefUrlCount: number;
+  droppedTrackerSourceRefCount: number;
 };
 
 type ProposalProcessOutcome = {
@@ -10621,12 +10661,19 @@ function normalizeProposal(raw: CampaignDiscoveryRawCandidate): NormalizedPropos
   const confidence = DISCOVERY_CONFIDENCE_SET.has(confidenceRaw) ? confidenceRaw : null;
 
   const sourceRefs: Array<{ url: string; title?: string; snippet?: string }> = [];
+  let sourceRefUrlCount = 0;
+  let droppedTrackerSourceRefCount = 0;
   if (Array.isArray(raw.sourceRefs)) {
     for (const entry of raw.sourceRefs) {
       if (!entry || typeof entry !== "object") continue;
       const e = entry as Record<string, unknown>;
       const url = typeof e["url"] === "string" ? e["url"].trim() : "";
-      if (!url || isGroundingTrackerUrl(url)) continue;
+      if (!url) continue;
+      sourceRefUrlCount += 1;
+      if (isGroundingTrackerUrl(url)) {
+        droppedTrackerSourceRefCount += 1;
+        continue;
+      }
       const ref: { url: string; title?: string; snippet?: string } = { url: url.slice(0, 1000) };
       const title = typeof e["title"] === "string" ? e["title"].trim() : "";
       if (title) ref.title = title.slice(0, 300);
@@ -10644,7 +10691,9 @@ function normalizeProposal(raw: CampaignDiscoveryRawCandidate): NormalizedPropos
     region,
     fitRationale,
     confidence,
-    sourceRefs
+    sourceRefs,
+    sourceRefUrlCount,
+    droppedTrackerSourceRefCount
   };
 }
 
@@ -10725,6 +10774,8 @@ export async function routeCampaignDiscoveryOutcome(input: {
       // Anti-hallucination gate: every proposal must cite at least one
       // grounding URL. The system prompt makes this an explicit hard
       // requirement; the router enforces it deterministically.
+      const allSourcesWereTrackers = proposal.sourceRefUrlCount > 0
+        && proposal.sourceRefUrlCount === proposal.droppedTrackerSourceRefCount;
       rejected += 1;
       await appendEvent({
         eventType: "campaign_discovery_router_failed",
@@ -10733,7 +10784,7 @@ export async function routeCampaignDiscoveryOutcome(input: {
         ...(input.jobId ? { jobId: input.jobId } : {}),
         correlationId: input.correlationId,
         payloadJson: {
-          reason: "proposal missing sourceRefs",
+          reason: allSourcesWereTrackers ? "all_sourceRefs_redirected" : "proposal missing sourceRefs",
           proposedName: proposal.proposedName
         }
       });
@@ -17672,6 +17723,7 @@ export type DiscoveryCandidateView = {
   matchedOrganizationDomain: string | null;
   status: DiscoveryCandidateStatus;
   rejectionReason: string | null;
+  rejectionReasonCode: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -17728,6 +17780,7 @@ export async function getCampaignDiscoveryView(
       dc.matched_organization_id,
       dc.status,
       dc.rejection_reason,
+      dc.rejection_reason_code,
       dc.created_at,
       dc.updated_at,
       mo.name as matched_organization_name,
@@ -17770,6 +17823,7 @@ export async function getCampaignDiscoveryView(
     matched_organization_id: string | null;
     status: string;
     rejection_reason: string | null;
+    rejection_reason_code: string | null;
     created_at: Date | string;
     updated_at: Date | string;
     matched_organization_name: string | null;
@@ -17795,6 +17849,7 @@ export async function getCampaignDiscoveryView(
       matchedOrganizationDomain: row.matched_organization_domain,
       status,
       rejectionReason: row.rejection_reason,
+      rejectionReasonCode: row.rejection_reason_code,
       createdAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
       updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at)
     });

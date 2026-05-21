@@ -128,6 +128,17 @@ export const discoveryCandidateStatuses = [
 ] as const;
 export type DiscoveryCandidateStatus = (typeof discoveryCandidateStatuses)[number];
 
+export const discoveryRejectionReasonCodes = [
+  "out_of_segment",
+  "dead_company",
+  "competitor",
+  "existing_customer",
+  "wrong_geo",
+  "private_pii",
+  "other"
+] as const;
+export type DiscoveryRejectionReasonCode = (typeof discoveryRejectionReasonCodes)[number];
+
 // Canonical §67 dedupe rubric. `strong` (exact domain match or canonical
 // name+country match) → auto-link, status flips to `duplicate`. `medium`
 // (fuzzy name match same country, or domain shares root) / `weak` (loose
@@ -724,6 +735,7 @@ export const acceptDiscoveryCandidatePayloadSchema = z
 
 export const rejectDiscoveryCandidatePayloadSchema = z.object({
   candidateId: z.string().uuid(),
+  reasonCode: z.enum(discoveryRejectionReasonCodes).optional(),
   reasonText: z.string().trim().max(2000).optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
