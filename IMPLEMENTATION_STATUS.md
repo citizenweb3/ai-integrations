@@ -694,7 +694,7 @@ Critical path: **S8.1 (payload integrity — closes the DevTools-tamper hole tha
 
 **Minimum production fix:**
 
-- [S9.1] **Separate inbound vs delivery webhook secrets.** Two routes (`/webhooks/resend/inbound` and `/webhooks/resend/events`) with two secrets (`RESEND_INBOUND_WEBHOOK_SECRET`, `RESEND_DELIVERY_WEBHOOK_SECRET`). Inbound subscription in Resend dashboard pointed at the inbound route only. Closes G9.1.
+- [done] [S9.1] **Separate inbound vs delivery webhook secrets.** Two routes (`/webhooks/resend/inbound` and `/webhooks/resend/events`) with two secrets (`RESEND_WEBHOOK_SECRET_INBOUND`, `RESEND_WEBHOOK_SECRET_DELIVERY`). Inbound subscription in Resend dashboard pointed at the inbound route only. Closes G9.1.
 - [done] [S9.2] **Reply-unsubscribe writes hard reason.** Change line 8275 of `applyReplyClassRouting` from `reason: 'user_unsubscribe'` to `reason: 'unsubscribe'` (matching `hardSuppressionReasons`). Migration: backfill existing `user_unsubscribe` rows. Closes G9.8. **Compliance-critical.**
 - [S9.3] **Quote-strip + signature-strip before classifier prompt.** Replace `truncate(inbound.rawText, 4000)` with `truncate(stripQuotedReplyAndSignature(rawText), 4000)`. Implement `stripQuotedReplyAndSignature` (handles `On <date>, <name> wrote:`, `-- ` signature delimiter, `> ` quoted lines). Closes G9.4 + G9.24.
 - [S9.4] **Auto-enqueue `classify_reply` on `attach_inbound_to_thread` resolution.** In `attachInboundToThreadCommand` post-attachment block, call `enqueueClassifyReplyJob(tx, {inboundMessageId, threadId, correlationId})`. Closes G9.7.
