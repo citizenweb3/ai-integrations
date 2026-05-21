@@ -68,7 +68,7 @@ Sync this file with every state change. One row per ticket. Update the **state**
 | T-023 | `getOperationsCounters` 1-second cache | done | codex | local | GitNexus impact: `getOperationsCounters`, `pauseAllSendsCommand`, and `resumeAllSendsCommand` are not indexed as symbols; fallback impact `OperationsPage`: LOW / 0 direct callers / 0 affected processes. Verified with focused DB test, `verify:db`, `yarn verify`, and Playwright `/operations` smoke. |
 | T-024 | DB-backed Telegram operator map | done | codex | local | GitNexus impact could not resolve `parseTelegramOperatorAllowlist` / `processTelegramInboundUpdate`; Telegram webhook `POST` context has no incoming callers, but name-only impact resolves another route, so scope was tracked manually against Telegram route + DB repository + migration/test. `operator_id` is UUID without FK because the schema has no first-class operators table yet. Verified with focused DB/route test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. |
 | T-025 | Prometheus `/metrics` + OTLP skeleton | done | codex | local | GitNexus MCP impact/query/detect_changes failed with `Transport closed`; CLI context found commands `handlePost` direct caller `POST` and worker `runJob` direct caller `main`, while CLI impact was ambiguous/unresolved for those symbols. Added dashboard `/metrics`, DB observability helpers, commands route trace wrapper, and worker `runJob` trace wrapper. Review follow-up made OTLP export non-blocking with timeout and changed dashboard command spans to export the command `correlationId`. Verified with focused metrics/OTLP tests, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. |
-| T-026 | Per-step non-critical Step 1–5 polish | todo |  |  |  |
+| T-026 | Per-step non-critical Step 1–5 polish | in_progress | codex | local | Split into T-026A..E. T-026A shipped locally: cold-draft contact gate, primary-contact default on first promotion, and suppression pre-check. S5.2 `set_primary_contact` operator change remains in later Step 5 polish. GitNexus impact could not resolve repository command symbols; staged detect_changes returned low risk / 0 affected processes. Verified with focused DB test, `DATABASE_URL=... yarn verify:db`, and `yarn verify`. |
 | T-027 | Step 9 polish bundle | todo |  |  |  |
 | T-028 | Webhook secret separation (Resend) | todo |  |  |  |
 
@@ -250,7 +250,12 @@ Each section mirrors the acceptance criteria from `TICKETS.md`. Tick boxes as ea
 
 ## T-026 — Per-step Step 1–5 polish
 
-- [ ] Codex enumerates sub-tickets in this section before starting; each sub-ticket gets its own checkbox row
+- [x] Codex enumerates sub-tickets in this section before starting; each sub-ticket gets its own checkbox row
+- [x] T-026A Step 5 contact promotion safety: cold-draft contact gate, primary-contact default, suppression pre-check
+- [ ] T-026B Step 3 discovery candidate safety: campaign-active gate, rejection reason code, source-ref redirect filtering
+- [ ] T-026C Step 2 discovery run polish: remove per-run guidance drift, persistent hints, cooldown/run cap
+- [ ] T-026D Step 4 research output polish: fact safety/confidence/source refs/questions/candidate dedupe
+- [ ] T-026E Step 1 campaign scope/readiness/expansion UI and status gates
 
 ## T-027 — Step 9 polish bundle
 
