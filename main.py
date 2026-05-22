@@ -127,7 +127,30 @@ async def main():
     async def _heartbeat():
         Path("data/.heartbeat").touch()
 
+    async def _tg_heartbeat():
+        """Check connections and send status to admin every 3 hours."""
+        rag_status = await rag.health_check()
+        vi_status = await vi.health_check()
+        current_stats = await db.stats()
+        lines = [
+            f"💓 Heartbeat — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            f"RAG API: {'✅' if rag_status else '❌ unavailable'}",
+            f"ValidatorInfo DB: {'✅' if vi_status else '❌ unavailable'}",
+            f"Groups: {current_stats.get('groups', '?')} | Messages: {current_stats.get('messages', '?')}",
+            f"Responses: {current_stats.get('responses_total', '?')} total / {current_stats.get('responses_sent_today', '?')} today / {current_stats.get('responses_pending', '?')} pending",
+        ]
+        level = "INFO" if (rag_status and vi_status) else "WARNING"
+        await approval.alert(level, "\n".join(lines))
+        log.info("tg_heartbeat sent (rag=%s vi=%s)", rag_status, vi_status)
+
+    # Send heartbeat immediately on startup
+    try:
+        await _tg_heartbeat()
+    except Exception as e:
+        log.error("startup heartbeat error: %s", e)
+
     cron_tasks.append(asyncio.create_task(_loop("heartbeat", _heartbeat, 30)))
+    cron_tasks.append(asyncio.create_task(_loop("tg_heartbeat", _tg_heartbeat, 10800)))  # every 3h
     cron_tasks.append(asyncio.create_task(_loop("proactive", proactive.run_cycle, config["proactive"]["interval_minutes"] * 60)))
     cron_tasks.append(asyncio.create_task(_loop("queue_retry", approval.process_queue, 30)))
     cron_tasks.append(asyncio.create_task(_loop("cleanup_hourly", cleanup.run_hourly, 3600)))
