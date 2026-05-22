@@ -249,17 +249,6 @@ export type IngestResendWebhookEventResult = {
   suppressionCreated: boolean;
 };
 
-export async function claimWebhookEventNonce(svixId: string): Promise<boolean> {
-  const db = getDb();
-  const inserted = await db
-    .insert(webhookEventNonces)
-    .values({ svixId })
-    .onConflictDoNothing({ target: webhookEventNonces.svixId })
-    .returning({ svixId: webhookEventNonces.svixId });
-
-  return inserted.length > 0;
-}
-
 export async function pruneWebhookEventNonces(input: {
   olderThan?: Date;
 } = {}): Promise<number> {
