@@ -2,15 +2,15 @@
 
 ## TL;DR
 
-Pick up the production-hardening pass on `bizdev-email-agent`. The design is fully written. Your job is to implement tickets in the order this document specifies, ticking checkpoints as you go.
+The production-hardening pass on `bizdev-email-agent` is locally complete on `main`. Use this handoff package to audit the work, continue follow-up fixes, prepare a local history rewrite, or decide what to push later.
 
 Three files are the entire interface between you and the previous design pass:
 
 | File | Role |
 |------|------|
-| `IMPLEMENTATION_STATUS.md` § "E2E Production-Readiness Gaps" | The design document. 10 Steps, ~230 gaps (G*), ~210 fixes (S*). Source of truth for *why* and *how*. |
-| `docs/handoff/TICKETS.md` | The plan. 28 tickets, banded P0–P3, each citing the G* + S* it implements, with files + acceptance + dependencies + risk. |
-| `docs/handoff/CHECKPOINTS.md` | The progress board. One row per ticket + per-ticket acceptance checkboxes. You update it. |
+| `IMPLEMENTATION_STATUS.md` § "E2E Production-Readiness Gaps" | The design/audit document. 10 Steps with G* gaps and S* fixes. Implemented fixes are marked `[done]`; unresolved gaps remain as backlog/history. |
+| `docs/handoff/TICKETS.md` | The original 28-ticket implementation plan, banded P0–P3, with G* + S* refs, files, acceptance, dependencies, and risk. |
+| `docs/handoff/CHECKPOINTS.md` | The final local progress board. It is now the source of truth for what landed, how it was verified, and which residual risks remain. |
 
 Read those three documents in that order before touching code.
 
@@ -49,25 +49,27 @@ The 10 Steps are:
 10. observability / health / event_log / `work_items` inbox / Telegram bot loop
 
 Each Step in `IMPLEMENTATION_STATUS.md` follows the same structure:
-- **Current behavior (verified via MCP)** — what the code actually does today, with file:line refs.
+- **Current behavior** — what the code did at audit time, with file:line refs; later sections may include refreshed notes from code review after implementation.
 - **Gaps vs. canonical §X** — numbered `G<step>.<n>` items, each pointing at a real divergence from the canonical design.
 - **Minimum production fix** — numbered `S<step>.<n>` items, each a concrete fix scoped to the gap.
 - **Critical path** — closing paragraph naming the 3–6 highest-priority S-fixes in that Step.
 
-We did **not** modify production code in the design pass. We did update `.env.example` (Vertex grounding URL filter + model pinning) — that change is unstaged at handoff time and you can pick it up alongside T-010 / T-015.
+The design pass itself did **not** modify production code. The later implementation wave did, and all 28 planned tickets have since been merged locally into `main`.
 
 ---
 
-## What you are doing (the work YOU pick up)
+## Current local state
 
-Implement the 28 tickets in `docs/handoff/TICKETS.md`. They are pre-bundled by priority:
+The 28 tickets in `docs/handoff/TICKETS.md` have been implemented and merged locally:
 
-- **P0 (T-001…T-005)** — 5 tickets. Legal exposure (GDPR), data corruption (stuck-send retry), payload-trust (operator can bypass body checks), incident response (no global pause), webhook replay. Ship these first. They are independent of each other — parallelizable.
-- **P1 (T-006…T-011)** — 6 tickets. Observability + recovery primitives. Without them you cannot operate the P0 fixes (no alerts when the queue stalls, no per-subsystem health, no log correlation). Same sprint as P0.
-- **P2 (T-012…T-018)** — 7 tickets. Per-Step critical paths from Steps 6–10. Real correctness work, not polish.
-- **P3 (T-019…T-028)** — 10 tickets. UX, scale headroom, schema hygiene. Backlog.
+- **P0 (T-001…T-005)** — 5/5 done.
+- **P1 (T-006…T-011)** — 6/6 done.
+- **P2 (T-012…T-018)** — 7/7 done.
+- **P3 (T-019…T-028)** — 10/10 done.
+- **Total** — 28/28 tickets done, all acceptance checkpoints ticked in `CHECKPOINTS.md`.
+- **Remote state** — no remote PRs were pushed; all work is local.
 
-A few rules of engagement:
+A few rules of engagement for follow-up work:
 
 1. **One ticket = one PR**, in most cases. If a ticket exceeds ~600 LoC change OR crosses three layers (DB migration + repo helper + UI), split it into sub-PRs and add sub-tickets to `CHECKPOINTS.md`.
 2. **Every state transition belongs in `CHECKPOINTS.md`.** Change `state`, fill `owner`, paste the PR URL, write observations in `notes`. Tick the per-ticket acceptance checkboxes as you observe each one. Never delete a row.
@@ -75,7 +77,7 @@ A few rules of engagement:
 4. **Migrations are numbered.** Read the head of `packages/db/drizzle/migrations/` before adding a new file; do not assume the number cited in a ticket is still free.
 5. **Idempotency is non-negotiable.** Every new command must derive an `idempotencyKey` via the existing helpers in `packages/shared`. Never `new Date()` inside an idempotency key — that exact bug (T-015 / S9.6) is one of the design findings.
 6. **No "Co-Authored-By Claude" in commits.** User preference from memory.
-7. **Commit message format:** `T-NNN: <short title>` (matches the ticket id).
+7. **Commit message format:** `T-NNN: <short title>` for ticket work. Use a plain `docs:` / `chore:` prefix for non-ticket maintenance.
 8. **TDD.** Repository helpers + command handlers must land with unit + integration tests in the same PR. The acceptance criteria in every ticket are written as test assertions on purpose.
 
 ---
@@ -111,50 +113,29 @@ If the index is stale, run `npx gitnexus analyze` in the repo root first.
 
 ---
 
-## What "done" looks like for the whole batch
+## What "done" means for the whole batch
 
-- All P0 tickets `merged` AND `verified` in production-like environment.
-- All P1 tickets `merged` AND `verified`. Without P1, P0 is operationally fragile.
-- P2 tickets `merged` (verification follows in soak-testing).
-- P3 tickets either `merged`, `abandoned` with reason, or `todo` with a documented decision to defer.
-- `IMPLEMENTATION_STATUS.md` updated: each implemented S-fix prefixed with `[done]` in the bullet text (do not delete the gap — it's history).
+- All P0/P1/P2/P3 tickets are `merged` locally.
 - `CHECKPOINTS.md` reflects the final state for every ticket.
-- One closing summary commit at the end: `handoff: production-readiness wave complete` with a tally (`P0: 5/5 done. P1: 6/6 done. P2: 7/7 done. P3: 4/10 done, 6 deferred.`).
+- `IMPLEMENTATION_STATUS.md` keeps historical gaps, with implemented S-fixes marked `[done]`.
+- `git status --short --branch` should be clean before handing off again.
+- If this work is later pushed, decide first whether to keep the local commit history or rebase/squash it into a cleaner public history.
 
 ---
 
-## How to start
+## How to resume from here
 
-1. Read `IMPLEMENTATION_STATUS.md` § "E2E Production-Readiness Gaps" intro + Step 8 + Step 9 + Step 10 in full. These three Steps anchor P0.
-2. Skim Steps 1–7 in 10 minutes — you'll come back to them for P2 (T-012, T-013, T-026).
-3. Read `docs/handoff/TICKETS.md` end to end.
-4. Open `docs/handoff/CHECKPOINTS.md` in a second pane — keep it open while you work.
-5. Pick **T-001** (highest single-fix priority — present-day legal exposure) OR **T-006** if you want to land observability scaffolding before correctness work so subsequent tickets ship with alerting in place. T-006 unblocks T-007 + T-008 + T-018.
-6. Branch off `main`. Implement. Ship.
+1. Run `git status --short --branch` and `npx gitnexus status`.
+2. Read `docs/handoff/CHECKPOINTS.md` first for the actual landed state and verification notes.
+3. Read `IMPLEMENTATION_STATUS.md` only for the remaining backlog/history; do not assume an unmarked historical gap is still current without checking the code.
+4. If doing code work, branch off local `main`, run GitNexus impact before editing symbols, implement, verify, run `gitnexus_detect_changes`, then commit locally.
+5. If doing release/history work, keep `memory.md` local and uncommitted.
 
 ---
 
-## Known unstaged work to preserve or commit first
+## Known local work
 
-At handoff time `git status` shows 8 modified files:
-
-```
-M .env.example
-M apps/agent/.env.example
-M apps/agent/src/agent/agents.py
-M apps/dashboard/app/api/commands/route.ts
-M apps/dashboard/app/api/work-items/route.ts
-M apps/dashboard/components/console-hero.tsx
-M docker-compose.yml
-M packages/db/src/repositories.ts
-```
-
-These are from a previous Vertex grounding URL filter + agent model pinning pass that did not get its own commit. Before starting any ticket, `git diff` each file, then either:
-
-- (a) commit them as a standalone `chore: vertex grounding url filter + agent model pinning` commit, then branch off, OR
-- (b) stash them, branch off `main` clean, do T-001 on a clean baseline, then re-apply via `git stash pop` on a follow-up branch.
-
-Option (a) is safer — it gets that work into history before you start moving fast.
+No known unstaged work is expected at this handoff. The previous Vertex grounding URL filter + agent model pinning changes were committed during the local implementation wave. If `git status` is dirty, treat the diff as new local work and inspect it before editing.
 
 ---
 
@@ -178,4 +159,4 @@ Russian is the user's working language for chat. Code, PR titles, commit message
 
 ## End of handoff
 
-You have the design, the plan, and the checkpoint board. Start with T-006 (or T-001 if you prefer correctness-first) and march the table.
+You have the design, the original plan, and the completed checkpoint board. Start from `CHECKPOINTS.md`, then review code before reopening any historical gap.
