@@ -1,5 +1,5 @@
 export const modelConfig = {
-  answerModel: 'gemini-3-flash-preview',
+  answerModel: 'gemini-3.1-flash-lite',
   rewriteModel: 'gemini-2.5-flash',
   rerankModel: 'gemini-2.5-flash',
   embeddingModel: 'gemini-embedding-001',

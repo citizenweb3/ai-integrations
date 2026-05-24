@@ -2,6 +2,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: logos-chatbot-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: logos
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logos}
@@ -20,6 +21,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: logos-chatbot-redis
+    restart: unless-stopped
     ports:
       - '127.0.0.1:56379:6379'
     volumes:
@@ -53,6 +55,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.app
     container_name: logos-chatbot-app
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -82,6 +85,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.indexer
     container_name: logos-chatbot-indexer
+    restart: unless-stopped
     command: yarn indexer:start
     security_opt:
       - no-new-privileges:true
