@@ -9,16 +9,17 @@ const EMBED_TTL_SEC = 60 * 60 * 24 * 30;
 let redisClient: Redis | null = null;
 
 const getRedis = (): Redis | null => {
-  if (redisClient) return redisClient;
+  if (!redisClient) {
+    const redisUrl = process.env.REDIS_URL;
+    if (!redisUrl) return null;
 
-  const redisUrl = process.env.REDIS_URL;
-  if (!redisUrl) return null;
+    redisClient = new Redis(redisUrl, { maxRetriesPerRequest: 1, enableOfflineQueue: false });
+    redisClient.on('error', (error) => {
+      console.warn('[retrieval-cache] redis error', { message: error.message });
+    });
+  }
 
-  redisClient = new Redis(redisUrl, { maxRetriesPerRequest: 1, enableOfflineQueue: false });
-  redisClient.on('error', (error) => {
-    console.warn('[retrieval-cache] redis error', { message: error.message });
-  });
-  return redisClient;
+  return redisClient.status === 'ready' ? redisClient : null;
 };
 
 const normalize = (text: string): string =>
