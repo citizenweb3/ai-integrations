@@ -6,7 +6,7 @@ Python ADK runtime. Hosts stage-specific LLM agents (research_snapshot first; re
 
 - `src/agent/main.py` — FastAPI app. `POST /runs/{stage}` streams NDJSON events.
 - `src/agent/agents.py` — stage → ADK `Agent` factory.
-- `src/agent/model_policy.py` — env-backed stage → model id resolver (mirrors TS `ModelPolicyResolver`).
+- `src/agent/model_policy.py` — env-backed stage → model id resolver.
 - `src/agent/runner.py` — ADK `Runner` wrapper that yields `{event_type, payload}` dicts.
 
 ## Run locally

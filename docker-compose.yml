@@ -64,7 +64,7 @@ services:
       RAG_EMBED_PROVIDER: ${RAG_EMBED_PROVIDER:-stub}
       VERTEX_PROJECT_ID: ${GOOGLE_CLOUD_PROJECT:-}
       VERTEX_LOCATION: ${GOOGLE_CLOUD_LOCATION:-us-central1}
-      VERTEX_RAG_EMBED_MODEL: ${VERTEX_RAG_EMBED_MODEL:-text-embedding-004}
+      VERTEX_RAG_EMBED_MODEL: ${VERTEX_RAG_EMBED_MODEL:-gemini-embedding-001}
       VERTEX_RAG_EMBED_DIMENSIONS: ${VERTEX_RAG_EMBED_DIMENSIONS:-1536}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/secrets/gcp-sa.json}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
@@ -99,7 +99,7 @@ services:
       RAG_EMBED_PROVIDER: ${RAG_EMBED_PROVIDER:-stub}
       VERTEX_PROJECT_ID: ${GOOGLE_CLOUD_PROJECT:-}
       VERTEX_LOCATION: ${GOOGLE_CLOUD_LOCATION:-us-central1}
-      VERTEX_RAG_EMBED_MODEL: ${VERTEX_RAG_EMBED_MODEL:-text-embedding-004}
+      VERTEX_RAG_EMBED_MODEL: ${VERTEX_RAG_EMBED_MODEL:-gemini-embedding-001}
       VERTEX_RAG_EMBED_DIMENSIONS: ${VERTEX_RAG_EMBED_DIMENSIONS:-1536}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/secrets/gcp-sa.json}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
@@ -122,13 +122,15 @@ services:
       dockerfile: docker/agent.Dockerfile
     environment:
       AGENT_PORT: 8000
-      AGENT_DEFAULT_MODEL: ${AGENT_DEFAULT_MODEL:-gemini-3-flash-preview}
+      AGENT_DEFAULT_MODEL: ${AGENT_DEFAULT_MODEL:-gemini-3.5-flash}
       # google_search built-in tool requires Gemini 2.x. ADK 1.33 + gemini-3
       # routes the call as a function_call which has no user-tool match and
       # fails. Pin search-stages to 2.5-flash until ADK lands gemini-3 grounding.
       AGENT_RESEARCH_SNAPSHOT_MODEL: ${AGENT_RESEARCH_SNAPSHOT_MODEL:-gemini-2.5-flash}
       AGENT_RESEARCH_MORE_MODEL: ${AGENT_RESEARCH_MORE_MODEL:-gemini-2.5-flash}
       AGENT_CAMPAIGN_DISCOVERY_MODEL: ${AGENT_CAMPAIGN_DISCOVERY_MODEL:-gemini-2.5-flash}
+      AGENT_VALIDATE_CLAIMS_MODEL: ${AGENT_VALIDATE_CLAIMS_MODEL:-gemini-3.5-flash}
+      AGENT_CLASSIFY_REPLY_MODEL: ${AGENT_CLASSIFY_REPLY_MODEL:-gemini-3.5-flash}
       AGENT_DRAFT_EMAIL_MODEL: ${AGENT_DRAFT_EMAIL_MODEL:-gemini-3.1-pro-preview}
       AGENT_DRAFT_WARM_EMAIL_MODEL: ${AGENT_DRAFT_WARM_EMAIL_MODEL:-gemini-3.1-pro-preview}
       AGENT_REVISE_EMAIL_MODEL: ${AGENT_REVISE_EMAIL_MODEL:-gemini-3.1-pro-preview}

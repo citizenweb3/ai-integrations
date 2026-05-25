@@ -596,7 +596,7 @@ def build_agent(stage: str) -> Agent:
     if stage == "research_snapshot":
         return Agent(
             name="research_snapshot_agent",
-            model=resolve_model("research"),
+            model=resolve_model("research_snapshot"),
             instruction=_RESEARCH_INSTRUCTION,
             tools=_tools_for(stage),
         )
@@ -604,7 +604,7 @@ def build_agent(stage: str) -> Agent:
     if stage == "research_more":
         return Agent(
             name="research_more_agent",
-            model=resolve_model("research"),
+            model=resolve_model("research_more"),
             instruction=_RESEARCH_MORE_INSTRUCTION,
             tools=_tools_for(stage),
         )
@@ -612,7 +612,7 @@ def build_agent(stage: str) -> Agent:
     if stage == "draft_email":
         return Agent(
             name="draft_email_agent",
-            model=resolve_model("draft"),
+            model=resolve_model("draft_email"),
             instruction=_DRAFT_INSTRUCTION,
             tools=_tools_for(stage),
         )
@@ -620,7 +620,7 @@ def build_agent(stage: str) -> Agent:
     if stage == "draft_warm_email":
         return Agent(
             name="draft_warm_email_agent",
-            model=resolve_model("draft_warm"),
+            model=resolve_model("draft_warm_email"),
             instruction=_DRAFT_WARM_INSTRUCTION,
             tools=_tools_for(stage),
         )
@@ -628,7 +628,7 @@ def build_agent(stage: str) -> Agent:
     if stage == "revise_email":
         return Agent(
             name="revise_email_agent",
-            model=resolve_model("revise"),
+            model=resolve_model("revise_email"),
             instruction=_REVISE_INSTRUCTION,
             tools=_tools_for(stage),
         )
@@ -636,7 +636,7 @@ def build_agent(stage: str) -> Agent:
     if stage == "validate_claims":
         return Agent(
             name="validate_claims_agent",
-            model=resolve_model("validate"),
+            model=resolve_model("validate_claims"),
             instruction=_VALIDATE_CLAIMS_INSTRUCTION,
             tools=_tools_for(stage),
         )

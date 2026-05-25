@@ -38,16 +38,18 @@ The worker pool string (`urgent,drafting,background,telegram`) determines which 
 ### Agent (ADK / Vertex)
 - `GOOGLE_GENAI_USE_VERTEXAI=TRUE` — agent boot enforces this. If `GOOGLE_API_KEY` is set it hard-fails so a stale env never silently routes back to the Developer API surface.
 - `GOOGLE_CLOUD_PROJECT` — required.
-- `GOOGLE_CLOUD_LOCATION` — defaults to `global`. Preview models (e.g. `gemini-3-flash-preview`) are served only on the global endpoint; switch to a region (e.g. `us-central1`) only when every stage uses GA model ids.
+- `GOOGLE_CLOUD_LOCATION` — defaults to `global`. Preview models (for example `gemini-3.1-pro-preview`) are served on the global endpoint; switch to a region (e.g. `us-central1`) only when every stage uses GA model ids.
 - `GOOGLE_APPLICATION_CREDENTIALS` — path to a service-account JSON inside the container. `docker-compose.yml` bind-mounts `${HOST_GCP_SA_JSON:-/dev/null}` to `/secrets/gcp-sa.json:ro`. The `/dev/null` fallback keeps `docker compose up` non-fatal when ADC is bound by other means (`gcloud auth application-default login` on the host).
-- `AGENT_DEFAULT_MODEL` — Gemini model id used by stages without a per-stage override. Default `gemini-3-flash-preview` (research / classify_reply / validate_claims).
-- `AGENT_DRAFT_EMAIL_MODEL` / `AGENT_DRAFT_WARM_EMAIL_MODEL` / `AGENT_REVISE_EMAIL_MODEL` — drafting + AI revise stages. Default `gemini-3.1-pro-preview` (gemini-3-pro-preview was discontinued 2026-03-26).
+- `AGENT_DEFAULT_MODEL` — fallback Gemini model id used by stages without a per-stage override. Default `gemini-3.5-flash`.
+- `AGENT_RESEARCH_SNAPSHOT_MODEL` / `AGENT_RESEARCH_MORE_MODEL` / `AGENT_CAMPAIGN_DISCOVERY_MODEL` — search-grounded stages. Default `gemini-2.5-flash` because ADK 1.33 google_search grounding is still pinned to Gemini 2.x.
+- `AGENT_VALIDATE_CLAIMS_MODEL` / `AGENT_CLASSIFY_REPLY_MODEL` — cheap deterministic review/classification stages. Default `gemini-3.5-flash`.
+- `AGENT_DRAFT_EMAIL_MODEL` / `AGENT_DRAFT_WARM_EMAIL_MODEL` / `AGENT_REVISE_EMAIL_MODEL` — drafting + AI revise stages. Default `gemini-3.1-pro-preview` (verified in Vertex Model Garden on 2026-05-25).
 - IAM minimum: `roles/aiplatform.user` on the project. Production deployments should use workload identity (GKE) or the metadata server (Cloud Run / GCE) instead of a key file.
 
 ### Worker → Vertex (RAG embeddings)
 - `RAG_EMBED_PROVIDER` — `stub` (default; deterministic zero-vector for CI / offline) or `vertex`.
 - `VERTEX_PROJECT_ID`, `VERTEX_LOCATION` — when `RAG_EMBED_PROVIDER=vertex`. Worker raises on startup if provider is `vertex` but `VERTEX_PROJECT_ID` is unset.
-- `VERTEX_RAG_EMBED_MODEL` — default `text-embedding-004`.
+- `VERTEX_RAG_EMBED_MODEL` — default `gemini-embedding-001`.
 - `VERTEX_RAG_EMBED_DIMENSIONS` — default `1536`. Must match the schema-side `vector(N)` column; changing this requires a migration.
 
 ## Day-1 bring-up

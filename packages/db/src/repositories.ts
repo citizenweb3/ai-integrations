@@ -17311,7 +17311,7 @@ function vectorLiteral(values: number[]): string {
 // accessible alongside org-specific artifacts).
 //
 // The query must be embedded with the *query* task type (RETRIEVAL_QUERY for
-// Vertex `text-embedding-004`); pass a `RagEmbedFn` configured by the caller
+// Vertex `gemini-embedding-001`); pass a `RagEmbedFn` configured by the caller
 // rather than embedding in this helper so the same retrieval path works in
 // tests with the stub embedder.
 
