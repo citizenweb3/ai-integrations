@@ -35,6 +35,8 @@ test("retrieveRagContext only compares embeddings produced by the query model", 
     .values([
       {
         sourceType: "test",
+        sourceEntityType: "research_fact",
+        sourceEntityId: randomUUID(),
         organizationId: organization.id,
         corpusLabel: "positive",
         title: `t-rag-model-old-${suffix}`,
@@ -43,6 +45,8 @@ test("retrieveRagContext only compares embeddings produced by the query model", 
       },
       {
         sourceType: "test",
+        sourceEntityType: "research_fact",
+        sourceEntityId: randomUUID(),
         organizationId: organization.id,
         corpusLabel: "positive",
         title: `t-rag-model-new-${suffix}`,
@@ -77,6 +81,8 @@ test("retrieveRagContext only compares embeddings produced by the query model", 
     queryText: "find matching RAG context",
     queryEmbedder: async () => [{ vector: queryVector, model: "gemini-embedding-2" }],
     organizationId: organization.id,
+    corpusLabels: ["positive"],
+    sourceEntityTypes: ["research_fact"],
     limit: 10
   });
 

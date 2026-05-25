@@ -107,6 +107,7 @@ import {
   policyStateEntries,
   ragChunks,
   ragDocuments,
+  ragEmbeddings,
   researchContactCandidates,
   researchEvidence,
   researchFactEvidence,
@@ -17730,10 +17731,7 @@ export async function completeIndexRagDocumentJob(input: {
     // Replace any stale embeddings for these chunks (idempotent re-embed).
     const chunkIds = chunkRows.map((r) => r.id);
     if (chunkIds.length > 0) {
-      await tx.execute(sql`
-        delete from rag_embeddings
-        where chunk_id = any(${chunkIds}::uuid[])
-      `);
+      await tx.delete(ragEmbeddings).where(inArray(ragEmbeddings.chunkId, chunkIds));
     }
     for (let i = 0; i < chunkRows.length; i++) {
       const chunk = chunkRows[i]!;
@@ -17839,12 +17837,18 @@ export async function retrieveRagContext(
 
   const corpusFilter =
     options.corpusLabels && options.corpusLabels.length > 0
-      ? sql`AND d.corpus_label = ANY(${Array.from(options.corpusLabels)}::text[])`
+      ? sql`AND d.corpus_label IN (${sql.join(
+          Array.from(options.corpusLabels).map((label) => sql`${label}`),
+          sql`, `
+        )})`
       : sql``;
 
   const sourceTypeFilter =
     options.sourceEntityTypes && options.sourceEntityTypes.length > 0
-      ? sql`AND d.source_entity_type = ANY(${Array.from(options.sourceEntityTypes)}::text[])`
+      ? sql`AND d.source_entity_type IN (${sql.join(
+          Array.from(options.sourceEntityTypes).map((sourceType) => sql`${sourceType}`),
+          sql`, `
+        )})`
       : sql``;
 
   const distanceCeil =
