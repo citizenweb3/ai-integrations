@@ -42,14 +42,16 @@ The worker pool string (`urgent,drafting,background,telegram`) determines which 
 - `GOOGLE_APPLICATION_CREDENTIALS` — path to a service-account JSON inside the container. `docker-compose.yml` bind-mounts `${HOST_GCP_SA_JSON:-/dev/null}` to `/secrets/gcp-sa.json:ro`. The `/dev/null` fallback keeps `docker compose up` non-fatal when ADC is bound by other means (`gcloud auth application-default login` on the host).
 - `AGENT_DEFAULT_MODEL` — fallback Gemini model id used by stages without a per-stage override. Default `gemini-3.5-flash`.
 - `AGENT_RESEARCH_SNAPSHOT_MODEL` / `AGENT_RESEARCH_MORE_MODEL` / `AGENT_CAMPAIGN_DISCOVERY_MODEL` — search-grounded stages. Default `gemini-2.5-flash` because ADK 1.33 google_search grounding is still pinned to Gemini 2.x.
+- `AGENT_RESEARCH_QUALITY_GATE_MODEL` — post-search evidence-quality gate. Default `gemini-3.5-flash`; it does not call search itself, it decides whether a follow-up `research_more` run is needed.
 - `AGENT_VALIDATE_CLAIMS_MODEL` / `AGENT_CLASSIFY_REPLY_MODEL` — cheap deterministic review/classification stages. Default `gemini-3.5-flash`.
 - `AGENT_DRAFT_EMAIL_MODEL` / `AGENT_DRAFT_WARM_EMAIL_MODEL` / `AGENT_REVISE_EMAIL_MODEL` — drafting + AI revise stages. Default `gemini-3.1-pro-preview` (verified in Vertex Model Garden on 2026-05-25).
 - IAM minimum: `roles/aiplatform.user` on the project. Production deployments should use workload identity (GKE) or the metadata server (Cloud Run / GCE) instead of a key file.
 
 ### Worker → Vertex (RAG embeddings)
 - `RAG_EMBED_PROVIDER` — `stub` (default; deterministic zero-vector for CI / offline) or `vertex`.
-- `VERTEX_PROJECT_ID`, `VERTEX_LOCATION` — when `RAG_EMBED_PROVIDER=vertex`. Worker raises on startup if provider is `vertex` but `VERTEX_PROJECT_ID` is unset.
-- `VERTEX_RAG_EMBED_MODEL` — default `gemini-embedding-001`.
+- `VERTEX_PROJECT_ID` — when `RAG_EMBED_PROVIDER=vertex`. Worker raises on startup if provider is `vertex` but `VERTEX_PROJECT_ID` is unset.
+- `VERTEX_RAG_EMBED_LOCATION` — default `global` for `gemini-embedding-2`. This is intentionally separate from `GOOGLE_CLOUD_LOCATION`; agent model routing and RAG embeddings use different Vertex API surfaces.
+- `VERTEX_RAG_EMBED_MODEL` — default `gemini-embedding-2` via the global `embedContent` API. Legacy `gemini-embedding-001` remains supported through regional `predict` for rollback/reindex comparisons.
 - `VERTEX_RAG_EMBED_DIMENSIONS` — default `1536`. Must match the schema-side `vector(N)` column; changing this requires a migration.
 
 ## Day-1 bring-up

@@ -406,6 +406,8 @@ async function runJobWithinTrace(job: LeasedJob) {
         const operatorNote = readOptionalString(job.payload_json, "operatorNote") ?? null;
         const currentSnapshotId =
           readOptionalString(job.payload_json, "currentSnapshotId") ?? null;
+        const qualityGateRetryCount =
+          readOptionalNumber(job.payload_json, "qualityGateRetryCount") ?? 0;
         const claimIdsRaw = job.payload_json["unsupportedClaimIds"];
         if (!Array.isArray(claimIdsRaw)) {
           throw new Error("Missing array payload field: unsupportedClaimIds");
@@ -433,6 +435,7 @@ async function runJobWithinTrace(job: LeasedJob) {
           unsupportedClaimTexts,
           operatorNote,
           currentSnapshotId,
+          qualityGateRetryCount,
           dispatcher: agentDispatcher
         });
         break;
