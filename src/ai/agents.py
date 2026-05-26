@@ -11,6 +11,7 @@ from __future__ import annotations
 from google.adk import Agent
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools import google_search
+from google.genai import types
 
 from .tools import query_validatorinfo, search_rag
 
@@ -36,11 +37,18 @@ def build_web_research_tool() -> AgentTool:
     return AgentTool(agent=sub)
 
 
-def build_agent(role: str, *, model: str, instruction: str) -> Agent:
+def build_agent(
+    role: str,
+    *,
+    model: str,
+    instruction: str,
+    generate_content_config: "types.GenerateContentConfig | None" = None,
+) -> Agent:
     """Build a tool-using agent for `role` (reactive | reply | verification)."""
     return Agent(
         model=model,
         name=f"aida_{role}",
         instruction=instruction,
         tools=[query_validatorinfo, search_rag, build_web_research_tool()],
+        generate_content_config=generate_content_config,
     )
