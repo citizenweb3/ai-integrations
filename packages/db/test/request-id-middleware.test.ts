@@ -26,6 +26,78 @@ test("request id middleware creates a request id when missing", () => {
   assert.match(requestId ?? "", /^[0-9a-f-]{36}$/);
 });
 
+test("dashboard basic auth protects operator routes when configured", () => {
+  const originalUser = process.env.DASHBOARD_BASIC_AUTH_USERNAME;
+  const originalPassword = process.env.DASHBOARD_BASIC_AUTH_PASSWORD;
+  process.env.DASHBOARD_BASIC_AUTH_USERNAME = "operator";
+  process.env.DASHBOARD_BASIC_AUTH_PASSWORD = "secret";
+  try {
+    const response = proxy(new NextRequest("https://example.com/operations", {
+      headers: { "x-request-id": "req-auth-missing" }
+    }));
+
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("x-request-id"), "req-auth-missing");
+    assert.match(response.headers.get("www-authenticate") ?? "", /Basic/);
+  } finally {
+    restoreDashboardAuthEnv(originalUser, originalPassword);
+  }
+});
+
+test("dashboard basic auth accepts valid credentials", () => {
+  const originalUser = process.env.DASHBOARD_BASIC_AUTH_USERNAME;
+  const originalPassword = process.env.DASHBOARD_BASIC_AUTH_PASSWORD;
+  process.env.DASHBOARD_BASIC_AUTH_USERNAME = "operator";
+  process.env.DASHBOARD_BASIC_AUTH_PASSWORD = "secret";
+  try {
+    const response = proxy(new NextRequest("https://example.com/operations", {
+      headers: {
+        authorization: `Basic ${Buffer.from("operator:secret").toString("base64")}`,
+        "x-request-id": "req-auth-ok"
+      }
+    }));
+
+    assert.notEqual(response.status, 401);
+    assert.equal(response.headers.get("x-request-id"), "req-auth-ok");
+  } finally {
+    restoreDashboardAuthEnv(originalUser, originalPassword);
+  }
+});
+
+test("dashboard basic auth exempts signed webhook ingress paths", () => {
+  const originalUser = process.env.DASHBOARD_BASIC_AUTH_USERNAME;
+  const originalPassword = process.env.DASHBOARD_BASIC_AUTH_PASSWORD;
+  process.env.DASHBOARD_BASIC_AUTH_USERNAME = "operator";
+  process.env.DASHBOARD_BASIC_AUTH_PASSWORD = "secret";
+  try {
+    const response = proxy(new NextRequest("https://example.com/webhooks/resend/events", {
+      headers: { "x-request-id": "req-webhook-auth-bypass" }
+    }));
+
+    assert.notEqual(response.status, 401);
+    assert.equal(response.headers.get("x-request-id"), "req-webhook-auth-bypass");
+  } finally {
+    restoreDashboardAuthEnv(originalUser, originalPassword);
+  }
+});
+
+test("dashboard basic auth fails closed when partially configured", () => {
+  const originalUser = process.env.DASHBOARD_BASIC_AUTH_USERNAME;
+  const originalPassword = process.env.DASHBOARD_BASIC_AUTH_PASSWORD;
+  process.env.DASHBOARD_BASIC_AUTH_USERNAME = "operator";
+  delete process.env.DASHBOARD_BASIC_AUTH_PASSWORD;
+  try {
+    const response = proxy(new NextRequest("https://example.com/operations", {
+      headers: { "x-request-id": "req-auth-misconfigured" }
+    }));
+
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("x-request-id"), "req-auth-misconfigured");
+  } finally {
+    restoreDashboardAuthEnv(originalUser, originalPassword);
+  }
+});
+
 test("dashboard logs inside request context include request id", async () => {
   const captured: string[] = [];
   const logger = createDashboardLogger({
@@ -60,3 +132,16 @@ test("request context writes request id onto direct route responses", async () =
 
   assert.equal(response.headers.get("x-request-id"), "req-t011-response");
 });
+
+function restoreDashboardAuthEnv(username: string | undefined, password: string | undefined) {
+  if (username === undefined) {
+    delete process.env.DASHBOARD_BASIC_AUTH_USERNAME;
+  } else {
+    process.env.DASHBOARD_BASIC_AUTH_USERNAME = username;
+  }
+  if (password === undefined) {
+    delete process.env.DASHBOARD_BASIC_AUTH_PASSWORD;
+  } else {
+    process.env.DASHBOARD_BASIC_AUTH_PASSWORD = password;
+  }
+}

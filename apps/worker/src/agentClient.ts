@@ -1,14 +1,21 @@
 import type { AgentStageDispatcher } from "@bizdev/db";
 
-// TODO(post-MVP): add a shared secret / mTLS between worker and agent service
-// when the compose network model expands beyond a local Docker bridge.
-export function createHttpAgentDispatcher(options: { baseUrl: string }): AgentStageDispatcher {
+// Optional Bearer auth protects /runs when the agent is reachable beyond the
+// local Docker bridge. Local dev stays unauthenticated when AGENT_RUN_SECRET is unset.
+export function createHttpAgentDispatcher(options: {
+  baseUrl: string;
+  bearerToken?: string | null;
+}): AgentStageDispatcher {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
+  const bearerToken = options.bearerToken?.trim();
 
   return async function* dispatch(request) {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (bearerToken) headers.authorization = `Bearer ${bearerToken}`;
+
     const response = await fetch(`${baseUrl}/runs/${encodeURIComponent(request.stage)}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify({ prompt: request.prompt, user_id: request.userId ?? null })
     });
 

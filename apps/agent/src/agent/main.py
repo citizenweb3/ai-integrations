@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -68,13 +69,19 @@ def health() -> dict[str, Any]:
     stages = supported_stages()
     return {
         "status": "ok",
+        "run_auth_required": bool(_agent_run_secret()),
         "stages": stages,
         "tool_allowlist": {stage: stage_tool_allowlist(stage) for stage in stages},
     }
 
 
 @app.post("/runs/{stage}")
-async def run_stage(stage: str, request: RunRequest) -> StreamingResponse:
+async def run_stage(
+    stage: str,
+    request: RunRequest,
+    authorization: str | None = Header(default=None),
+) -> StreamingResponse:
+    _authorize_agent_run(authorization)
     if stage not in supported_stages():
         raise HTTPException(status_code=404, detail=f"unsupported stage: {stage}")
 
@@ -83,3 +90,22 @@ async def run_stage(stage: str, request: RunRequest) -> StreamingResponse:
             yield (json.dumps(event) + "\n").encode("utf-8")
 
     return StreamingResponse(generator(), media_type="application/x-ndjson")
+
+
+def _agent_run_secret() -> str | None:
+    secret = os.environ.get("AGENT_RUN_SECRET", "").strip()
+    return secret or None
+
+
+def _authorize_agent_run(authorization: str | None) -> None:
+    secret = _agent_run_secret()
+    if not secret:
+        return
+    expected = f"Bearer {secret}"
+    if authorization and secrets.compare_digest(authorization, expected):
+        return
+    raise HTTPException(
+        status_code=401,
+        detail="agent run authentication required",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

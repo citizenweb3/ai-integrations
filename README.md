@@ -24,6 +24,7 @@ yarn dev
 Docker Compose exposes the dashboard on `http://localhost:3001` to avoid common local port `3000` conflicts.
 Dashboard health is available at `http://localhost:3001/health`.
 Resend delivery webhooks are accepted at `POST http://localhost:3001/webhooks/resend/events` and require Svix headers validated with `RESEND_WEBHOOK_SECRET_DELIVERY`. Resend inbound webhooks are accepted at `POST http://localhost:3001/webhooks/resend/inbound` and require `RESEND_WEBHOOK_SECRET_INBOUND`.
+When exposing the dashboard through a domain or tunnel, set `DASHBOARD_BASIC_AUTH_USERNAME` and `DASHBOARD_BASIC_AUTH_PASSWORD`; webhook paths remain exempt and keep using provider signatures/secrets. If the agent is exposed beyond the Docker bridge, set the same `AGENT_RUN_SECRET` for the worker and agent so `POST /runs/{stage}` requires Bearer auth.
 
 The first smoke path is:
 

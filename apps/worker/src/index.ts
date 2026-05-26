@@ -70,7 +70,10 @@ const agentDispatcher: AgentStageDispatcher = (() => {
       };
     };
   }
-  return createHttpAgentDispatcher({ baseUrl });
+  const bearerToken = process.env.AGENT_RUN_SECRET?.trim();
+  return bearerToken
+    ? createHttpAgentDispatcher({ baseUrl, bearerToken })
+    : createHttpAgentDispatcher({ baseUrl });
 })();
 
 const sendEmailDispatcher: SendEmailDispatcher = (() => {

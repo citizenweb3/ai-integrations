@@ -23,6 +23,8 @@ services:
     environment:
       DATABASE_URL: postgres://bizdev:bizdev@postgres:5432/bizdev
       DASHBOARD_PORT: 3000
+      DASHBOARD_BASIC_AUTH_USERNAME: ${DASHBOARD_BASIC_AUTH_USERNAME:-}
+      DASHBOARD_BASIC_AUTH_PASSWORD: ${DASHBOARD_BASIC_AUTH_PASSWORD:-}
       RESEND_WEBHOOK_SECRET_DELIVERY: ${RESEND_WEBHOOK_SECRET_DELIVERY:-whsec_bG9jYWxfcmVzZW5kX2RlbGl2ZXJ5X3NlY3JldA==}
       RESEND_WEBHOOK_SECRET_INBOUND: ${RESEND_WEBHOOK_SECRET_INBOUND:-whsec_bG9jYWxfcmVzZW5kX2luYm91bmRfc2VjcmV0}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
@@ -41,7 +43,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+          "const u=process.env.DASHBOARD_BASIC_AUTH_USERNAME||''; const p=process.env.DASHBOARD_BASIC_AUTH_PASSWORD||''; const headers={}; if(u&&p) headers.authorization='Basic '+Buffer.from(u+':'+p).toString('base64'); fetch('http://127.0.0.1:3000/health',{headers}).then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
         ]
       interval: 5s
       timeout: 5s
@@ -61,6 +63,7 @@ services:
       WORKER_HEALTH_MAX_AGE_SECONDS: 30
       WORKER_POOLS: urgent,drafting,background
       AGENT_BASE_URL: http://agent:8000
+      AGENT_RUN_SECRET: ${AGENT_RUN_SECRET:-}
       RAG_EMBED_PROVIDER: ${RAG_EMBED_PROVIDER:-stub}
       VERTEX_PROJECT_ID: ${GOOGLE_CLOUD_PROJECT:-}
       VERTEX_RAG_EMBED_LOCATION: ${VERTEX_RAG_EMBED_LOCATION:-global}
@@ -96,6 +99,7 @@ services:
       WORKER_HEALTH_MAX_AGE_SECONDS: 30
       WORKER_POOLS: telegram
       AGENT_BASE_URL: http://agent:8000
+      AGENT_RUN_SECRET: ${AGENT_RUN_SECRET:-}
       RAG_EMBED_PROVIDER: ${RAG_EMBED_PROVIDER:-stub}
       VERTEX_PROJECT_ID: ${GOOGLE_CLOUD_PROJECT:-}
       VERTEX_RAG_EMBED_LOCATION: ${VERTEX_RAG_EMBED_LOCATION:-global}
@@ -122,6 +126,7 @@ services:
       dockerfile: docker/agent.Dockerfile
     environment:
       AGENT_PORT: 8000
+      AGENT_RUN_SECRET: ${AGENT_RUN_SECRET:-}
       AGENT_DEFAULT_MODEL: ${AGENT_DEFAULT_MODEL:-gemini-3.5-flash}
       # google_search built-in tool requires Gemini 2.x. ADK 1.33 + gemini-3
       # routes the call as a function_call which has no user-tool match and

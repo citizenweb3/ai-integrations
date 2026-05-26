@@ -26,6 +26,7 @@ The worker pool string (`urgent,drafting,background,telegram`) determines which 
 
 ### Dashboard
 - `DASHBOARD_PORT` — bound port inside the container (Compose maps `3001:3000`).
+- `DASHBOARD_BASIC_AUTH_USERNAME` / `DASHBOARD_BASIC_AUTH_PASSWORD` — optional Basic auth for the operator dashboard, `/api/*`, `/health`, and `/metrics`. Set both before exposing the dashboard through a stable domain or tunnel. `/webhooks/*` is intentionally exempt because Resend and Telegram authenticate those POSTs with their own signatures/secrets.
 - `RESEND_WEBHOOK_SECRET_DELIVERY` — Svix-format secret, validated on every `/webhooks/resend/events` POST. The webhook handler returns `401` on signature mismatch and `200` on dedupe-key collision (replay-safe).
 - `RESEND_WEBHOOK_SECRET_INBOUND` — Svix-format secret, validated on every `/webhooks/resend/inbound` POST. Rotate independently from the delivery secret.
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL` — used by `sendEmailDispatcher`. Empty `RESEND_API_KEY` short-circuits to a non-retryable failed send (the worker won't burn retries against a missing key).
@@ -36,6 +37,7 @@ The worker pool string (`urgent,drafting,background,telegram`) determines which 
 - `WORKER_POLL_INTERVAL_MS`, `WORKER_LEASE_SECONDS`, `WORKER_HEARTBEAT_INTERVAL_MS`, `WORKER_HEALTH_MAX_AGE_SECONDS` — leasing/heartbeat tuning. Defaults are tuned for local dev; production workloads should bump `WORKER_LEASE_SECONDS` to cover the longest expected stage runtime (currently `draft_warm_email`, ~30s p95).
 
 ### Agent (ADK / Vertex)
+- `AGENT_RUN_SECRET` — optional Bearer token for `POST /runs/{stage}`. Set the same value in the `agent` and `worker` environments before exposing the agent beyond the local Docker bridge. The worker sends `Authorization: Bearer <AGENT_RUN_SECRET>` when configured; `/health` remains unauthenticated for local/container healthchecks.
 - `GOOGLE_GENAI_USE_VERTEXAI=TRUE` — agent boot enforces this. If `GOOGLE_API_KEY` is set it hard-fails so a stale env never silently routes back to the Developer API surface.
 - `GOOGLE_CLOUD_PROJECT` — required.
 - `GOOGLE_CLOUD_LOCATION` — defaults to `global`. Preview models (for example `gemini-3.1-pro-preview`) are served on the global endpoint; switch to a region (e.g. `us-central1`) only when every stage uses GA model ids.
@@ -77,6 +79,27 @@ docker compose up --build
 ```
 
 Smoke check: `curl http://localhost:3001/health` (dashboard), `curl http://127.0.0.1:8000/health` (agent). Worker has no HTTP surface — verify via `/operations` page or the `worker_started` line in container logs.
+
+### Domain / tunnel ingress
+
+For a live smoke on a stable domain, expose the dashboard service only. Keep Postgres and the agent bound to localhost / the Docker network unless there is a specific reason to publish them.
+
+Minimum domain-mode env:
+
+```bash
+DASHBOARD_BASIC_AUTH_USERNAME=operator
+DASHBOARD_BASIC_AUTH_PASSWORD=<long random password>
+AGENT_RUN_SECRET=<long random bearer token>
+RESEND_WEBHOOK_SECRET_DELIVERY=<Resend delivery Svix secret>
+RESEND_WEBHOOK_SECRET_INBOUND=<Resend inbound Svix secret>
+TELEGRAM_WEBHOOK_SECRET=<Telegram webhook path/header secret>
+```
+
+Expected auth behavior:
+- Browser/operator routes and `/api/*` return `401` without Basic auth.
+- `/health` and `/metrics` also require Basic auth when dashboard auth is configured; the Compose healthcheck sends it automatically.
+- `/webhooks/resend/events`, `/webhooks/resend/inbound`, and `/webhooks/telegram/<secret>` do not require Basic auth. They continue to rely on provider-specific signatures/secrets so upstream providers can deliver POSTs.
+- `POST /runs/{stage}` on the agent requires `Authorization: Bearer <AGENT_RUN_SECRET>` when the secret is set; the worker adds it automatically.
 
 ## Day-2 ops
 
