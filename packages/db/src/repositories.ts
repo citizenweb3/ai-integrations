@@ -9262,6 +9262,13 @@ type ResearchAgentOutput = {
   contactCandidates?: ResearchAgentContactCandidate[];
 };
 
+type ResearchAgentCitation = {
+  uri: string;
+  title?: string | null;
+  startIndex?: number | null;
+  endIndex?: number | null;
+};
+
 const CONTACT_CANDIDATE_CAP = 8;
 const RESEARCH_QUALITY_GATE_MAX_RETRIES = 2;
 
@@ -9418,11 +9425,132 @@ const SAFE_FOR_COPY_TRUSTED_HOSTS = [
   "gartner.com"
 ];
 
-function normalizeEvidence(input: unknown): ResearchAgentEvidence | null {
+function normalizeCitationIndex(input: unknown): number | null {
+  if (typeof input !== "number" || !Number.isInteger(input) || input < 0) return null;
+  return input;
+}
+
+function normalizeResearchCitations(input: unknown): ResearchAgentCitation[] {
+  if (!Array.isArray(input)) return [];
+
+  const citations: ResearchAgentCitation[] = [];
+  const seen = new Set<string>();
+  for (const value of input) {
+    if (!value || typeof value !== "object") continue;
+    const raw = value as Record<string, unknown>;
+    const uriRaw = typeof raw.uri === "string" ? raw.uri.trim() : "";
+    if (!uriRaw || isGroundingTrackerUrl(uriRaw)) continue;
+
+    let parsed: URL;
+    try {
+      parsed = new URL(uriRaw);
+    } catch {
+      continue;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+    parsed.hash = "";
+
+    const uri = parsed.toString().slice(0, 1000);
+    const startIndex = normalizeCitationIndex(raw.startIndex);
+    const endIndex = normalizeCitationIndex(raw.endIndex);
+    const key = `${uri}:${startIndex ?? ""}:${endIndex ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const title = typeof raw.title === "string" && raw.title.trim()
+      ? raw.title.trim().slice(0, 300)
+      : null;
+    citations.push({
+      uri,
+      ...(title ? { title } : {}),
+      ...(startIndex !== null ? { startIndex } : {}),
+      ...(endIndex !== null ? { endIndex } : {})
+    });
+    if (citations.length >= 100) break;
+  }
+  return citations;
+}
+
+function findNeedleRanges(haystack: string, needle: string, maxRanges: number): { start: number; end: number }[] {
+  if (!needle) return [];
+  const ranges: { start: number; end: number }[] = [];
+  let fromIndex = 0;
+  while (ranges.length < maxRanges) {
+    const start = haystack.indexOf(needle, fromIndex);
+    if (start < 0) break;
+    ranges.push({ start, end: start + needle.length });
+    fromIndex = start + Math.max(1, needle.length);
+  }
+  return ranges;
+}
+
+function rangesOverlapWithTolerance(
+  left: { start: number; end: number },
+  right: { start: number; end: number },
+  tolerance: number
+): boolean {
+  return left.start <= right.end + tolerance && right.start <= left.end + tolerance;
+}
+
+function createResearchCitationUrlResolver(input: {
+  finalText: string;
+  citations: unknown;
+}): (evidence: unknown) => string | null {
+  const citations = normalizeResearchCitations(input.citations)
+    .filter((citation): citation is ResearchAgentCitation & { startIndex: number; endIndex: number } => (
+      typeof citation.startIndex === "number"
+      && typeof citation.endIndex === "number"
+      && citation.endIndex >= citation.startIndex
+    ))
+    .sort((a, b) => a.startIndex - b.startIndex);
+  const usedCitationIndexes = new Set<number>();
+
+  return (evidence: unknown): string | null => {
+    if (!evidence || typeof evidence !== "object") return null;
+    const raw = evidence as Record<string, unknown>;
+    const sourceUrlRaw = typeof raw.sourceUrl === "string" ? raw.sourceUrl.trim() : "";
+    if (sourceUrlRaw && !isGroundingTrackerUrl(sourceUrlRaw)) return null;
+
+    const quoteText = typeof raw.quoteText === "string" ? raw.quoteText.trim() : "";
+    if (!quoteText || citations.length === 0) return null;
+
+    const needles = Array.from(new Set([
+      quoteText,
+      JSON.stringify(quoteText).slice(1, -1)
+    ].filter(Boolean)));
+    const quoteRanges = needles.flatMap((needle) => findNeedleRanges(input.finalText, needle, 5));
+    if (quoteRanges.length === 0) return null;
+
+    let bestIndex: number | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const quoteRange of quoteRanges) {
+      for (let index = 0; index < citations.length; index += 1) {
+        if (usedCitationIndexes.has(index)) continue;
+        const citation = citations[index]!;
+        const citationRange = { start: citation.startIndex, end: citation.endIndex };
+        if (!rangesOverlapWithTolerance(quoteRange, citationRange, 256)) continue;
+        const distance = Math.abs(citation.startIndex - quoteRange.start);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      }
+    }
+
+    if (bestIndex === null) return null;
+    usedCitationIndexes.add(bestIndex);
+    return citations[bestIndex]!.uri;
+  };
+}
+
+function normalizeEvidence(input: unknown, citationSourceUrl?: string | null): ResearchAgentEvidence | null {
   if (!input || typeof input !== "object") return null;
   const raw = input as Record<string, unknown>;
   const sourceUrlRawTrim = typeof raw.sourceUrl === "string" ? raw.sourceUrl.trim() : "";
-  const sourceUrlRaw = sourceUrlRawTrim && isGroundingTrackerUrl(sourceUrlRawTrim) ? "" : sourceUrlRawTrim;
+  const citationUrl = citationSourceUrl?.trim() ?? "";
+  const sourceUrlRaw = sourceUrlRawTrim && isGroundingTrackerUrl(sourceUrlRawTrim)
+    ? citationUrl
+    : sourceUrlRawTrim || citationUrl;
   const quoteTextRaw = typeof raw.quoteText === "string" ? raw.quoteText.trim() : "";
   const sourceTypeRaw = typeof raw.sourceType === "string" ? raw.sourceType.trim() : "";
   const supportTypeRaw = typeof raw.supportType === "string" ? raw.supportType.trim() : "";
@@ -9595,6 +9723,7 @@ export async function routeResearchSnapshotOutcome(input: {
   agentRunId: string;
   organizationId: string;
   finalText: string;
+  citations?: unknown;
   correlationId: string;
   jobId?: string;
 }): Promise<ResearchSnapshotRouterResult | null> {
@@ -9613,6 +9742,10 @@ export async function routeResearchSnapshotOutcome(input: {
 
   const facts = Array.isArray(parsed.facts) ? parsed.facts : [];
   const questions = normalizeResearchQuestions(parsed.questions);
+  const resolveCitationUrl = createResearchCitationUrlResolver({
+    finalText: input.finalText,
+    citations: input.citations
+  });
 
   const db = getDb();
   return db.transaction(async (tx) => {
@@ -9660,7 +9793,7 @@ export async function routeResearchSnapshotOutcome(input: {
       if (!fact || typeof fact.claim !== "string" || !fact.claim.trim()) continue;
       const confidence = fact.confidence ? CONFIDENCE_SCORE[fact.confidence] ?? 0 : 0;
       const normalizedEvidenceList = (Array.isArray(fact.evidence) ? fact.evidence : [])
-        .map((rawEvidence) => normalizeEvidence(rawEvidence))
+        .map((rawEvidence) => normalizeEvidence(rawEvidence, resolveCitationUrl(rawEvidence)))
         .filter((evidence): evidence is ResearchAgentEvidence => evidence !== null);
       const safeForCopy = shouldAutoPromoteFactForCopy(normalizedEvidenceList, organizationDomain);
       const [factRow] = await tx
@@ -10979,6 +11112,7 @@ export async function completeRefreshResearchSnapshotJob(input: {
   });
 
   let finalText: string | null = null;
+  let finalCitations: ResearchAgentCitation[] = [];
   let runFailed = false;
   let failureReason: string | null = null;
 
@@ -10998,6 +11132,7 @@ export async function completeRefreshResearchSnapshotJob(input: {
         if (typeof text === "string") {
           finalText = text;
         }
+        finalCitations = normalizeResearchCitations(event.payloadJson["citations"]);
       }
 
       if (event.eventType === "run_failed") {
@@ -11039,12 +11174,13 @@ export async function completeRefreshResearchSnapshotJob(input: {
     await recordAgentRunArtifact({
       agentRunId,
       artifactType: "research_snapshot_output",
-      payloadJson: { finalText }
+      payloadJson: finalCitations.length > 0 ? { finalText, citations: finalCitations } : { finalText }
     });
     routerResult = await routeResearchSnapshotOutcome({
       agentRunId,
       organizationId: input.organizationId,
       finalText,
+      citations: finalCitations,
       jobId: input.job.id,
       correlationId: input.job.correlation_id
     });
@@ -11053,7 +11189,9 @@ export async function completeRefreshResearchSnapshotJob(input: {
   await completeAgentRun({
     agentRunId,
     status: "succeeded",
-    outputJson: finalText !== null ? { finalText } : {}
+    outputJson: finalText !== null
+      ? (finalCitations.length > 0 ? { finalText, citations: finalCitations } : { finalText })
+      : {}
   });
 
   const qualityGateDecision = finalText !== null && routerResult
@@ -12808,6 +12946,7 @@ export async function completeResearchMoreJob(input: {
   });
 
   let finalText: string | null = null;
+  let finalCitations: ResearchAgentCitation[] = [];
   let runFailed = false;
   let failureReason: string | null = null;
 
@@ -12822,6 +12961,7 @@ export async function completeResearchMoreJob(input: {
       if (event.eventType === "final_response") {
         const text = event.payloadJson["text"];
         if (typeof text === "string") finalText = text;
+        finalCitations = normalizeResearchCitations(event.payloadJson["citations"]);
       }
 
       if (event.eventType === "run_failed") {
@@ -12863,7 +13003,7 @@ export async function completeResearchMoreJob(input: {
     await recordAgentRunArtifact({
       agentRunId,
       artifactType: "research_more_output",
-      payloadJson: { finalText }
+      payloadJson: finalCitations.length > 0 ? { finalText, citations: finalCitations } : { finalText }
     });
     // Reuse the snapshot router: research_more output schema is identical to
     // research_snapshot, and we want the produced snapshot to share the
@@ -12872,6 +13012,7 @@ export async function completeResearchMoreJob(input: {
       agentRunId,
       organizationId: input.organizationId,
       finalText,
+      citations: finalCitations,
       jobId: input.job.id,
       correlationId: input.job.correlation_id
     });
@@ -12880,7 +13021,9 @@ export async function completeResearchMoreJob(input: {
   await completeAgentRun({
     agentRunId,
     status: "succeeded",
-    outputJson: finalText !== null ? { finalText } : {}
+    outputJson: finalText !== null
+      ? (finalCitations.length > 0 ? { finalText, citations: finalCitations } : { finalText })
+      : {}
   });
 
   const retryCount = Math.max(

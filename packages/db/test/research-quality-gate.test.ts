@@ -176,6 +176,125 @@ test("research quality gate queues one follow-up research_more job when evidence
   assert.deepEqual(queuedEvent, { eventType: "research_quality_gate_retry_queued" });
 });
 
+test("research snapshot job routes citation primary URLs for redirect evidence", async (t) => {
+  const db = getDb();
+  const suffix = randomUUID();
+  await clearResearchQualityGateArtifacts(suffix);
+  t.after(() => clearResearchQualityGateArtifacts(suffix));
+
+  const domain = `t-quality-gate-${suffix}.example`;
+  const [organization] = await db
+    .insert(organizations)
+    .values({
+      name: `t-quality-gate-${suffix}`,
+      domain
+    })
+    .returning({ id: organizations.id });
+  assert.ok(organization);
+
+  const running = await createRunningResearchSnapshotJob({
+    organizationId: organization.id,
+    prompt: "Refresh citation-backed research."
+  });
+
+  const quoteText = "T quality gate citation evidence for procurement automation.";
+  const finalText = JSON.stringify({
+    summary: "Citation-backed public snapshot.",
+    facts: [
+      {
+        claim: "The organization documents procurement automation.",
+        category: "company",
+        confidence: "medium",
+        evidence: [
+          {
+            sourceUrl: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQ-citation",
+            sourceType: "search_result",
+            quoteText,
+            supportType: "supports"
+          }
+        ]
+      }
+    ],
+    questions: [],
+    contactCandidates: []
+  }, null, 2);
+  const quoteStart = finalText.indexOf(quoteText);
+  assert.notEqual(quoteStart, -1);
+  const primaryUrl = `https://${domain}/research/procurement`;
+
+  const dispatcher: AgentStageDispatcher = async function* (request) {
+    if (request.stage === "research_snapshot") {
+      yield {
+        eventType: "final_response",
+        payloadJson: {
+          text: finalText,
+          citations: [
+            {
+              uri: primaryUrl,
+              startIndex: quoteStart,
+              endIndex: quoteStart + quoteText.length
+            }
+          ]
+        }
+      };
+      return;
+    }
+    if (request.stage === "research_quality_gate") {
+      yield {
+        eventType: "final_response",
+        payloadJson: {
+          text: JSON.stringify({
+            sufficient: true,
+            confidence: "high",
+            reasons: ["Primary URL was recovered from citation metadata."],
+            retryQueries: [],
+            missing: [],
+            operatorReviewRecommended: false
+          })
+        }
+      };
+      return;
+    }
+    throw new Error(`unexpected stage ${request.stage}`);
+  };
+
+  await completeRefreshResearchSnapshotJob({
+    ...running,
+    organizationId: organization.id,
+    prompt: "Refresh citation-backed research.",
+    dispatcher
+  });
+
+  const evidenceRows = await db
+    .select({
+      sourceUrl: researchEvidence.sourceUrl,
+      quoteText: researchEvidence.quoteText
+    })
+    .from(researchSnapshots)
+    .innerJoin(researchFacts, eq(researchFacts.snapshotId, researchSnapshots.id))
+    .innerJoin(researchFactEvidence, eq(researchFactEvidence.researchFactId, researchFacts.id))
+    .innerJoin(researchEvidence, eq(researchEvidence.id, researchFactEvidence.researchEvidenceId))
+    .where(eq(researchSnapshots.organizationId, organization.id));
+
+  assert.deepEqual(evidenceRows, [
+    {
+      sourceUrl: primaryUrl,
+      quoteText
+    }
+  ]);
+
+  const snapshotArtifacts = await db
+    .select({ payloadJson: agentRunArtifacts.payloadJson })
+    .from(agentRunArtifacts)
+    .innerJoin(agentRuns, eq(agentRuns.id, agentRunArtifacts.agentRunId))
+    .where(and(
+      eq(agentRuns.jobId, running.job.id),
+      eq(agentRunArtifacts.artifactType, "research_snapshot_output")
+    ));
+  assert.equal(snapshotArtifacts.length, 1);
+  assert.equal(Array.isArray((snapshotArtifacts[0]!.payloadJson as Record<string, unknown>)["citations"]), true);
+});
+
 async function createRunningResearchSnapshotJob(input: {
   organizationId: string;
   prompt: string;

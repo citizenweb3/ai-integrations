@@ -18,6 +18,37 @@ from .agents import build_agent
 _APP_NAME = "bizdev-agent"
 
 
+def _citation_metadata_payload(citation_metadata: Any) -> dict[str, Any] | None:
+    raw_citations = getattr(citation_metadata, "citations", None)
+    if not raw_citations:
+        return None
+
+    citations: list[dict[str, Any]] = []
+    for citation in raw_citations:
+        uri = getattr(citation, "uri", None)
+        if not isinstance(uri, str) or not uri.strip():
+            continue
+
+        item: dict[str, Any] = {"uri": uri.strip()}
+        title = getattr(citation, "title", None)
+        if isinstance(title, str) and title.strip():
+            item["title"] = title.strip()
+
+        start_index = getattr(citation, "start_index", None)
+        if isinstance(start_index, int) and start_index >= 0:
+            item["startIndex"] = start_index
+
+        end_index = getattr(citation, "end_index", None)
+        if isinstance(end_index, int) and end_index >= 0:
+            item["endIndex"] = end_index
+
+        citations.append(item)
+        if len(citations) >= 100:
+            break
+
+    return {"citations": citations} if citations else None
+
+
 async def stream_stage(
     stage: str, prompt: str, *, user_id: str | None = None
 ) -> AsyncIterator[dict[str, Any]]:
@@ -45,7 +76,13 @@ async def stream_stage(
                 joined = "".join(part.text or "" for part in event.content.parts)
                 if joined:
                     final_text = joined
-                    yield {"event_type": "final_response", "payload": {"text": joined}}
+                    payload: dict[str, Any] = {"text": joined}
+                    citation_payload = _citation_metadata_payload(
+                        getattr(event, "citation_metadata", None)
+                    )
+                    if citation_payload:
+                        payload.update(citation_payload)
+                    yield {"event_type": "final_response", "payload": payload}
                 continue
 
             if event.content and event.content.parts:

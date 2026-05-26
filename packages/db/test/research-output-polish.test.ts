@@ -11,6 +11,8 @@ import {
   organizations,
   ragDocuments,
   researchContactCandidates,
+  researchEvidence,
+  researchFactEvidence,
   researchFacts,
   researchSnapshots,
   routeResearchSnapshotOutcome
@@ -263,6 +265,84 @@ test("research router persists Step 4 output polish", async (t) => {
     detail.pendingContactCandidates.find((candidate) => candidate.email === email)?.sourceRefs.map((ref) => ref.url),
     sourceUrls
   );
+});
+
+test("research router resolves grounding redirect evidence from citations", async (t) => {
+  const db = getDb();
+  await clearT026DArtifacts();
+  t.after(clearT026DArtifacts);
+
+  const suffix = randomUUID();
+  const domain = `t026d-citations-${suffix}.example`;
+  const [organization] = await db
+    .insert(organizations)
+    .values({
+      name: `t026d-citations-org-${suffix}`,
+      domain
+    })
+    .returning({ id: organizations.id });
+  assert.ok(organization);
+
+  const quoteText = "T026D CitationCo ships procurement automation controls for partner teams.";
+  const finalText = JSON.stringify({
+    summary: "T026D CitationCo public research.",
+    questions: [],
+    facts: [
+      {
+        claim: "T026D CitationCo documents procurement automation controls.",
+        confidence: "medium",
+        evidence: [
+          {
+            sourceUrl: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQ-test",
+            sourceType: "search_result",
+            quoteText,
+            supportType: "supports"
+          }
+        ]
+      }
+    ],
+    contactCandidates: []
+  }, null, 2);
+  const quoteStart = finalText.indexOf(quoteText);
+  assert.notEqual(quoteStart, -1);
+  const primaryUrl = `https://${domain}/customers/linear`;
+
+  const agentRunId = await createT026DAgentRun(suffix);
+  const result = await routeResearchSnapshotOutcome({
+    agentRunId,
+    organizationId: organization.id,
+    correlationId: randomUUID(),
+    finalText,
+    citations: [
+      {
+        uri: primaryUrl,
+        startIndex: quoteStart,
+        endIndex: quoteStart + quoteText.length
+      }
+    ]
+  });
+
+  assert.equal(result?.factCount, 1);
+  assert.equal(result?.evidenceCount, 1);
+
+  const evidenceRows = await db
+    .select({
+      sourceUrl: researchEvidence.sourceUrl,
+      sourceType: researchEvidence.sourceType,
+      quoteText: researchEvidence.quoteText
+    })
+    .from(researchFacts)
+    .innerJoin(researchFactEvidence, eq(researchFactEvidence.researchFactId, researchFacts.id))
+    .innerJoin(researchEvidence, eq(researchEvidence.id, researchFactEvidence.researchEvidenceId))
+    .where(eq(researchFacts.snapshotId, result!.snapshotId));
+
+  assert.deepEqual(evidenceRows, [
+    {
+      sourceUrl: primaryUrl,
+      sourceType: "search_result",
+      quoteText
+    }
+  ]);
 });
 
 async function createT026DAgentRun(suffix: string): Promise<string> {
