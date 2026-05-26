@@ -9,7 +9,15 @@ enriches it with real timing in `responder.generate`.
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable
+from typing import Any, Iterable, TypedDict
+
+
+class ToolCall(TypedDict):
+    tool_name: str
+    tool_input: str
+    tool_output: str
+    latency_ms: int
+    sequence: int
 
 
 def _dumps(value: Any) -> str:
@@ -21,10 +29,11 @@ def _dumps(value: Any) -> str:
         return str(value)
 
 
-def collect_tool_calls(events: Iterable[Any]) -> list[dict]:
-    """Pair function_call -> function_response (by id when present, else name FIFO)."""
+def collect_tool_calls(events: Iterable[Any]) -> list[ToolCall]:
+    """Pair function_call -> function_response (by id when present, else name FIFO).
+    An unpaired call or an orphan response (no preceding call) is dropped."""
     pending: dict[str, list[dict]] = {}
-    calls: list[dict] = []
+    calls: list[ToolCall] = []
 
     for event in events:
         content = getattr(event, "content", None)
@@ -42,7 +51,9 @@ def collect_tool_calls(events: Iterable[Any]) -> list[dict]:
                 name = getattr(fr, "name", "") or ""
                 key = getattr(fr, "id", None) or name
                 bucket = pending.get(key) or pending.get(name)
-                info = bucket.pop(0) if bucket else {"name": name, "args": {}}
+                if not bucket:  # orphan response: no preceding call -> drop
+                    continue
+                info = bucket.pop(0)
                 calls.append({
                     "tool_name": info["name"],
                     "tool_input": _dumps(info["args"]),

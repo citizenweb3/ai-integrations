@@ -53,3 +53,10 @@ def test_text_only_events_ignored():
 def test_unmatched_call_not_emitted():
     events = [_Event([_call("search_rag", {"query": "x"})])]
     assert collect_tool_calls(events) == []
+
+
+def test_orphan_response_not_emitted():
+    # a function_response with no preceding call must be dropped (matches the old
+    # claude mapping); emitting a synthetic entry would inflate the Phase-2 gate count.
+    events = [_Event([_resp("search_rag", {"r": "ok"})])]
+    assert collect_tool_calls(events) == []

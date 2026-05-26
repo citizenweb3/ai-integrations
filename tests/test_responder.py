@@ -73,6 +73,13 @@ async def test_generate_short_circuits_when_auth_locked():
     assert resp.last_error == "auth_locked"
 
 
+def test_init_rejects_api_key(monkeypatch):
+    # the Vertex-only guard must run at construction
+    monkeypatch.setenv("GOOGLE_API_KEY", "leak")
+    with pytest.raises(RuntimeError, match="GOOGLE_API_KEY"):
+        Responder(_CFG)
+
+
 async def test_generate_auth_error_locks_health():
     from google.genai import errors as gerrors
     resp = Responder(_CFG)

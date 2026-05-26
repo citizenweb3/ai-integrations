@@ -20,6 +20,7 @@ from google.genai import types
 
 from src.ai.agents import build_agent
 from src.ai.event_mapping import collect_tool_calls
+from src.ai.gemini_client import assert_vertex_env
 from src.ai.health import LLMHealth, classify_error
 from src.ai.instruction import load_instruction
 from src.ai.prompts import render as render_prompt
@@ -48,6 +49,9 @@ def _extract_json(raw: str) -> dict | None:
 
 class Responder:
     def __init__(self, config: dict):
+        # Vertex-only fail-fast: require project/location, reject GOOGLE_API_KEY,
+        # force GOOGLE_GENAI_USE_VERTEXAI before any agent/runner is built.
+        assert_vertex_env()
         self.config = config
         gem = config["gemini"]
         self._timeout = gem["timeout_seconds"]
