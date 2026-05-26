@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import re
+from urllib.parse import urlencode
 
 _SELECT_RE = re.compile(r"^\s*(?:with\b.+?\bselect\b|select)\b", re.IGNORECASE | re.DOTALL)
 _FORBIDDEN = (
@@ -57,3 +58,37 @@ async def query_validatorinfo(sql: str) -> str:
         return json.dumps([dict(r) for r in rows], default=str)
     except Exception as e:  # noqa: BLE001 — surface error to the model, do not crash the run
         return json.dumps({"error": str(e)})
+
+
+async def _rag_fetch(query: str, limit: int) -> list[dict]:
+    """HTTP call to the RAG search API. Isolated for mocking in tests."""
+    import aiohttp
+
+    base = os.environ.get("RAG_API_URL", "http://host.docker.internal:3000").rstrip("/")
+    token = os.environ.get("RAG_API_TOKEN", "")
+    params = urlencode({"q": query, "limit": str(limit)})
+    url = f"{base}/api/rag/search?{params}"
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url, headers={"x-rag-api-token": token}) as resp:
+            data = await resp.json()
+    return data.get("results", []) if isinstance(data, dict) else []
+
+
+async def search_rag(query: str, limit: int = 5) -> str:
+    """Search CitizenWeb3 podcast transcripts. Returns quote + speaker + episode.
+
+    Use to back a claim with a real attributed podcast quote. Do NOT invent quotes.
+    """
+    try:
+        results = await _rag_fetch(query, limit)
+    except Exception as e:  # noqa: BLE001 — surface error to the model
+        return json.dumps({"error": str(e)})
+    if not results:
+        return "no podcast quotes found"
+    lines: list[str] = []
+    for r in results:
+        lines.append(f'- "{r.get("quote", "")}"')
+        lines.append(f'  Speaker: {r.get("speakerName", "?")}, Episode: {r.get("episodeTitle", "")}')
+        lines.append(f'  URL: {r.get("episodeUrl", "")}')
+    return "\n".join(lines)
