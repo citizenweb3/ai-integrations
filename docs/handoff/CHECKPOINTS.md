@@ -26,6 +26,15 @@ As of 2026-05-21, the production-readiness wave is locally complete:
 - Total: 28/28 tickets done, all acceptance checkpoints ticked.
 - No remote PRs were pushed; all work was merged locally into `main`.
 
+## Post-ticket ops checkpoints
+
+These rows track production-readiness work that happened after the original 28-ticket batch. Keep them short and link them to local commits when possible.
+
+| Checkpoint | State | Owner | Commit / PR | Notes |
+|------------|-------|-------|-------------|-------|
+| OPS-001 Minimal domain ingress auth | verified | codex | `9f4f506`, `2adf0e3` | Dashboard Basic auth protects operator/API/health/metrics routes when `DASHBOARD_BASIC_AUTH_USERNAME/PASSWORD` are set; `/webhooks/*` remains exempt for provider signatures/secrets. Agent `POST /runs/{stage}` requires `Authorization: Bearer <AGENT_RUN_SECRET>` when configured, and worker sends the token. Verified with focused tests, `yarn verify`, `DATABASE_URL=... yarn verify:db` (97/97), container FastAPI auth smoke, and local domain-mode smoke on 2026-05-26. |
+| OPS-002 Clean DB worker runtime smoke | verified | codex | local smoke | Reset local `bizdev` DB, applied migrations through `0031_step9_polish.sql`, created one `refresh_research_snapshot` command/job for `Smoke Research 381f9a02`, and ran compose `agent` + `worker` with matching `AGENT_RUN_SECRET`. Worker processed `job.refresh_research_snapshot` and the quality-gate `job.research_more`; both succeeded. Agent runs succeeded for `research_snapshot`, `research_quality_gate`, and `research_more`; DB recorded 2 snapshots, 6 facts, and 8 evidence rows. Dashboard `/health` with Basic auth returned `200` (`workers.healthy=1`, `running=0`, `deadLettered=0`); without Basic auth returned `401`. Smoke worker was stopped and agent restored to local-dev mode without `AGENT_RUN_SECRET`. |
+
 ## How to update
 
 - Change `state` first.
