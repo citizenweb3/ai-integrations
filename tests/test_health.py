@@ -59,3 +59,11 @@ def test_classify_config():
 
 def test_classify_unknown():
     assert classify_error(ValueError("x")) == "unknown"
+
+
+def test_classify_credential_errors_as_auth():
+    # ADC / token-refresh failures are raised before any HTTP response, so they
+    # carry no .code/.status — they must still be treated as auth (permanent lock).
+    from google.auth import exceptions as gauth
+    assert classify_error(gauth.DefaultCredentialsError("no ADC")) == "auth"
+    assert classify_error(gauth.RefreshError("token expired")) == "auth"

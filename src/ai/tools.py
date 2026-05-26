@@ -10,29 +10,48 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 from urllib.parse import urlencode
 
+log = logging.getLogger(__name__)
+
 _SELECT_RE = re.compile(r"^\s*(?:with\b.+?\bselect\b|select)\b", re.IGNORECASE | re.DOTALL)
-_FORBIDDEN = (
-    "insert", "update", "delete", "drop", "alter", "create",
-    "truncate", "grant", "revoke", "copy", "--", "/*",
+
+# Word-boundary matched so legit identifiers (copy_of_validators, update_log,
+# created_at) are NOT rejected. Covers DML/DDL, `SELECT ... INTO` table creation,
+# and side-effecting / DoS / filesystem functions.
+_FORBIDDEN_RE = re.compile(
+    r"\b("
+    r"insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|into|"
+    r"setval|nextval|pg_sleep|pg_read_file|pg_read_binary_file|pg_ls_dir|"
+    r"pg_stat_file|lo_export|lo_import|dblink|pg_terminate_backend|pg_reload_conf"
+    r")\b",
+    re.IGNORECASE,
 )
 
 
 def is_safe_select(sql: str) -> bool:
-    """True only for a single read-only SELECT (incl. leading CTE). Defence in
-    depth on top of a read-only DB role: no writes, no multi-statement, no comments."""
+    """True only for a single read-only SELECT (incl. leading CTE).
+
+    NOTE: this is defence-in-depth, NOT the security boundary. The real boundary
+    is the read-only Postgres role in `DATABASE_URL` (no write/DDL/EXECUTE grants).
+    This check additionally blocks multi-statement, comments, write/DDL keywords,
+    `SELECT ... INTO`, and known side-effecting / filesystem / DoS functions.
+    """
     if not sql or not sql.strip():
         return False
     stripped = sql.strip().rstrip(";")
     if ";" in stripped:  # reject multi-statement
         return False
+    if "--" in stripped or "/*" in stripped:  # reject comments
+        return False
     if not _SELECT_RE.match(stripped):
         return False
-    low = stripped.lower()
-    return not any(tok in low for tok in _FORBIDDEN)
+    if _FORBIDDEN_RE.search(stripped):
+        return False
+    return True
 
 
 async def query_validatorinfo(sql: str) -> str:
@@ -57,6 +76,7 @@ async def query_validatorinfo(sql: str) -> str:
             await conn.close()
         return json.dumps([dict(r) for r in rows], default=str)
     except Exception as e:  # noqa: BLE001 — surface error to the model, do not crash the run
+        log.warning("tool_query_validatorinfo_failed: %s: %s", type(e).__name__, e)
         return json.dumps({"error": str(e)})
 
 
@@ -83,6 +103,7 @@ async def search_rag(query: str, limit: int = 5) -> str:
     try:
         results = await _rag_fetch(query, limit)
     except Exception as e:  # noqa: BLE001 — surface error to the model
+        log.warning("tool_search_rag_failed: %s: %s", type(e).__name__, e)
         return json.dumps({"error": str(e)})
     if not results:
         return "no podcast quotes found"

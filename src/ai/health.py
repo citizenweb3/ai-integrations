@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import asyncio
 from time import monotonic
+from typing import Literal
+
+from google.auth import exceptions as _gauth
+
+ErrorClass = Literal["auth", "transient", "config", "unknown"]
 
 _AUTH_STATUSES = {"PERMISSION_DENIED", "UNAUTHENTICATED"}
 _AUTH_CODES = {401, 403}
 
 
-def classify_error(exc: BaseException) -> str:
+def classify_error(exc: BaseException) -> ErrorClass:
     """Return one of: auth | transient | config | unknown.
 
     auth      -> permanent lock (IAM/creds; a human must fix)
@@ -24,6 +29,11 @@ def classify_error(exc: BaseException) -> str:
     """
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
         return "transient"
+
+    # ADC / token-refresh failures are raised before any HTTP response, so they
+    # carry no .code/.status. They are auth problems a human must fix.
+    if isinstance(exc, (_gauth.DefaultCredentialsError, _gauth.RefreshError, _gauth.GoogleAuthError)):
+        return "auth"
 
     code = getattr(exc, "code", None)
     status = (getattr(exc, "status", None) or "").upper()
