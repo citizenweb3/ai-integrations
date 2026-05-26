@@ -13,6 +13,7 @@ import {
   jobRuns,
   jobs,
   organizations,
+  researchContactCandidates,
   researchEvidence,
   researchFactEvidence,
   researchFacts,
@@ -216,7 +217,24 @@ test("research snapshot job routes citation primary URLs for redirect evidence",
       }
     ],
     questions: [],
-    contactCandidates: []
+    contactCandidates: [
+      {
+        fullName: "Redirect Contact",
+        email: null,
+        role: "VP Partnerships",
+        source: "search_result",
+        evidenceUrl: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQ-contact",
+        sourceRefs: [
+          {
+            url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQ-contact-ref",
+            title: "Redirect contact ref",
+            snippet: "Redirect Contact leads partnerships."
+          }
+        ],
+        confidence: "medium",
+        notes: "Smoke candidate with redirect-only source refs."
+      }
+    ]
   }, null, 2);
   const quoteStart = finalText.indexOf(quoteText);
   assert.notEqual(quoteStart, -1);
@@ -240,6 +258,8 @@ test("research snapshot job routes citation primary URLs for redirect evidence",
       return;
     }
     if (request.stage === "research_quality_gate") {
+      assert.ok(request.prompt.includes(primaryUrl));
+      assert.doesNotMatch(request.prompt, /vertexaisearch\.cloud\.google\.com/);
       yield {
         eventType: "final_response",
         payloadJson: {
@@ -282,6 +302,17 @@ test("research snapshot job routes citation primary URLs for redirect evidence",
       quoteText
     }
   ]);
+
+  const candidates = await db
+    .select({
+      evidenceUrl: researchContactCandidates.evidenceUrl,
+      sourceRefs: researchContactCandidates.sourceRefs
+    })
+    .from(researchContactCandidates)
+    .where(eq(researchContactCandidates.organizationId, organization.id));
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]!.evidenceUrl, null);
+  assert.deepEqual(candidates[0]!.sourceRefs, []);
 
   const snapshotArtifacts = await db
     .select({ payloadJson: agentRunArtifacts.payloadJson })
@@ -396,6 +427,9 @@ async function clearResearchQualityGateArtifacts(suffix: string) {
     : [];
   const evidenceIds = evidenceRows.map((row) => row.evidenceId);
 
+  if (orgIds.length > 0) {
+    await db.delete(researchContactCandidates).where(inArray(researchContactCandidates.organizationId, orgIds));
+  }
   if (agentRunIds.length > 0) {
     await db.delete(agentRunArtifacts).where(inArray(agentRunArtifacts.agentRunId, agentRunIds));
     await db.delete(agentRunEvents).where(inArray(agentRunEvents.agentRunId, agentRunIds));

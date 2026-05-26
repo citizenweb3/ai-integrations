@@ -9335,16 +9335,8 @@ function normalizeResearchContactSourceRefs(input: unknown, evidenceUrl: string 
     if (!value || typeof value !== "object") return;
     const raw = value as Record<string, unknown>;
     const urlRaw = typeof raw.url === "string" ? raw.url.trim() : "";
-    if (!urlRaw || isGroundingTrackerUrl(urlRaw)) return;
-    let parsed: URL;
-    try {
-      parsed = new URL(urlRaw);
-    } catch {
-      return;
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
-    parsed.hash = "";
-    const url = parsed.toString().slice(0, 1000);
+    const url = normalizePrimaryResearchUrl(urlRaw);
+    if (!url) return;
     if (seen.has(url)) return;
     seen.add(url);
     const ref: ResearchContactSourceRef = { url };
@@ -9360,6 +9352,20 @@ function normalizeResearchContactSourceRefs(input: unknown, evidenceUrl: string 
   }
   if (evidenceUrl) pushRef({ url: evidenceUrl, title: "Evidence" });
   return refs.slice(0, 8);
+}
+
+function normalizePrimaryResearchUrl(input: string | null | undefined): string | null {
+  const trimmed = input?.trim();
+  if (!trimmed || isGroundingTrackerUrl(trimmed)) return null;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    parsed.hash = "";
+    return parsed.toString().slice(0, 1000);
+  } catch {
+    return null;
+  }
 }
 
 function mergeResearchContactSourceRefs(
@@ -9391,7 +9397,7 @@ function normalizeContactCandidate(input: unknown): NormalizedContactCandidate |
   const role = typeof raw.role === "string" && raw.role.trim() ? raw.role.trim() : null;
   const source = typeof raw.source === "string" && raw.source.trim() ? raw.source.trim() : null;
   const evidenceUrlRaw = typeof raw.evidenceUrl === "string" ? raw.evidenceUrl.trim() : "";
-  const evidenceUrl = evidenceUrlRaw && /^https?:\/\//i.test(evidenceUrlRaw) ? evidenceUrlRaw : null;
+  const evidenceUrl = normalizePrimaryResearchUrl(evidenceUrlRaw);
   const sourceRefs = normalizeResearchContactSourceRefs(raw.sourceRefs, evidenceUrl);
   const notes = typeof raw.notes === "string" && raw.notes.trim() ? raw.notes.trim() : null;
 
@@ -9439,18 +9445,8 @@ function normalizeResearchCitations(input: unknown): ResearchAgentCitation[] {
     if (!value || typeof value !== "object") continue;
     const raw = value as Record<string, unknown>;
     const uriRaw = typeof raw.uri === "string" ? raw.uri.trim() : "";
-    if (!uriRaw || isGroundingTrackerUrl(uriRaw)) continue;
-
-    let parsed: URL;
-    try {
-      parsed = new URL(uriRaw);
-    } catch {
-      continue;
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
-    parsed.hash = "";
-
-    const uri = parsed.toString().slice(0, 1000);
+    const uri = normalizePrimaryResearchUrl(uriRaw);
+    if (!uri) continue;
     const startIndex = normalizeCitationIndex(raw.startIndex);
     const endIndex = normalizeCitationIndex(raw.endIndex);
     const key = `${uri}:${startIndex ?? ""}:${endIndex ?? ""}`;
@@ -9541,6 +9537,58 @@ function createResearchCitationUrlResolver(input: {
     usedCitationIndexes.add(bestIndex);
     return citations[bestIndex]!.uri;
   };
+}
+
+function buildCitationEnrichedResearchOutputText(input: {
+  finalText: string;
+  citations: unknown;
+}): string {
+  const parsed = tryParseResearchOutput(input.finalText);
+  if (!parsed) return input.finalText;
+
+  const resolveCitationUrl = createResearchCitationUrlResolver(input);
+  const facts = Array.isArray(parsed.facts)
+    ? parsed.facts.map((fact) => {
+        if (!fact || typeof fact !== "object") return fact;
+        const evidence = Array.isArray(fact.evidence)
+          ? fact.evidence.map((item) => {
+              if (!item || typeof item !== "object") return item;
+              const raw = item as ResearchAgentEvidence;
+              const sourceUrlRaw = typeof raw.sourceUrl === "string" ? raw.sourceUrl.trim() : "";
+              const citationUrl = resolveCitationUrl(item);
+              const sourceUrl = sourceUrlRaw && isGroundingTrackerUrl(sourceUrlRaw)
+                ? citationUrl ?? null
+                : sourceUrlRaw || citationUrl || null;
+              return { ...raw, sourceUrl };
+            })
+          : fact.evidence;
+        return { ...fact, evidence };
+      })
+    : parsed.facts;
+
+  const contactCandidates = Array.isArray(parsed.contactCandidates)
+    ? parsed.contactCandidates.map((candidate) => {
+        if (!candidate || typeof candidate !== "object") return candidate;
+        const raw = candidate as ResearchAgentContactCandidate;
+        const evidenceUrl = normalizePrimaryResearchUrl(raw.evidenceUrl);
+        const sourceRefs = Array.isArray(raw.sourceRefs)
+          ? raw.sourceRefs
+              .map((ref) => {
+                if (!ref || typeof ref !== "object") return null;
+                const refRaw = ref as Record<string, unknown>;
+                const url = normalizePrimaryResearchUrl(
+                  typeof refRaw.url === "string" ? refRaw.url : null
+                );
+                if (!url) return null;
+                return { ...refRaw, url };
+              })
+              .filter((ref): ref is { url: string } & Record<string, unknown> => ref !== null)
+          : raw.sourceRefs;
+        return { ...raw, evidenceUrl, sourceRefs };
+      })
+    : parsed.contactCandidates;
+
+  return JSON.stringify({ ...parsed, facts, contactCandidates }, null, 2);
 }
 
 function normalizeEvidence(input: unknown, citationSourceUrl?: string | null): ResearchAgentEvidence | null {
@@ -11200,7 +11248,10 @@ export async function completeRefreshResearchSnapshotJob(input: {
         organizationId: input.organizationId,
         sourceStage: "research_snapshot",
         sourceAgentRunId: agentRunId,
-        sourceFinalText: finalText,
+        sourceFinalText: buildCitationEnrichedResearchOutputText({
+          finalText,
+          citations: finalCitations
+        }),
         routerResult,
         retryCount: 0,
         dispatcher: input.dispatcher
@@ -13036,7 +13087,10 @@ export async function completeResearchMoreJob(input: {
         organizationId: input.organizationId,
         sourceStage: "research_more",
         sourceAgentRunId: agentRunId,
-        sourceFinalText: finalText,
+        sourceFinalText: buildCitationEnrichedResearchOutputText({
+          finalText,
+          citations: finalCitations
+        }),
         routerResult,
         retryCount,
         dispatcher: input.dispatcher
