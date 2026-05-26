@@ -98,9 +98,17 @@ class Responder:
         }
 
     def _gen_config(self, role: str, effort: str) -> types.GenerateContentConfig:
-        """Per-role generation config. Verification forces a tool call (Task 9)."""
-        cfg = types.GenerateContentConfig(thinking_config=thinking_config(effort))
-        return cfg
+        """Per-role generation config. Verification forces ≥1 tool call (mode=ANY)
+        as belt-and-suspenders for the pipeline's Phase-2 hard gate."""
+        tool_config = None
+        if role == "verification":
+            tool_config = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="ANY")
+            )
+        return types.GenerateContentConfig(
+            thinking_config=thinking_config(effort),
+            tool_config=tool_config,
+        )
 
     async def generate(
         self,

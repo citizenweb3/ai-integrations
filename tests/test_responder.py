@@ -62,6 +62,15 @@ def _patch_stream(resp, events):
     resp._stream_events = fake_stream
 
 
+def test_verification_agent_forces_tool_call():
+    resp = Responder(_CFG)
+    vcfg = resp._agents["verification"].generate_content_config
+    assert vcfg.tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.ANY
+    # reactive / reply must NOT force a tool call
+    assert resp._agents["reactive"].generate_content_config.tool_config is None
+    assert resp._agents["reply"].generate_content_config.tool_config is None
+
+
 async def test_generate_returns_parsed_and_tool_calls():
     resp = Responder(_CFG)
     _patch_stream(resp, _events_with_tool_and_final())
