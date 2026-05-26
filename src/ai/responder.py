@@ -32,6 +32,23 @@ _APP_NAME = "aida"
 _USER_ID = "aida"
 
 
+def alert_for_error(error: str | None) -> tuple[bool, str]:
+    """Map `responder.last_error` to (should_alert, level) for operator alerting.
+
+    auth*/config* are deploy/credential problems a human must fix -> CRITICAL.
+    `degraded_mode_entered` (the aggregate edge after repeated transient failures)
+    and the legacy `rate_limit` -> WARNING. Single transient blips do not alert on
+    their own; sustained failure surfaces via `degraded_mode_entered`.
+    """
+    if not error:
+        return False, ""
+    if error.startswith(("auth", "config")):
+        return True, "CRITICAL"
+    if error in ("degraded_mode_entered", "rate_limit"):
+        return True, "WARNING"
+    return False, ""
+
+
 def _extract_json(raw: str) -> dict | None:
     try:
         return json.loads(raw)
@@ -58,6 +75,7 @@ class Responder:
         self._semaphore = asyncio.Semaphore(gem["max_concurrent"])
         self.last_error: str | None = None
         self.last_error_detail: str | None = None
+        self.last_error_class: str | None = None
         self.health = LLMHealth(
             failure_threshold=3,
             pause_minutes=gem["degraded_pause_minutes"],
@@ -92,6 +110,7 @@ class Responder:
     ) -> tuple[dict | None, list[dict]]:
         self.last_error = None
         self.last_error_detail = None
+        self.last_error_class = None
 
         if self.health.auth_locked:
             self.last_error = "auth_locked"
@@ -118,6 +137,10 @@ class Responder:
                 return parsed, tool_calls
             if self.health.auth_locked:
                 self.last_error = "auth_error"
+                return None, tool_calls
+            if self.last_error_class == "config":
+                # deploy bug (bad model id / schema): retrying won't help and it
+                # must not be buried as a generic degrade. last_error stays "config:...".
                 return None, tool_calls
             if attempt == 0:
                 log.info("llm_retry, delay=5")
@@ -163,11 +186,13 @@ class Responder:
             try:
                 await asyncio.wait_for(_drain(), timeout=self._timeout)
             except asyncio.TimeoutError:
+                self.last_error_class = "transient"
                 self.last_error = f"timeout ({self._timeout}s)"
                 log.error("llm_timeout, timeout=%d", self._timeout)
                 return None, collect_tool_calls(events)
             except Exception as exc:  # noqa: BLE001 — classify, then route to health
                 cls = classify_error(exc)
+                self.last_error_class = cls
                 if cls == "auth":
                     if not self.health.auth_locked:
                         log.critical("llm_auth_error, err=%s", str(exc)[:300])

@@ -2,7 +2,23 @@ import pytest
 from google.genai import types
 
 from src.ai import responder as R
-from src.ai.responder import Responder
+from src.ai.responder import Responder, alert_for_error
+
+
+@pytest.mark.parametrize("error,expected", [
+    (None, (False, "")),
+    ("", (False, "")),
+    ("auth_error", (True, "CRITICAL")),
+    ("auth_locked", (True, "CRITICAL")),
+    ("config:ClientError", (True, "CRITICAL")),
+    ("degraded_mode_entered", (True, "WARNING")),
+    ("rate_limit", (True, "WARNING")),
+    ("consecutive_failure", (False, "")),
+    ("transient:ClientError", (False, "")),
+    ("timeout (120s)", (False, "")),
+])
+def test_alert_for_error(error, expected):
+    assert alert_for_error(error) == expected
 
 _CFG = {"gemini": {
     "model_reactive": "gemini-3.5-flash", "effort_reactive": "low",
@@ -92,3 +108,20 @@ async def test_generate_auth_error_locks_health():
     parsed, _ = await resp.generate("p")
     assert parsed is None
     assert resp.health.auth_locked is True
+
+
+async def test_generate_config_error_surfaces_and_does_not_degrade():
+    from google.genai import errors as gerrors
+    resp = Responder(_CFG)
+
+    async def boom(agent, prompt):
+        raise gerrors.ClientError(400, {"error": {"status": "INVALID_ARGUMENT", "code": 400}})
+        yield  # pragma: no cover
+
+    resp._stream_events = boom
+    parsed, _ = await resp.generate("p")
+    assert parsed is None
+    # config = deploy bug: surfaced distinctly (-> CRITICAL alert), not buried as
+    # consecutive_failure, and it must not count toward the degrade threshold.
+    assert resp.last_error.startswith("config")
+    assert resp.health.consecutive_failures == 0

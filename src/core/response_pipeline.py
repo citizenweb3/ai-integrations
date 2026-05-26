@@ -5,6 +5,8 @@ import re
 import uuid
 import logging
 
+from src.ai.responder import alert_for_error
+
 log = logging.getLogger(__name__)
 
 
@@ -236,10 +238,10 @@ async def generate_response(
             claude_prompt=prompt,
             error=error or "no_result",
         )
-        if error and error in ("auth_error", "auth_locked", "degraded_mode_entered", "rate_limit"):
-            level = "CRITICAL" if "auth" in error else "WARNING"
+        should_alert, level = alert_for_error(error)
+        if should_alert:
             detail = responder.last_error_detail or ""
-            await approval.alert(level, f"Claude: {error} {detail}".strip())
+            await approval.alert(level, f"Aida LLM: {error} {detail}".strip())
         return None
 
     action = result1.get("action")
@@ -295,14 +297,19 @@ async def generate_response(
     await _persist_tool_calls(db, audit_id, "verification", tool_calls2)
 
     if result2 is None:
+        err2 = responder.last_error
         log.info("[%s] Phase 2: verification call failed, skipping", group_name)
         await db.update_audit_log(
             audit_id, status="error",
             claude_prompt=prompt,
             claude_raw=json.dumps(result1),
             claude_parsed=json.dumps(result1),
-            error=responder.last_error or "verification_failed",
+            error=err2 or "verification_failed",
         )
+        should_alert, level = alert_for_error(err2)
+        if should_alert:
+            detail = responder.last_error_detail or ""
+            await approval.alert(level, f"Aida LLM (verify): {err2} {detail}".strip())
         return None
 
     # Rule 2: hard gate — Phase 2 must call at least one tool. Pipeline-
