@@ -9595,10 +9595,10 @@ function normalizeEvidence(input: unknown, citationSourceUrl?: string | null): R
   if (!input || typeof input !== "object") return null;
   const raw = input as Record<string, unknown>;
   const sourceUrlRawTrim = typeof raw.sourceUrl === "string" ? raw.sourceUrl.trim() : "";
-  const citationUrl = citationSourceUrl?.trim() ?? "";
+  const citationUrl = normalizePrimaryResearchUrl(citationSourceUrl);
   const sourceUrlRaw = sourceUrlRawTrim && isGroundingTrackerUrl(sourceUrlRawTrim)
     ? citationUrl
-    : sourceUrlRawTrim || citationUrl;
+    : normalizePrimaryResearchUrl(sourceUrlRawTrim) || citationUrl;
   const quoteTextRaw = typeof raw.quoteText === "string" ? raw.quoteText.trim() : "";
   const sourceTypeRaw = typeof raw.sourceType === "string" ? raw.sourceType.trim() : "";
   const supportTypeRaw = typeof raw.supportType === "string" ? raw.supportType.trim() : "";

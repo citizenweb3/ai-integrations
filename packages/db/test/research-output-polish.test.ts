@@ -284,6 +284,7 @@ test("research router resolves grounding redirect evidence from citations", asyn
   assert.ok(organization);
 
   const quoteText = "T026D CitationCo ships procurement automation controls for partner teams.";
+  const trackerOnlyQuoteText = "T026D CitationCo tracker-only quote should keep its quote but lose the URL.";
   const finalText = JSON.stringify({
     summary: "T026D CitationCo public research.",
     questions: [],
@@ -297,6 +298,12 @@ test("research router resolves grounding redirect evidence from citations", asyn
             sourceType: "search_result",
             quoteText,
             supportType: "supports"
+          },
+          {
+            sourceUrl: "https://www.google.com/url?q=https%3A%2F%2Fexample.com%2Ftracker-only",
+            sourceType: "search_result",
+            quoteText: trackerOnlyQuoteText,
+            supportType: "context"
           }
         ]
       }
@@ -323,7 +330,7 @@ test("research router resolves grounding redirect evidence from citations", asyn
   });
 
   assert.equal(result?.factCount, 1);
-  assert.equal(result?.evidenceCount, 1);
+  assert.equal(result?.evidenceCount, 2);
 
   const evidenceRows = await db
     .select({
@@ -336,13 +343,18 @@ test("research router resolves grounding redirect evidence from citations", asyn
     .innerJoin(researchEvidence, eq(researchEvidence.id, researchFactEvidence.researchEvidenceId))
     .where(eq(researchFacts.snapshotId, result!.snapshotId));
 
-  assert.deepEqual(evidenceRows, [
-    {
-      sourceUrl: primaryUrl,
-      sourceType: "search_result",
-      quoteText
-    }
-  ]);
+  const citationBackedEvidence = evidenceRows.find((row) => row.quoteText === quoteText);
+  assert.deepEqual(citationBackedEvidence, {
+    sourceUrl: primaryUrl,
+    sourceType: "search_result",
+    quoteText
+  });
+  const trackerOnlyEvidence = evidenceRows.find((row) => row.quoteText === trackerOnlyQuoteText);
+  assert.deepEqual(trackerOnlyEvidence, {
+    sourceUrl: null,
+    sourceType: "search_result",
+    quoteText: trackerOnlyQuoteText
+  });
 });
 
 async function createT026DAgentRun(suffix: string): Promise<string> {
