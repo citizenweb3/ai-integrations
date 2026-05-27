@@ -20201,6 +20201,49 @@ export type CampaignDiscoveryView = {
   }>;
 };
 
+export type CampaignReviewQueueRow = {
+  campaignId: string;
+  campaignName: string;
+  campaignStatus: string;
+  needsReview: number;
+  proposed: number;
+};
+
+// S2.4 / G2.4: cross-campaign pull surface. Lists campaigns that have discovery
+// candidates still awaiting operator triage (`needs_review` = ambiguous dedupe,
+// `proposed` = fresh agent output), so the operator does not have to visit each
+// campaign to discover pending work. Deliberately NOT per-candidate work_items
+// (those would flood the inbox); the operator drills into `/campaigns/[id]`.
+export async function getCampaignsNeedingReview(limit = 20): Promise<CampaignReviewQueueRow[]> {
+  const db = getDb();
+  const rows = await db.execute(sql`
+    select c.id            as campaign_id,
+           c.name          as campaign_name,
+           c.status        as campaign_status,
+           count(*) filter (where dc.status = 'needs_review')::int as needs_review,
+           count(*) filter (where dc.status = 'proposed')::int     as proposed
+    from discovery_candidates dc
+    join campaigns c on c.id = dc.campaign_id
+    where dc.status in ('needs_review', 'proposed')
+    group by c.id, c.name, c.status
+    order by needs_review desc, proposed desc, c.name asc
+    limit ${limit}
+  `) as unknown as Array<{
+    campaign_id: string;
+    campaign_name: string;
+    campaign_status: string;
+    needs_review: number;
+    proposed: number;
+  }>;
+  return rows.map((row) => ({
+    campaignId: row.campaign_id,
+    campaignName: row.campaign_name,
+    campaignStatus: row.campaign_status,
+    needsReview: Number(row.needs_review),
+    proposed: Number(row.proposed)
+  }));
+}
+
 export async function getCampaignDiscoveryView(
   campaignId: string
 ): Promise<CampaignDiscoveryView | null> {

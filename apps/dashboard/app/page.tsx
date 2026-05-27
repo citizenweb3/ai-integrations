@@ -1,4 +1,4 @@
-import { getDashboardSnapshot } from "@bizdev/db";
+import { getCampaignsNeedingReview, getDashboardSnapshot } from "@bizdev/db";
 import { buildWorkItemActionIdempotencyKey } from "@bizdev/shared";
 import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
@@ -17,6 +17,16 @@ async function loadSnapshot() {
   }
 }
 
+async function loadReviewQueue() {
+  try {
+    return await getCampaignsNeedingReview();
+  } catch {
+    // The DB-unavailable banner already surfaces the snapshot failure; the
+    // review tile just stays hidden rather than throwing the whole page.
+    return [];
+  }
+}
+
 function priorityBand(priority: number) {
   if (priority >= 90) return "P0";
   if (priority >= 70) return "P1";
@@ -26,6 +36,7 @@ function priorityBand(priority: number) {
 
 export default async function DashboardHome() {
   const snapshot = await loadSnapshot();
+  const reviewQueue = await loadReviewQueue();
   const campaigns = snapshot.data?.campaigns ?? [];
   const commands = snapshot.data?.commands ?? [];
   const jobs = snapshot.data?.jobs ?? [];
@@ -71,6 +82,36 @@ export default async function DashboardHome() {
           <MetricCard label="Suppressions" value={suppressions.length} />
           <MetricCard label="Work items" value={workItems.length} accent={workItems.length > 0} />
         </div>
+
+        {reviewQueue.length > 0 ? (
+          <Card className="border border-[hsl(var(--primary))]/30">
+            <BlockTitle title="Campaigns needing review" className="mb-4 text-left" />
+            <ul className="space-y-2">
+              {reviewQueue.map((c) => (
+                <li key={c.campaignId}>
+                  <Link
+                    href={`/campaigns/${c.campaignId}`}
+                    className="flex items-center justify-between gap-3 rounded-lg bg-[#1A1A1B] border border-white/10 px-3 py-2 hover:border-[hsl(var(--primary))]/40"
+                  >
+                    <span className="text-sm font-medium truncate">{c.campaignName}</span>
+                    <span className="flex items-center gap-2 text-xs whitespace-nowrap">
+                      {c.needsReview > 0 ? (
+                        <span className="px-2 py-0.5 rounded-full border border-[var(--accent)]/40 text-[var(--accent)]">
+                          {c.needsReview} needs review
+                        </span>
+                      ) : null}
+                      {c.proposed > 0 ? (
+                        <span className="px-2 py-0.5 rounded-full border border-white/15 opacity-80">
+                          {c.proposed} proposed
+                        </span>
+                      ) : null}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ) : null}
 
         <Card>
           <BlockTitle title="Create campaign command" className="mb-4 text-left" />

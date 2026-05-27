@@ -9,6 +9,7 @@ import {
   commands,
   discoveryCandidates,
   eventLog,
+  getCampaignsNeedingReview,
   getDb,
   jobs,
   rejectDiscoveryCandidateCommand,
@@ -363,6 +364,75 @@ test("accept with skipEnrichment links the org without queueing research", async
     .limit(1);
   assert.equal(event?.payloadJson["skippedEnrichment"], true);
   assert.equal(event?.payloadJson["enrichmentJobId"], null);
+});
+
+test("getCampaignsNeedingReview counts only campaigns with pending discovery triage", async (t) => {
+  const db = getDb();
+  await clearT026BArtifacts();
+  t.after(clearT026BArtifacts);
+
+  const suffix = randomUUID();
+  const [withReview] = await db
+    .insert(campaigns)
+    .values({
+      name: `t026b-review-${suffix}`,
+      status: "active",
+      objective: "Campaign with pending discovery triage.",
+      targetSegments: ["T026B"]
+    })
+    .returning({ id: campaigns.id });
+  assert.ok(withReview);
+  const [noReview] = await db
+    .insert(campaigns)
+    .values({
+      name: `t026b-noreview-${suffix}`,
+      status: "active",
+      objective: "Campaign with only terminal candidates.",
+      targetSegments: ["T026B"]
+    })
+    .returning({ id: campaigns.id });
+  assert.ok(noReview);
+
+  await db.insert(discoveryCandidates).values([
+    {
+      campaignId: withReview.id,
+      proposedName: `t026b-review-a-${suffix}`,
+      domain: `t026b-review-a-${suffix}.example`,
+      sourceRefs: [{ url: "https://example.com/a" }],
+      status: "needs_review"
+    },
+    {
+      campaignId: withReview.id,
+      proposedName: `t026b-review-b-${suffix}`,
+      domain: `t026b-review-b-${suffix}.example`,
+      sourceRefs: [{ url: "https://example.com/b" }],
+      status: "needs_review"
+    },
+    {
+      campaignId: withReview.id,
+      proposedName: `t026b-review-c-${suffix}`,
+      domain: `t026b-review-c-${suffix}.example`,
+      sourceRefs: [{ url: "https://example.com/c" }],
+      status: "proposed"
+    },
+    {
+      campaignId: noReview.id,
+      proposedName: `t026b-noreview-a-${suffix}`,
+      domain: `t026b-noreview-a-${suffix}.example`,
+      sourceRefs: [{ url: "https://example.com/d" }],
+      status: "rejected_by_policy"
+    }
+  ]);
+
+  const queue = await getCampaignsNeedingReview();
+  const withReviewRow = queue.find((row) => row.campaignId === withReview.id);
+  assert.ok(withReviewRow, "campaign with pending triage should appear");
+  assert.equal(withReviewRow?.needsReview, 2);
+  assert.equal(withReviewRow?.proposed, 1);
+  assert.equal(withReviewRow?.campaignName, `t026b-review-${suffix}`);
+
+  const noReviewRow = queue.find((row) => row.campaignId === noReview.id);
+  assert.equal(noReviewRow, undefined, "campaign with only terminal candidates must be excluded");
 });
 
 async function clearT026BArtifacts(): Promise<void> {
