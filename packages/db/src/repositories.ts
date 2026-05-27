@@ -10419,10 +10419,10 @@ export async function routeResearchSnapshotOutcome(input: {
       }
     }
 
-    // G4.2 transition: the research snapshot still emits contactCandidates for
-    // now (removed in the final step), so keep routing them through the shared
-    // helper. The dedicated contact-discovery stage uses the same helper, and
-    // cross-run dedup merges any overlap between the two during the transition.
+    // G4.2: contact discovery is now a dedicated stage; the research snapshot
+    // stage no longer emits contactCandidates. This call is defensive — it
+    // routes any candidates that slip through (e.g. a prompt regression) rather
+    // than silently dropping them, and is a no-op on the normal empty array.
     const { inserted: candidateInserted, updated: candidateUpdated } =
       await routeContactCandidatesIntoOrg(tx, {
         organizationId: input.organizationId,

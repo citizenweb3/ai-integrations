@@ -47,25 +47,7 @@ Output strict JSON with fields:
         ]
       }
     ],
-    "questions": [string],
-    "contactCandidates": [
-      {
-        "fullName": string,
-        "email": string|null,
-        "role": string|null,
-        "source": string|null,
-        "evidenceUrl": string|null,
-        "sourceRefs": [
-          {
-            "url": string,
-            "title": string|null,
-            "snippet": string|null
-          }
-        ],
-        "confidence": "low"|"medium"|"high",
-        "notes": string|null
-      }
-    ]
+    "questions": [string]
   }
 
 Each `facts[*]` entry MUST include at least one `evidence[*]` item with a
@@ -80,31 +62,8 @@ If no source supports a claim, do NOT include it in `facts`; move it to
 `https://www.google.com/search?...`, `https://www.google.com/url?...`) —
 the worker drops them.
 
-`contactCandidates` rules (operator review queue — be conservative):
-  - Include people the org publicly identifies as a plausible outreach
-    target (founders, heads of partnerships/sales/BD, relevant product
-    leads). Skip generic press / careers / support inboxes.
-  - `email`: ONLY include if the address appears verbatim on a primary
-    source (company team page, press release, conference bio). NEVER
-    guess from `first.last@domain` or any name-pattern heuristic. Set to
-    null when no verbatim source exists; the operator will run their own
-    enrichment.
-  - `evidenceUrl`: the URL where you saw the person listed. Required
-    whenever the candidate is included.
-  - `sourceRefs`: one or more source objects for the person. Include the
-    same URL as `evidenceUrl` plus any corroborating public profile,
-    conference, press, or company page. Use primary URLs, never
-    google/vertex redirect URLs.
-  - `source`: short tag describing the page kind (e.g.
-    `website_team_page`, `linkedin_profile`, `press_release`,
-    `conference_bio`). Free-form, but stable across runs for the same
-    page kind.
-  - `confidence`: high = primary source confirms both name and role;
-    medium = third-party reproduces the claim; low = inferred from a
-    single weak source.
-  - Cap the array at 8 entries. Operator reviews each manually.
-  - Empty array is the correct answer when no public contact info
-    exists. Do not fabricate.
+Do NOT produce contact candidates — a separate `contact_candidate_discovery`
+stage finds people to reach out to. Focus only on company facts and questions.
 
 Do not fabricate. Confidence rubric:
   - high   = stated on the company's own site or a reputable primary source
@@ -292,33 +251,11 @@ Output strict JSON:
         ]
       }
     ],
-    "questions": [string],
-    "contactCandidates": [
-      {
-        "fullName": string,
-        "email": string|null,
-        "role": string|null,
-        "source": string|null,
-        "evidenceUrl": string|null,
-        "sourceRefs": [
-          {
-            "url": string,
-            "title": string|null,
-            "snippet": string|null
-          }
-        ],
-        "confidence": "low"|"medium"|"high",
-        "notes": string|null
-      }
-    ]
+    "questions": [string]
   }
 
-`contactCandidates` follows the same conservative rules as the base
-research stage: include `email` ONLY if it appears verbatim on a primary
-source (no name-pattern guessing); `evidenceUrl` required when the
-candidate is included; `sourceRefs` should carry the evidence URL plus
-any corroborating public source refs; cap at 8 entries; empty array is correct when no
-public contact info exists.
+Do NOT produce contact candidates — a separate `contact_candidate_discovery`
+stage handles those. Focus only on company facts and questions.
 
 Confidence rubric matches the base research stage (high = primary source,
 medium = third-party corroboration, low = inferred / single weak source).
