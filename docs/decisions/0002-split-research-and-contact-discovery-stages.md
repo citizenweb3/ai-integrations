@@ -56,5 +56,10 @@ the accepted price of focused prompts.
   advisory lock — the two routers cannot race.
 - The `skipEnrichment` accept path (T-026K) skips the research job entirely, so
   it also skips the contact chain — correct.
+- The chain fires only on initial enrichment, not on `research_more`
+  re-research during draft review (`chainContactDiscovery: false`, T-026P):
+  re-research refines facts for a draft, not contacts, so a second
+  contact-discovery run there would be wasted budget + mid-review candidate
+  churn.
 - Implemented across T-026M in three commits (Python stage add → worker/DB wire
   + chain → research-prompt cleanup) so each commit left a working system.

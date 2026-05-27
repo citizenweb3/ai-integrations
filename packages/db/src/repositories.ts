@@ -10287,6 +10287,11 @@ export async function routeResearchSnapshotOutcome(input: {
   citations?: unknown;
   correlationId: string;
   jobId?: string;
+  // G4.2: whether to chain contact discovery after the snapshot lands. Default
+  // true (initial enrichment). `research_more` re-research during draft review
+  // passes false — it refines facts for a draft, not contacts, and a second
+  // contact-discovery run there is wasted ADK budget + mid-review candidate churn.
+  chainContactDiscovery?: boolean;
 }): Promise<ResearchSnapshotRouterResult | null> {
   const parsed = tryParseResearchOutput(input.finalText);
   if (!parsed) {
@@ -10509,23 +10514,26 @@ export async function routeResearchSnapshotOutcome(input: {
     // (system-internal, like cron jobs); audited via agent_run + the
     // contact_discovery_completed event. concurrencyKey shares the per-org
     // research key so it serializes with snapshot/refresh runs for the org.
-    await tx.insert(jobs).values({
-      jobType: "job.discover_contacts",
-      status: "queued",
-      workerPool: "background",
-      targetEntityType: "organization",
-      targetEntityId: input.organizationId,
-      payloadJson: {
-        organizationId: input.organizationId,
-        prompt: buildDefaultContactDiscoveryPrompt({
-          organizationName: organization?.name ?? "the organization",
-          domain: organization?.domain ?? null
-        }),
-        sourceSnapshotId: snapshotRow.id
-      },
-      concurrencyKey: `research_snapshot:${input.organizationId}`,
-      correlationId: input.correlationId
-    });
+    // Skipped for research_more (chainContactDiscovery === false).
+    if (input.chainContactDiscovery !== false) {
+      await tx.insert(jobs).values({
+        jobType: "job.discover_contacts",
+        status: "queued",
+        workerPool: "background",
+        targetEntityType: "organization",
+        targetEntityId: input.organizationId,
+        payloadJson: {
+          organizationId: input.organizationId,
+          prompt: buildDefaultContactDiscoveryPrompt({
+            organizationName: organization?.name ?? "the organization",
+            domain: organization?.domain ?? null
+          }),
+          sourceSnapshotId: snapshotRow.id
+        },
+        concurrencyKey: `research_snapshot:${input.organizationId}`,
+        correlationId: input.correlationId
+      });
+    }
 
     return {
       snapshotId: snapshotRow.id,
@@ -13653,7 +13661,10 @@ export async function completeResearchMoreJob(input: {
       finalText,
       citations: finalCitations,
       jobId: input.job.id,
-      correlationId: input.job.correlation_id
+      correlationId: input.job.correlation_id,
+      // research_more refines facts for a draft under review — don't spawn a
+      // fresh contact-discovery run here (see routeResearchSnapshotOutcome).
+      chainContactDiscovery: false
     });
   }
 

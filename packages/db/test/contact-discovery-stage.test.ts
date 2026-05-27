@@ -120,6 +120,38 @@ test("contact-discovery router persists candidates into the review queue", async
   assert.equal(event?.payloadJson["contactCandidateInsertedCount"], 1);
 });
 
+test("research_more skips the contact-discovery chain", async (t) => {
+  const db = getDb();
+  await clearG42Artifacts();
+  t.after(clearG42Artifacts);
+
+  const suffix = randomUUID();
+  const [organization] = await db
+    .insert(organizations)
+    .values({ name: `g42-more-${suffix}`, domain: `g42-more-${suffix}.example` })
+    .returning({ id: organizations.id });
+  assert.ok(organization);
+
+  const agentRunId = await createG42AgentRun("research_more");
+  const result = await routeResearchSnapshotOutcome({
+    agentRunId,
+    organizationId: organization.id,
+    correlationId: randomUUID(),
+    finalText: JSON.stringify({ summary: "More.", facts: [], questions: [] }),
+    chainContactDiscovery: false
+  });
+  assert.ok(result);
+
+  const chained = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(
+      eq(jobs.jobType, "job.discover_contacts"),
+      eq(jobs.targetEntityId, organization.id)
+    ));
+  assert.equal(chained.length, 0, "research_more must not chain contact discovery");
+});
+
 async function clearG42Artifacts(): Promise<void> {
   const db = getDb();
   await db.execute(sql`
