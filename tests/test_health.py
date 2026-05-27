@@ -55,6 +55,8 @@ def test_classify_transient():
 
 def test_classify_config():
     assert classify_error(_client_error(400, "INVALID_ARGUMENT")) == "config"
+    # 404 model-not-found (wrong id/region) is a deploy mistake, not a transient blip
+    assert classify_error(_client_error(404, "NOT_FOUND")) == "config"
 
 
 def test_classify_unknown():

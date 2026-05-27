@@ -25,4 +25,14 @@ def test_build_agent_has_three_tools_incl_web_research():
 def test_build_agent_carries_model_and_instruction():
     agent = build_agent("reply", model="gemini-3.1-pro-preview", instruction="be Aida")
     assert agent.model == "gemini-3.1-pro-preview"
-    assert "be Aida" in agent.instruction
+    # instruction is wrapped as an InstructionProvider (callable) so ADK does not
+    # treat literal {...} in CLAUDE.md as a state template (KeyError otherwise).
+    assert callable(agent.instruction)
+    assert "be Aida" in agent.instruction(None)
+
+
+def test_instruction_with_braces_is_not_templated():
+    # regression: CLAUDE.md has literal {processName}/{ "action": ... } — must survive
+    agent = build_agent("verification", model="gemini-3.5-flash",
+                        instruction='schema {"action":"skip"} and {processName}')
+    assert "{processName}" in agent.instruction(None)

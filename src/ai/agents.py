@@ -26,6 +26,15 @@ _WEB_RESEARCH_INSTRUCTION = (
 )
 
 
+def _static_instruction(text: str):
+    """Wrap a fixed instruction as an ADK InstructionProvider so ADK does NOT treat
+    it as a `{state}` template. Aida's CLAUDE.md contains literal `{...}` (JSON schema
+    examples) that would otherwise raise KeyError during session-state injection."""
+    def _provider(_ctx) -> str:
+        return text
+    return _provider
+
+
 def build_web_research_tool() -> AgentTool:
     sub = Agent(
         model=_WEB_RESEARCH_MODEL,
@@ -48,7 +57,7 @@ def build_agent(
     return Agent(
         model=model,
         name=f"aida_{role}",
-        instruction=instruction,
+        instruction=_static_instruction(instruction),
         tools=[query_validatorinfo, search_rag, build_web_research_tool()],
         generate_content_config=generate_content_config,
     )

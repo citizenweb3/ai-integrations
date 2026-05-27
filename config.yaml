@@ -197,7 +197,9 @@ gemini:
   router_retry_delay_seconds: 1
 
 vertex:
-  location: "us-central1"                       # also env GOOGLE_CLOUD_LOCATION
+  location: "global"                            # also env GOOGLE_CLOUD_LOCATION. NB: Gemini-3
+                                                # models (3.5-flash, 3.1-pro) serve from `global`,
+                                                # not regional (us-central1 returns 404 for them).
   # project + creds are env-only: GOOGLE_CLOUD_PROJECT, GOOGLE_APPLICATION_CREDENTIALS (secrets/vertex-sa.json)
 
 database:

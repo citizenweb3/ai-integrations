@@ -42,8 +42,8 @@ def classify_error(exc: BaseException) -> ErrorClass:
         return "auth"
     if code == 429 or status in {"RESOURCE_EXHAUSTED"}:
         return "transient"
-    if code == 400 or status in {"INVALID_ARGUMENT", "FAILED_PRECONDITION"}:
-        return "config"
+    if code in (400, 404) or status in {"INVALID_ARGUMENT", "FAILED_PRECONDITION", "NOT_FOUND"}:
+        return "config"  # bad model id / region / schema — a deploy mistake, surface it
     if isinstance(code, int) and code >= 500:
         return "transient"
     return "unknown"
