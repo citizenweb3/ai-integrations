@@ -4249,6 +4249,10 @@ export async function rejectContactCandidateCommand(input: {
 
     const idempotencyKey = payload.idempotencyKey
       ?? buildRejectContactCandidateIdempotencyKey(existing.id, existing.updatedAt);
+    // Mirror discovery reject: default to `other` so analytics never see a
+    // null code for an operator-driven rejection. `reasonText` stays free-text
+    // in the candidate `notes` suffix below.
+    const rejectionReasonCode = payload.reasonCode ?? "other";
 
     const insertedCommands = await tx
       .insert(commands)
@@ -4259,7 +4263,10 @@ export async function rejectContactCandidateCommand(input: {
         actorId: input.actorId,
         targetEntityType: "research_contact_candidate",
         targetEntityId: existing.id,
-        payloadJson: payload as unknown as Record<string, unknown>,
+        payloadJson: {
+          ...(payload as unknown as Record<string, unknown>),
+          reasonCode: rejectionReasonCode
+        },
         idempotencyKey,
         correlationId: randomUUID()
       })
@@ -4302,6 +4309,7 @@ export async function rejectContactCandidateCommand(input: {
       .set({
         status: "rejected",
         notes: nextNotes,
+        rejectionReasonCode,
         updatedAt: new Date()
       })
       .where(and(
@@ -4317,6 +4325,7 @@ export async function rejectContactCandidateCommand(input: {
       correlationId: command.correlationId,
       payloadJson: {
         candidateId: existing.id,
+        reasonCode: rejectionReasonCode,
         ...(existing.organizationId ? { organizationId: existing.organizationId } : {}),
         ...(payload.reasonText ? { reasonText: payload.reasonText } : {})
       }

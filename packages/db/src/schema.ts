@@ -661,6 +661,10 @@ export const researchContactCandidates = pgTable("research_contact_candidates", 
   // candidate's audit trail survives the conversion.
   convertedContactId: uuid("converted_contact_id").references(() => contacts.id),
   notes: text("notes"),
+  // Structured operator-reject taxonomy (see `contactRejectionReasonCodes`).
+  // Free-text reject notes still land in `notes`; this column powers analytics.
+  // CHECK constraint enforced in migration 0032.
+  rejectionReasonCode: text("rejection_reason_code"),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: createdAt(),
   updatedAt: updatedAt()
@@ -673,7 +677,10 @@ export const researchContactCandidates = pgTable("research_contact_candidates", 
   orgNameActiveIdx: index("research_contact_candidates_org_name_active_idx")
     .on(table.organizationId, sql`lower(${table.fullName})`)
     .where(sql`${table.email} is null and ${table.status} in ('pending','approved')`),
-  lastSeenIdx: index("research_contact_candidates_last_seen_idx").on(table.lastSeenAt)
+  lastSeenIdx: index("research_contact_candidates_last_seen_idx").on(table.lastSeenAt),
+  rejectionReasonCodeIdx: index("research_contact_candidates_rejection_reason_code_idx")
+    .on(table.rejectionReasonCode)
+    .where(sql`${table.rejectionReasonCode} is not null`)
 }));
 
 // Prospect discovery (Tickets 3.1/3.2, canonical §67). One row per

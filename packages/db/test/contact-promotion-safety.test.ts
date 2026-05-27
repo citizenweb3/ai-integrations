@@ -12,6 +12,7 @@ import {
   getDb,
   getOrganizationDetail,
   organizations,
+  rejectContactCandidateCommand,
   researchContactCandidates,
   setPrimaryContactCommand,
   suppressionEntries
@@ -465,6 +466,106 @@ test("generateDraftCommand requires an organization contact and resolves primary
   assert.equal(mismatch.ok, false);
   if (mismatch.ok) assert.fail("cross-org contact should fail");
   assert.equal(mismatch.failure.code, "contact_not_for_organization");
+});
+
+test("rejectContactCandidateCommand persists a structured reason code", async (t) => {
+  const db = getDb();
+  await clearT026Artifacts();
+  t.after(clearT026Artifacts);
+
+  const suffix = randomUUID();
+  const [organization] = await db
+    .insert(organizations)
+    .values({ name: `t026-reject-org-${suffix}`, domain: `t026-reject-${suffix}.example` })
+    .returning({ id: organizations.id });
+  assert.ok(organization);
+
+  const [candidate] = await db
+    .insert(researchContactCandidates)
+    .values({
+      organizationId: organization.id,
+      email: `t026-reject-${suffix}@example.com`,
+      fullName: "T026 Reject",
+      notes: "Surfaced from the team page.",
+      status: "pending"
+    })
+    .returning({ id: researchContactCandidates.id });
+  assert.ok(candidate);
+
+  const result = await rejectContactCandidateCommand({
+    payload: {
+      candidateId: candidate.id,
+      reasonCode: "left_company",
+      reasonText: "Profile says they moved on last quarter."
+    }
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) assert.fail(result.failure.message);
+
+  const [updated] = await db
+    .select({
+      status: researchContactCandidates.status,
+      notes: researchContactCandidates.notes,
+      rejectionReasonCode: researchContactCandidates.rejectionReasonCode
+    })
+    .from(researchContactCandidates)
+    .where(eq(researchContactCandidates.id, candidate.id))
+    .limit(1);
+  assert.equal(updated?.status, "rejected");
+  assert.equal(updated?.rejectionReasonCode, "left_company");
+  // Free-text reason still appends to notes, structured code lives in its column.
+  assert.match(updated?.notes ?? "", /\[rejected\] Profile says they moved on last quarter\./);
+
+  const [command] = await db
+    .select({ payloadJson: commands.payloadJson })
+    .from(commands)
+    .where(eq(commands.id, result.command.id))
+    .limit(1);
+  assert.equal(command?.payloadJson["reasonCode"], "left_company");
+
+  const [event] = await db
+    .select({ payloadJson: eventLog.payloadJson })
+    .from(eventLog)
+    .where(eq(eventLog.commandId, result.command.id))
+    .limit(1);
+  assert.equal(event?.payloadJson["reasonCode"], "left_company");
+});
+
+test("rejectContactCandidateCommand defaults the reason code to other", async (t) => {
+  const db = getDb();
+  await clearT026Artifacts();
+  t.after(clearT026Artifacts);
+
+  const suffix = randomUUID();
+  const [organization] = await db
+    .insert(organizations)
+    .values({ name: `t026-reject-default-org-${suffix}`, domain: `t026-reject-default-${suffix}.example` })
+    .returning({ id: organizations.id });
+  assert.ok(organization);
+
+  const [candidate] = await db
+    .insert(researchContactCandidates)
+    .values({
+      organizationId: organization.id,
+      email: `t026-reject-default-${suffix}@example.com`,
+      fullName: "T026 Reject Default",
+      status: "pending"
+    })
+    .returning({ id: researchContactCandidates.id });
+  assert.ok(candidate);
+
+  const result = await rejectContactCandidateCommand({
+    payload: { candidateId: candidate.id }
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) assert.fail(result.failure.message);
+
+  const [updated] = await db
+    .select({ rejectionReasonCode: researchContactCandidates.rejectionReasonCode })
+    .from(researchContactCandidates)
+    .where(eq(researchContactCandidates.id, candidate.id))
+    .limit(1);
+  assert.equal(updated?.rejectionReasonCode, "other");
 });
 
 async function clearT026Artifacts(): Promise<void> {

@@ -107,6 +107,20 @@ export const contactCandidateStatuses = [
 ] as const;
 export type ContactCandidateStatus = (typeof contactCandidateStatuses)[number];
 
+// Structured reject analytics for contact candidates, mirroring
+// `discoveryRejectionReasonCodes`. `reasonText` stays free-text in the
+// candidate `notes` suffix; `reasonCode` is the queryable taxonomy.
+// CHECK constraint in migration 0032. Adding a code is a schema change.
+export const contactRejectionReasonCodes = [
+  "wrong_person",
+  "left_company",
+  "private_pii",
+  "duplicate_of",
+  "low_confidence",
+  "other"
+] as const;
+export type ContactRejectionReasonCode = (typeof contactRejectionReasonCodes)[number];
+
 // Canonical §67 prospect-discovery candidate lifecycle. The
 // `campaign_discovery` ADK stage produces proposals; worker validates +
 // dedupes + policy-gates; operator accepts/rejects. CHECK constraint in
@@ -750,6 +764,7 @@ export const approveContactCandidatePayloadSchema = z.object({
 
 export const rejectContactCandidatePayloadSchema = z.object({
   candidateId: z.string().uuid(),
+  reasonCode: z.enum(contactRejectionReasonCodes).optional(),
   reasonText: z.string().trim().max(2000).optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });

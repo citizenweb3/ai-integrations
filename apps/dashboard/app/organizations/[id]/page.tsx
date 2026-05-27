@@ -1,7 +1,9 @@
 import { getOrganizationDetail } from "@bizdev/db";
 import {
   buildApproveContactCandidateIdempotencyKey,
-  buildSetPrimaryContactIdempotencyKey
+  buildSetPrimaryContactIdempotencyKey,
+  contactRejectionReasonCodes,
+  type ContactRejectionReasonCode
 } from "@bizdev/shared";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -10,6 +12,15 @@ import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 
 export const dynamic = "force-dynamic";
+
+const CONTACT_REJECTION_REASON_LABELS: Record<ContactRejectionReasonCode, string> = {
+  wrong_person: "Wrong person",
+  left_company: "Left company",
+  private_pii: "Private / PII",
+  duplicate_of: "Duplicate",
+  low_confidence: "Low confidence",
+  other: "Other"
+};
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -303,9 +314,20 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
                     <form className="space-y-2" action="/api/commands" method="post">
                       <input type="hidden" name="commandType" value="reject_contact_candidate" />
                       <input type="hidden" name="candidateId" value={c.id} />
+                      <select
+                        name="reasonCode"
+                        defaultValue="other"
+                        className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
+                      >
+                        {contactRejectionReasonCodes.map((code) => (
+                          <option key={code} value={code}>
+                            {CONTACT_REJECTION_REASON_LABELS[code]}
+                          </option>
+                        ))}
+                      </select>
                       <textarea
                         name="reasonText"
-                        placeholder="rejection reason (optional)"
+                        placeholder="rejection notes (optional)"
                         rows={2}
                         className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
                       />
