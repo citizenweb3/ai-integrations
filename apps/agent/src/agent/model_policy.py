@@ -16,6 +16,10 @@ _STAGE_MODEL_ENV_KEYS: dict[str, tuple[str, ...]] = {
     "research_snapshot": ("AGENT_RESEARCH_SNAPSHOT_MODEL", "AGENT_RESEARCH_MODEL"),
     "research_more": ("AGENT_RESEARCH_MORE_MODEL", "AGENT_RESEARCH_MODEL"),
     "research_quality_gate": ("AGENT_RESEARCH_QUALITY_GATE_MODEL",),
+    "contact_candidate_discovery": (
+        "AGENT_CONTACT_CANDIDATE_DISCOVERY_MODEL",
+        "AGENT_RESEARCH_MODEL",
+    ),
     "draft_email": ("AGENT_DRAFT_EMAIL_MODEL", "AGENT_DRAFT_MODEL"),
     "draft_warm_email": ("AGENT_DRAFT_WARM_EMAIL_MODEL", "AGENT_DRAFT_WARM_MODEL"),
     "revise_email": ("AGENT_REVISE_EMAIL_MODEL", "AGENT_REVISE_MODEL"),
