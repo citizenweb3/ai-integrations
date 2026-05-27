@@ -6,10 +6,13 @@ import {
   approveContactCandidateCommand,
   closeDb,
   contacts,
+  eventLog,
   generateDraftCommand,
   getDb,
+  getOrganizationDetail,
   organizations,
   researchContactCandidates,
+  setPrimaryContactCommand,
   suppressionEntries
 } from "../src";
 
@@ -132,6 +135,113 @@ test("approveContactCandidateCommand sets the organization primary contact on fi
     .where(eq(organizations.id, organization.id))
     .limit(1);
   assert.deepEqual(afterSecond, { primaryContactId: first.contactId });
+});
+
+test("setPrimaryContactCommand lets an operator change the organization primary contact", async (t) => {
+  const db = getDb();
+  await clearT026Artifacts();
+  t.after(clearT026Artifacts);
+
+  const suffix = randomUUID();
+  const [organization, otherOrganization] = await db
+    .insert(organizations)
+    .values([
+      { name: `t026-set-primary-org-${suffix}`, domain: `t026-set-primary-${suffix}.example` },
+      { name: `t026-set-primary-other-org-${suffix}`, domain: `t026-set-primary-other-${suffix}.example` }
+    ])
+    .returning({ id: organizations.id });
+  assert.ok(organization);
+  assert.ok(otherOrganization);
+
+  const [firstContact, secondContact, otherContact] = await db
+    .insert(contacts)
+    .values([
+      {
+        organizationId: organization.id,
+        email: `t026-set-primary-first-${suffix}@example.com`,
+        fullName: "T026 Set Primary First"
+      },
+      {
+        organizationId: organization.id,
+        email: `t026-set-primary-second-${suffix}@example.com`,
+        fullName: "T026 Set Primary Second"
+      },
+      {
+        organizationId: otherOrganization.id,
+        email: `t026-set-primary-other-${suffix}@example.com`,
+        fullName: "T026 Set Primary Other"
+      }
+    ])
+    .returning({ id: contacts.id });
+  assert.ok(firstContact);
+  assert.ok(secondContact);
+  assert.ok(otherContact);
+
+  const first = await setPrimaryContactCommand({
+    payload: {
+      organizationId: organization.id,
+      contactId: firstContact.id,
+      reasonText: "T026 initial primary"
+    }
+  });
+  assert.equal(first.ok, true);
+  if (!first.ok) assert.fail(first.failure.message);
+  assert.equal(first.changed, true);
+  assert.equal(first.previousContactId, null);
+  assert.match(first.idempotencyKey, /^set_primary_contact:/);
+
+  const replay = await setPrimaryContactCommand({
+    payload: {
+      organizationId: organization.id,
+      contactId: firstContact.id,
+      idempotencyKey: first.idempotencyKey
+    }
+  });
+  assert.equal(replay.ok, true);
+  if (!replay.ok) assert.fail(replay.failure.message);
+  assert.equal(replay.deduplicated, true);
+  assert.equal(replay.command.id, first.command.id);
+
+  const second = await setPrimaryContactCommand({
+    payload: {
+      organizationId: organization.id,
+      contactId: secondContact.id,
+      reasonText: "T026 better fit"
+    }
+  });
+  assert.equal(second.ok, true);
+  if (!second.ok) assert.fail(second.failure.message);
+  assert.equal(second.changed, true);
+  assert.equal(second.previousContactId, firstContact.id);
+
+  const [afterSecond] = await db
+    .select({ primaryContactId: organizations.primaryContactId })
+    .from(organizations)
+    .where(eq(organizations.id, organization.id))
+    .limit(1);
+  assert.deepEqual(afterSecond, { primaryContactId: secondContact.id });
+
+  const mismatch = await setPrimaryContactCommand({
+    payload: {
+      organizationId: organization.id,
+      contactId: otherContact.id
+    }
+  });
+  assert.equal(mismatch.ok, false);
+  if (mismatch.ok) assert.fail("cross-org contact should fail");
+  assert.equal(mismatch.failure.code, "contact_not_for_organization");
+
+  const detail = await getOrganizationDetail(organization.id);
+  assert.ok(detail);
+  assert.equal(detail.primaryContactId, secondContact.id);
+  assert.equal(detail.contacts.find((contact) => contact.id === secondContact.id)?.isPrimary, true);
+  assert.equal(detail.contacts.find((contact) => contact.id === firstContact.id)?.isPrimary, false);
+
+  const primaryEvents = await db
+    .select({ payloadJson: eventLog.payloadJson })
+    .from(eventLog)
+    .where(eq(eventLog.eventType, "organization_primary_contact_set"));
+  assert.equal(primaryEvents.filter((row) => row.payloadJson["organizationId"] === organization.id).length, 2);
 });
 
 test("generateDraftCommand requires an organization contact and resolves primary contact", async (t) => {

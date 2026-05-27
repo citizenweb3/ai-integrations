@@ -22,6 +22,7 @@ import {
   buildResumeAllSendsIdempotencyKey,
   buildResolvePolicyStateIdempotencyKey,
   buildRunCampaignDiscoveryIdempotencyKey,
+  buildSetPrimaryContactIdempotencyKey,
   buildSuppressContactIdempotencyKey,
   buildUpdateCampaignScopeIdempotencyKey,
   buildWorkItemActionIdempotencyKey,
@@ -52,6 +53,7 @@ import {
   type RequestManualEditSavePayload,
   type RequestResearchMorePayload,
   type ResolvePolicyStatePayload,
+  type SetPrimaryContactPayload,
   type StartCampaignPayload,
   type SuppressContactPayload,
   type UpdateCampaignScopePayload,
@@ -3677,6 +3679,188 @@ export type ApproveContactCandidateResult =
         message: string;
       };
     };
+
+export type SetPrimaryContactResult =
+  | {
+      ok: true;
+      command: typeof commands.$inferSelect;
+      organizationId: string;
+      contactId: string;
+      previousContactId: string | null;
+      changed: boolean;
+      idempotencyKey: string;
+      deduplicated: boolean;
+    }
+  | {
+      ok: false;
+      failure: {
+        code: "organization_not_found" | "contact_not_found" | "contact_not_for_organization";
+        message: string;
+      };
+    };
+
+export async function setPrimaryContactCommand(input: {
+  payload: SetPrimaryContactPayload;
+  actorId?: string;
+}): Promise<SetPrimaryContactResult> {
+  const { payload } = input;
+  const db = getDb();
+
+  return db.transaction(async (tx) => {
+    const [organization] = await tx
+      .select({
+        id: organizations.id,
+        primaryContactId: organizations.primaryContactId,
+        updatedAt: organizations.updatedAt
+      })
+      .from(organizations)
+      .where(eq(organizations.id, payload.organizationId))
+      .limit(1);
+
+    if (!organization) {
+      return {
+        ok: false as const,
+        failure: {
+          code: "organization_not_found",
+          message: `Organization ${payload.organizationId} not found`
+        }
+      };
+    }
+
+    const [contact] = await tx
+      .select({ id: contacts.id, organizationId: contacts.organizationId })
+      .from(contacts)
+      .where(eq(contacts.id, payload.contactId))
+      .limit(1);
+
+    if (!contact) {
+      return {
+        ok: false as const,
+        failure: {
+          code: "contact_not_found",
+          message: `Contact ${payload.contactId} not found`
+        }
+      };
+    }
+
+    if (contact.organizationId !== organization.id) {
+      return {
+        ok: false as const,
+        failure: {
+          code: "contact_not_for_organization",
+          message: `Contact ${contact.id} does not belong to organization ${organization.id}`
+        }
+      };
+    }
+
+    const idempotencyKey = payload.idempotencyKey
+      ?? buildSetPrimaryContactIdempotencyKey(organization.id, contact.id, organization.updatedAt);
+
+    const insertedCommands = await tx
+      .insert(commands)
+      .values({
+        source: "operator",
+        commandType: "set_primary_contact",
+        status: "completed",
+        actorId: input.actorId,
+        targetEntityType: "organization",
+        targetEntityId: organization.id,
+        payloadJson: payload as unknown as Record<string, unknown>,
+        idempotencyKey,
+        correlationId: randomUUID()
+      })
+      .onConflictDoNothing({ target: commands.idempotencyKey })
+      .returning();
+
+    if (insertedCommands.length === 0) {
+      const [existingCommand] = await tx
+        .select()
+        .from(commands)
+        .where(eq(commands.idempotencyKey, idempotencyKey))
+        .limit(1);
+      if (!existingCommand || existingCommand.commandType !== "set_primary_contact") {
+        throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
+      }
+      const replayPayload = existingCommand.payloadJson as Record<string, unknown>;
+      const replayOrganizationId = typeof replayPayload.organizationId === "string"
+        ? replayPayload.organizationId
+        : organization.id;
+      const replayContactId = typeof replayPayload.contactId === "string"
+        ? replayPayload.contactId
+        : payload.contactId;
+      if (replayOrganizationId !== organization.id || replayContactId !== contact.id) {
+        throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
+      }
+      const previousContactId = typeof replayPayload.previousContactId === "string"
+        ? replayPayload.previousContactId
+        : null;
+      return {
+        ok: true as const,
+        command: existingCommand,
+        organizationId: organization.id,
+        contactId: replayContactId,
+        previousContactId,
+        changed: replayPayload.changed === true,
+        idempotencyKey,
+        deduplicated: true
+      };
+    }
+
+    const command = expectOne(insertedCommands, "set_primary_contact command");
+    const previousContactId = organization.primaryContactId ?? null;
+    const changed = previousContactId !== contact.id;
+
+    if (changed) {
+      await tx
+        .update(organizations)
+        .set({
+          primaryContactId: contact.id,
+          updatedAt: new Date()
+        })
+        .where(eq(organizations.id, organization.id));
+    }
+
+    await tx
+      .update(commands)
+      .set({
+        payloadJson: {
+          ...(payload as unknown as Record<string, unknown>),
+          organizationId: organization.id,
+          contactId: contact.id,
+          previousContactId,
+          changed
+        },
+        updatedAt: new Date()
+      })
+      .where(eq(commands.id, command.id));
+
+    await tx.insert(eventLog).values({
+      eventType: "organization_primary_contact_set",
+      entityType: "organization",
+      entityId: organization.id,
+      commandId: command.id,
+      correlationId: command.correlationId,
+      payloadJson: {
+        organizationId: organization.id,
+        contactId: contact.id,
+        previousContactId,
+        changed,
+        ...(payload.reasonText ? { reasonText: payload.reasonText } : {})
+      }
+    });
+
+    return {
+      ok: true as const,
+      command,
+      organizationId: organization.id,
+      contactId: contact.id,
+      previousContactId,
+      changed,
+      idempotencyKey,
+      deduplicated: false
+    };
+  });
+}
 
 export async function approveContactCandidateCommand(input: {
   payload: ApproveContactCandidatePayload;
@@ -18819,6 +19003,7 @@ export type OrganizationDetail = {
   name: string;
   domain: string | null;
   countryCode: string | null;
+  primaryContactId: string | null;
   createdAt: Date;
   updatedAt: Date;
   stats: {
@@ -18855,6 +19040,7 @@ export type OrganizationDetail = {
     email: string;
     fullName: string | null;
     roleTitle: string | null;
+    isPrimary: boolean;
   }>;
   threads: Array<{
     id: string;
@@ -19043,6 +19229,7 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
     name: row.name,
     domain: row.domain ?? null,
     countryCode: row.countryCode ?? null,
+    primaryContactId: row.primaryContactId ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     stats: {
@@ -19058,7 +19245,8 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
       id: c.id,
       email: c.email,
       fullName: c.fullName ?? null,
-      roleTitle: c.roleTitle ?? null
+      roleTitle: c.roleTitle ?? null,
+      isPrimary: c.id === row.primaryContactId
     })),
     threads: threadRows.map((t) => ({
       id: t.id,

@@ -23,6 +23,7 @@ import {
   resumeAllSendsCommand,
   resolvePolicyStateCommand,
   runCampaignDiscoveryCommand,
+  setPrimaryContactCommand,
   suppressContactCommand,
   traceOperation,
   updateCampaignScopeCommand,
@@ -315,6 +316,32 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           candidateId: result.candidateId,
           contactId: result.contactId,
           contactCreated: result.contactCreated,
+          deduplicated: result.deduplicated
+        });
+      }
+      return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
+    }
+
+    case "set_primary_contact": {
+      const result = traceCommandResult(traceSpan, await setPrimaryContactCommand({
+        ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
+        payload: parsed.data.payload
+      }));
+      if (!result.ok) {
+        if (isJson) {
+          return NextResponse.json({ error: result.failure }, { status: 409 });
+        }
+        const redirect = safeRedirectUrl(request);
+        redirect.searchParams.set("error", `${result.failure.code}: ${result.failure.message}`);
+        return NextResponse.redirect(redirect, { status: 303 });
+      }
+      if (isJson) {
+        return NextResponse.json({
+          commandId: result.command.id,
+          organizationId: result.organizationId,
+          contactId: result.contactId,
+          previousContactId: result.previousContactId,
+          changed: result.changed,
           deduplicated: result.deduplicated
         });
       }
@@ -995,6 +1022,23 @@ function formDataToCommand(formData: FormData) {
       ...base,
       payload: {
         candidateId,
+        ...(reasonText ? { reasonText } : {}),
+        ...(idempotencyKey ? { idempotencyKey } : {})
+      }
+    };
+  }
+
+  if (commandType === "set_primary_contact") {
+    const organizationId = String(formData.get("organizationId") ?? "").trim();
+    const contactId = String(formData.get("contactId") ?? "").trim();
+    const reasonText = String(formData.get("reasonText") ?? "").trim();
+    const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
+    return {
+      commandType,
+      ...base,
+      payload: {
+        organizationId,
+        contactId,
         ...(reasonText ? { reasonText } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {})
       }

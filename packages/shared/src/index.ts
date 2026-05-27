@@ -62,6 +62,7 @@ export const operatorCommandTypes = [
   "generate_warm_draft",
   "record_draft_feedback",
   "recompute_quality_score",
+  "set_primary_contact",
   "approve_contact_candidate",
   "reject_contact_candidate",
   "run_campaign_discovery",
@@ -236,6 +237,7 @@ export const eventTypes = [
   "research_snapshot_refreshed",
   "research_snapshot_router_failed",
   "manual_org_research_completed",
+  "organization_primary_contact_set",
   "contact_candidate_approved",
   "contact_candidate_rejected",
   "reply_classified",
@@ -725,6 +727,13 @@ export const resolvePolicyStatePayloadSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 
+export const setPrimaryContactPayloadSchema = z.object({
+  organizationId: z.string().uuid(),
+  contactId: z.string().uuid(),
+  reasonText: z.string().trim().max(2000).optional(),
+  idempotencyKey: z.string().trim().min(1).max(200).optional()
+});
+
 export const approveContactCandidatePayloadSchema = z.object({
   candidateId: z.string().uuid(),
   // Operator can override the agent-emitted role/email/fullName before
@@ -907,6 +916,14 @@ export function buildResolvePolicyStateIdempotencyKey(
   stateVersion: Date
 ): string {
   return `resolve_policy_state:${policyStateId}:${stateVersion.toISOString()}:v1`;
+}
+
+export function buildSetPrimaryContactIdempotencyKey(
+  organizationId: string,
+  contactId: string,
+  stateVersion: Date
+): string {
+  return `set_primary_contact:${organizationId}:${contactId}:${stateVersion.toISOString()}:v1`;
 }
 
 export function buildPauseAllSendsIdempotencyKey(
@@ -1135,6 +1152,11 @@ export const createCommandRequestSchema = z.discriminatedUnion("commandType", [
     payload: recomputeQualityScorePayloadSchema
   }),
   z.object({
+    commandType: z.literal("set_primary_contact"),
+    actorId: z.string().uuid().optional(),
+    payload: setPrimaryContactPayloadSchema
+  }),
+  z.object({
     commandType: z.literal("approve_contact_candidate"),
     actorId: z.string().uuid().optional(),
     payload: approveContactCandidatePayloadSchema
@@ -1226,6 +1248,7 @@ export type RequestAiRevisePayload = z.infer<typeof requestAiRevisePayloadSchema
 export type RequestResearchMorePayload = z.infer<typeof requestResearchMorePayloadSchema>;
 export type RecordDraftFeedbackPayload = z.infer<typeof recordDraftFeedbackPayloadSchema>;
 export type RecomputeQualityScorePayload = z.infer<typeof recomputeQualityScorePayloadSchema>;
+export type SetPrimaryContactPayload = z.infer<typeof setPrimaryContactPayloadSchema>;
 export type ApproveContactCandidatePayload = z.infer<typeof approveContactCandidatePayloadSchema>;
 export type RejectContactCandidatePayload = z.infer<typeof rejectContactCandidatePayloadSchema>;
 export type RunCampaignDiscoveryPayload = z.infer<typeof runCampaignDiscoveryPayloadSchema>;

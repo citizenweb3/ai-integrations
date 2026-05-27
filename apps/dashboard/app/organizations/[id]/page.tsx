@@ -1,4 +1,5 @@
 import { getOrganizationDetail } from "@bizdev/db";
+import { buildSetPrimaryContactIdempotencyKey } from "@bizdev/shared";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
@@ -135,12 +136,39 @@ export default async function OrganizationDetailPage({ params }: Props) {
           ) : (
             <ul className="space-y-2">
               {org.contacts.map((c) => (
-                <li key={c.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                  <span className="font-medium">{c.email}</span>
-                  <span className="opacity-60">
-                    {c.fullName ?? "—"}
-                    {c.roleTitle ? ` · ${c.roleTitle}` : ""}
-                  </span>
+                <li key={c.id} className="flex flex-wrap justify-between items-start gap-4 border-b border-white/10 pb-2 last:border-b-0 text-sm">
+                  <div className="min-w-0">
+                    <div className="font-medium break-all">
+                      {c.email}
+                      {c.isPrimary ? (
+                        <span className="ml-2 rounded-full border border-[var(--accent)]/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-[var(--accent)]">
+                          primary
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="opacity-60">
+                      {c.fullName ?? "—"}
+                      {c.roleTitle ? ` · ${c.roleTitle}` : ""}
+                    </div>
+                  </div>
+                  {c.isPrimary ? null : (
+                    <form action="/api/commands" method="post" className="shrink-0">
+                      <input type="hidden" name="commandType" value="set_primary_contact" />
+                      <input type="hidden" name="organizationId" value={org.id} />
+                      <input type="hidden" name="contactId" value={c.id} />
+                      <input
+                        type="hidden"
+                        name="idempotencyKey"
+                        value={buildSetPrimaryContactIdempotencyKey(org.id, c.id, org.updatedAt)}
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                      >
+                        Set primary
+                      </button>
+                    </form>
+                  )}
                 </li>
               ))}
             </ul>
