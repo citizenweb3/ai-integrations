@@ -174,18 +174,31 @@ proactive:
   score_threshold: 0.5                   # min score for a thread to be sent to claude
   max_candidates_per_cycle: 10           # max threads to evaluate per proactive cycle
 
-claude:
-  model: "claude-sonnet-4-6"                    # reactive (keyword match)
-  effort: "medium"                              # reactive effort
-  model_reply: "claude-opus-4-6"                # reply/DM (conversation continuation)
-  effort_reply: "high"                          # reply effort
-  model_verification: "claude-sonnet-4-6"       # verification of low-confidence drafts
-  effort_verification: "high"                   # verification effort
-  model_health: "claude-haiku-4-5-20251001"    # health check ping (JSON echo, no tools)
-  effort_health: "low"                          # health check effort
-  timeout_seconds: 120                          # subprocess timeout
-  max_concurrent: 3                             # max parallel claude -p subprocesses
+gemini:
+  router_provider: "gemini"                     # gemini | ollama (manual transition fallback)
+  router_enabled: true
+  model_router:       "gemini-2.5-flash-lite"   # binary relevance prefilter (cheap, high-volume)
+  model_reactive:     "gemini-3.5-flash"        # keyword-match draft
+  model_reply:        "gemini-3.1-pro-preview"  # conversation continuation (quality-critical)
+  model_verification: "gemini-3.5-flash"        # grounded verification (+ tools, mode=ANY)
+  effort_reactive:     "low"
+  effort_reply:        "high"
+  effort_verification: "high"
+  timeout_seconds: 120                          # per-call ADK run timeout
+  max_concurrent: 3                             # max parallel responder runs
   degraded_pause_minutes: 15                    # pause after 3 consecutive failures
+  # router (genai) tuning
+  router_reactive_timeout_seconds: 30
+  router_proactive_timeout_seconds: 30
+  router_reactive_max_concurrent: 2
+  router_proactive_max_concurrent: 1
+  router_max_retries_reactive: 1
+  router_max_retries_proactive: 1
+  router_retry_delay_seconds: 1
+
+vertex:
+  location: "us-central1"                       # also env GOOGLE_CLOUD_LOCATION
+  # project + creds are env-only: GOOGLE_CLOUD_PROJECT, GOOGLE_APPLICATION_CREDENTIALS (secrets/vertex-sa.json)
 
 database:
   path: "data/agent.db"                  # sqlite database file path

@@ -67,6 +67,32 @@ def load_config() -> dict:
         or config["ollama"].get("token", "")
     )
 
+    # Vertex: project/location from env (preferred) or .env; location can also come
+    # from the yaml `vertex` block. Credentials are ADC via GOOGLE_APPLICATION_CREDENTIALS.
+    config.setdefault("vertex", {})
+    config["vertex"]["project"] = environ.get("GOOGLE_CLOUD_PROJECT") or dotenv.get("GOOGLE_CLOUD_PROJECT", "")
+    config["vertex"]["location"] = (
+        environ.get("GOOGLE_CLOUD_LOCATION")
+        or dotenv.get("GOOGLE_CLOUD_LOCATION")
+        or config["vertex"].get("location", "us-central1")
+    )
+
+    # The in-process tools (query_validatorinfo, search_rag), the genai client, and
+    # assert_vertex_env() all read os.environ directly. Mirror resolved values there so
+    # local `.env` runs behave like docker-compose (real env always wins via setdefault).
+    for _key in ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
+                 "GOOGLE_APPLICATION_CREDENTIALS", "OLLAMA_TOKEN"):
+        _val = dotenv.get(_key)
+        if _val:
+            environ.setdefault(_key, _val)
+    if config["validatorinfo"]["rag_api_url"]:
+        environ.setdefault("RAG_API_URL", config["validatorinfo"]["rag_api_url"])
+    if config["validatorinfo"]["rag_api_token"]:
+        environ.setdefault("RAG_API_TOKEN", config["validatorinfo"]["rag_api_token"])
+    if config["validatorinfo"]["database_url"]:
+        environ.setdefault("DATABASE_URL", config["validatorinfo"]["database_url"])
+    environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")
+
     config["telegram"]["session"] = environ.get("TELEGRAM_SESSION") or dotenv.get("TELEGRAM_SESSION", "")
 
     return config
