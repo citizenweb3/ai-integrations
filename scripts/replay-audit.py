@@ -44,6 +44,7 @@ async def main() -> None:
     print(f"{'audit_id':36}  {'old_act':8} {'old_cf':>6}  {'new_act':8} {'new_cf':>6}  match")
     print("-" * 84)
     agree = 0
+    errors = 0
     for r in rows:
         try:
             old = json.loads(r["claude_parsed"]) if r["claude_parsed"] else {}
@@ -54,6 +55,7 @@ async def main() -> None:
 
         parsed, _tool_calls = await responder.generate(r["claude_prompt"])
         if parsed is None:
+            errors += 1
             new_act, new_cf = f"ERR:{responder.last_error}", 0.0
         else:
             new_act = str(parsed.get("action", "?"))
@@ -64,7 +66,9 @@ async def main() -> None:
         print(f"{str(r['id']):36}  {old_act:8} {old_cf:>6.2f}  {new_act:8} {new_cf:>6.2f}  {'OK' if match else 'XX'}")
 
     print("-" * 84)
-    print(f"action agreement: {agree}/{len(rows)}")
+    print(f"action agreement: {agree}/{len(rows)}  (errors: {errors}/{len(rows)})")
+    if errors == len(rows):
+        print("ALL rows errored — likely a systemic auth/config failure, NOT model disagreement.")
     print("Note: tune the confidence threshold (>=0.9) if the new confidence "
           "distribution shifted vs Claude. Then run the cutover in mode: approval "
           "(human approves every draft pre-send) before any autonomous sending.")

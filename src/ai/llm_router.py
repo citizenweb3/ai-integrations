@@ -304,14 +304,17 @@ class LLMRouter:
             return "relevant candidate" if should_respond else "not relevant"
 
         reason = raw_reason.lower()
+        # Order matters (first match wins): clearly-relevant topics first, then the
+        # skip labels (promo/unrelated) BEFORE the weaker data/uncertain needles so a
+        # "uncertain price question" labels as promo, not data/uncertain.
         safe_labels = (
             (("staking", "validator", "delegat", "apr", "apy", "reward", "slashing", "governance", "нода", "валидатор", "стейк"), "staking question"),
             (("privacy", "bare metal", "self-host", "decentral", "censorship", "приват", "децентрал"), "privacy infrastructure"),
             (("resource", "link", "tool", "explorer", "community", "podcast", "ссыл", "ресурс"), "resource request"),
-            (("check", "find", "compare", "verify", "monitor", "data", "провер", "сравн"), "data lookup"),
-            (("uncertain", "maybe", "не уверен", "unclear"), "uncertain relevant"),
             (("price", "trading", "signal", "moon", "airdrop", "giveaway", "referral", "promo", "инвест", "трейд"), "unrelated promo"),
             (("unrelated", "announcement", "argument", "off topic", "нерелевант", "анонс"), "unrelated discussion"),
+            (("check", "find", "compare", "verify", "monitor", "data", "провер", "сравн"), "data lookup"),
+            (("uncertain", "maybe", "не уверен", "unclear"), "uncertain relevant"),
         )
         for needles, label in safe_labels:
             if any(needle in reason for needle in needles):

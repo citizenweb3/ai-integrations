@@ -1,8 +1,11 @@
 """Configuration loader — YAML config + environment variable overrides."""
+import logging
 import yaml
 import socket
 from pathlib import Path
 from os import environ
+
+log = logging.getLogger(__name__)
 
 
 def _in_docker() -> bool:
@@ -83,8 +86,13 @@ def load_config() -> dict:
     for _key in ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
                  "GOOGLE_APPLICATION_CREDENTIALS", "OLLAMA_TOKEN"):
         _val = dotenv.get(_key)
-        if _val:
-            environ.setdefault(_key, _val)
+        if not _val:
+            continue
+        _existing = environ.get(_key)
+        if _existing is not None and _existing != _val:
+            # A stale shell export would silently win over a corrected .env; surface it.
+            log.warning("%s: OS env (%r) overrides .env (%r); OS env wins", _key, _existing, _val)
+        environ.setdefault(_key, _val)
     if config["validatorinfo"]["rag_api_url"]:
         environ.setdefault("RAG_API_URL", config["validatorinfo"]["rag_api_url"])
     if config["validatorinfo"]["rag_api_token"]:
