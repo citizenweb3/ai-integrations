@@ -62,6 +62,15 @@ def _patch_stream(resp, events):
     resp._stream_events = fake_stream
 
 
+def test_exposes_model_names_for_pipeline():
+    # response_pipeline.py reads these for the audit `model_name` on the send path.
+    resp = Responder(_CFG)
+    assert resp._model_reactive == "gemini-3.5-flash"
+    assert resp._model_reply == "gemini-3.1-pro-preview"
+    assert resp._model_verification == "gemini-3.5-flash"
+    assert resp._model == resp._model_reactive
+
+
 def test_verification_agent_forces_tool_call():
     resp = Responder(_CFG)
     vcfg = resp._agents["verification"].generate_content_config
@@ -117,6 +126,8 @@ async def test_generate_auth_error_locks_health():
     parsed, _ = await resp.generate("p")
     assert parsed is None
     assert resp.health.auth_locked is True
+    # the cause must be captured so the operator alert carries detail
+    assert resp.last_error_detail
 
 
 async def test_generate_config_error_surfaces_and_does_not_degrade():

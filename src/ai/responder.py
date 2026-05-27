@@ -87,6 +87,11 @@ class Responder:
             "reply": (gem["model_reply"], gem.get("effort_reply", "high")),
             "verification": (gem["model_verification"], gem.get("effort_verification", "high")),
         }
+        # model names the pipeline reads for the audit `model_name` on the send path
+        self._model_reactive = self._roles["reactive"][0]
+        self._model_reply = self._roles["reply"][0]
+        self._model_verification = self._roles["verification"][0]
+        self._model = self._model_reactive
         self._agents = {
             role: build_agent(
                 role,
@@ -201,6 +206,7 @@ class Responder:
             except Exception as exc:  # noqa: BLE001 — classify, then route to health
                 cls = classify_error(exc)
                 self.last_error_class = cls
+                self.last_error_detail = str(exc)[:500]
                 if cls == "auth":
                     if not self.health.auth_locked:
                         log.critical("llm_auth_error, err=%s", str(exc)[:300])

@@ -50,6 +50,35 @@ async def test_error_fails_open(monkeypatch):
     assert res.decision in ("error_fallback", "timeout_fallback")
 
 
+async def test_ollama_provider_chat_uses_oll_config(monkeypatch):
+    # regression: _chat/_warmup must read self._oll (was self._cfg -> AttributeError)
+    cfg = {
+        "gemini": {"router_provider": "ollama"},
+        "ollama": {"enabled": True, "url": "http://x", "model": "qwen", "format": "json"},
+    }
+    r = LLMRouter(cfg)
+
+    class _Resp:
+        status = 200
+        async def json(self):
+            return {"message": {"content": '{"respond": true, "reason": "staking question"}'}}
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+
+    class _Session:
+        def post(self, *a, **k):
+            return _Resp()
+
+    r._session = _Session()
+    res = await r.should_respond("msg", "ctx", "grp", "snd", "reactive")
+    # must be a real parsed decision, NOT a fail-open fallback masking AttributeError
+    assert res.should_respond is True
+    assert res.decision == "pass"
+    assert res.error is None
+
+
 def test_build_context_text_budget():
     msgs = [{"sender_name": "a", "text": "hello world"}, {"sender_name": "b", "text": "more text here"}]
     out = build_context_text(msgs, token_budget=50, max_message_tokens=20)

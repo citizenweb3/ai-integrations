@@ -207,7 +207,7 @@ class LLMRouter:
     async def _warmup(self):
         if not self._session:
             return
-        timeout_seconds = int(self._cfg.get("warmup_timeout_seconds", 180))
+        timeout_seconds = int(self._oll.get("warmup_timeout_seconds", 180))
         prompt = 'Return {"respond":false,"reason":"warmup"}'
         try:
             await self._chat(prompt, timeout_seconds)
@@ -228,12 +228,12 @@ class LLMRouter:
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
             "think": False,
-            "format": self._cfg.get("format", "json"),
-            "keep_alive": self._cfg.get("keep_alive", -1),
+            "format": self._oll.get("format", "json"),
+            "keep_alive": self._oll.get("keep_alive", -1),
             "options": {
-                "num_ctx": int(self._cfg.get("num_ctx", 8192)),
-                "num_predict": int(self._cfg.get("num_predict", 256)),
-                "temperature": self._cfg.get("temperature", 0),
+                "num_ctx": int(self._oll.get("num_ctx", 8192)),
+                "num_predict": int(self._oll.get("num_predict", 256)),
+                "temperature": self._oll.get("temperature", 0),
             },
         }
 
