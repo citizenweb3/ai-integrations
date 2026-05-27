@@ -280,7 +280,7 @@ S2.1+S2.2+S2.5+S2.7 ≈ 0.5–1 day. S2.3 depends on Step 1 S1. S2.6 deferred wi
 - [G3.1] Accept form override is name+domain only. `countryCode` / `region` are fixed to whatever the candidate carries. Minor.
 - [G3.2] No UI for `linkToOrganizationId`. Operator sees `matchedOrganizationId` (badge in card) but cannot change the linked org — only accept what was auto-linked. Wrong auto-link → reject + recreate.
 - [G3.3] No re-link / un-link path. Once accept materializes the link it is permanent.
-- [G3.4] **Enrichment prompt does not carry campaign context.** Research agent gets `name + domain + campaignName` only. Campaign `objective / targetSegments / desiredCta / forbiddenClaims / operatorNotes` are not piped in, so the resulting snapshot is generic rather than outreach-specific.
+- [G3.4 done:T-026J] **Enrichment prompt does not carry campaign context.** `buildDefaultResearchSnapshotPrompt` + the accept auto-chain now pipe campaign `objective / offerSummary / targetSegments / desiredCta / operatorNotes` into a `<campaign_context>` block, so the snapshot is outreach-specific. (`forbiddenClaims` intentionally omitted — it is a drafting guardrail, not a research signal.) Closed by T-026J.
 - [G3.5] Reject reason is free text. No canonical reason-code taxonomy (`out_of_segment / dead_company / competitor / existing_customer / wrong_geo / private_pii / other`). Reject analytics are stuck on regex over a free-form column.
 - [G3.6] Reject reason is prefix-coded into the same column (`operator:<text>`). Should live in a dedicated `rejection_reason_code` column.
 - [G3.7] No `campaign.status` gating. Accept/reject pass on `closed / paused / drafting_scope` campaigns — materializes org and enrichment job in a dead campaign (depends on Step 1 S4).
@@ -292,14 +292,14 @@ S2.1+S2.2+S2.5+S2.7 ≈ 0.5–1 day. S2.3 depends on Step 1 S1. S2.6 deferred wi
 
 - [done:T-026B] [S3.1] Reduce to: post-filter check in `normalizeProposal` — if `sourceRefs.length === 0` after `isGroundingTrackerUrl` pass, reject the proposal before insert; redirected-only refs emit `campaign_discovery_router_failed{reason:'all_sourceRefs_redirected'}`. Closes residual G2.5.
 - [S3.2] Accept UI expansion: add `countryCode` + `region` override fields; add "Link to existing organization" picker (domain/name prefix search → top-N candidates → operator selects).
-- [S3.3] `buildDefaultResearchSnapshotPrompt` signature: `{orgName, domain, campaignName, objective, targetSegments, desiredCta, operatorNotes}` → embed campaign context in a `<campaign_context>` block of the enrichment prompt. Depends on Step 1 S1 (extended scope schema).
+- [done:T-026J] [S3.3] `buildDefaultResearchSnapshotPrompt` now takes optional `{objective, offerSummary, targetSegments, desiredCta, operatorNotes}` and embeds them in a `<campaign_context>` block; the accept auto-chain widened its `campaigns` SELECT to pass them through. Added `offerSummary` beyond the original bullet because the gap ("selling AI vs SOC-2") is precisely that field (it post-dated the bullet, landing in T-026E S1). Closes G3.4 / G4.1.
 - [done:T-026B] [S3.4] Migration: add `discovery_candidates.rejection_reason_code text NULL`; introduce zod enum `discoveryRejectionReasonCodes = ['out_of_segment', 'dead_company', 'competitor', 'existing_customer', 'wrong_geo', 'private_pii', 'other']`. Reject UI = dropdown + optional free-text notes. Backfill existing `rejectionReason` parser as part of the migration.
 - [done:T-026B] [S3.5] Status gating: `assertCampaignActive(candidate.campaignId)` at the top of accept/reject txns. Failure code `campaign_not_active`.
 - [S3.6] **Contact promotion chain (Tickets 3.4 / 3.5 / 3.6).** Post-accept: enqueue `job.discover_contacts` for the materialized org. Router writes `research_contact_candidate` rows. Operator review on the org page promotes selected candidates to `contacts`. Cold-draft gate requires at least one promoted contact before `generate_cold_draft` is acceptable. Sized as its own slice (1–2 days) — defer-but-blocking on first cold-send E2E.
 - [S3.7] `linkToOrganizationId` UI: server action `searchOrganizations({domainOrNamePrefix, limit:5})` exposed under accept form. Replaces hidden auto-link path with operator-driven link.
 - [S3.8] `skipEnrichment` flag in accept payload + checkbox in UI. Pre-fill the checkbox when `latest research_snapshot` for the resolved org is < 30 days old.
 
-S3.1+S3.4+S3.5 ≈ 0.5 day. S3.2+S3.7+S3.8 ≈ 0.5 day UI. S3.3 bundles with Step 1 S1. S3.6 (Tickets 3.4-3.6) is a dedicated 1–2 day slice that **must ship before the first cold-outreach E2E** is feasible.
+S3.1+S3.4+S3.5 ≈ 0.5 day. S3.2+S3.7+S3.8 ≈ 0.5 day UI. S3.3 shipped in T-026J. S3.6 (Tickets 3.4-3.6) is a dedicated 1–2 day slice that **must ship before the first cold-outreach E2E** is feasible.
 
 ### Step 4 — `refresh_research_snapshot` / research agent / facts+evidence+contact-candidates
 
@@ -314,7 +314,7 @@ S3.1+S3.4+S3.5 ≈ 0.5 day. S3.2+S3.7+S3.8 ≈ 0.5 day UI. S3.3 bundles with Ste
 
 **Gaps vs. canonical §20 D / §67 Phase 3 / §15:**
 
-- [G4.1] **Enrichment prompt is generic.** Same gap as G3.4: the research agent runs blind to the campaign reason — same orgName+domain produces the same snapshot regardless of whether the campaign is selling AI integration vs. selling SOC-2 audit. Cross-ref: closed jointly with G3.4 via S3.3.
+- [G4.1 done:T-026J] **Enrichment prompt is generic.** Closed jointly with G3.4 via S3.3 (T-026J): the campaign objective / offer / segments / CTA / notes now flow into the enrichment prompt's `<campaign_context>` block.
 - [G4.2] **One ADK stage produces three artifact classes.** `research_snapshot` returns `facts + questions + contactCandidates` in one JSON envelope. Canonical §20 D names `research_snapshot` and `research_more` as research stages but lists `contact_candidate_discovery` conceptually as a separate concern; overloading produces noisy outputs (short snapshots when the agent prioritises contact lookup; weak contact arrays when it prioritises facts). Single-prompt design also makes per-stage prompt tuning impossible.
 - [G4.3] **Closed by T-026D:** `safe_for_copy` is auto-promoted for facts with ≥2 distinct supporting evidence URLs and at least one trusted/org-domain source.
 - [G4.4] **`research_snapshots.status='draft'` initial; no operator promote/freeze action.** Canonical §20 D references a `head` snapshot semantic per org. Current code increments `snapshot_version` per refresh but the latest row is treated as head implicitly — no explicit "this is the canonical snapshot, freeze it" action and no rollback path if a later refresh degrades facts.

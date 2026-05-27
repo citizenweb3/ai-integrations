@@ -235,6 +235,62 @@ test("campaign discovery router rejects proposals whose source refs are only Goo
   assert.equal(routerEvent?.payloadJson["reason"], "all_sourceRefs_redirected");
 });
 
+test("accept auto-chain enrichment prompt carries campaign context", async (t) => {
+  const db = getDb();
+  await clearT026BArtifacts();
+  t.after(clearT026BArtifacts);
+
+  const suffix = randomUUID();
+  const [campaign] = await db
+    .insert(campaigns)
+    .values({
+      name: `t026b-ctx-${suffix}`,
+      status: "active",
+      objective: "Sell our SOC-2 audit automation platform.",
+      offerSummary: "Continuous SOC-2 evidence collection and audit automation.",
+      targetSegments: ["fintech", "healthtech"],
+      desiredCta: "Book a 20-minute compliance readiness call.",
+      operatorNotes: "Prioritize companies actively pursuing SOC-2."
+    })
+    .returning({ id: campaigns.id });
+  assert.ok(campaign);
+
+  const [candidate] = await db
+    .insert(discoveryCandidates)
+    .values({
+      campaignId: campaign.id,
+      proposedName: `t026b-ctx-org-${suffix}`,
+      domain: `t026b-ctx-${suffix}.example`,
+      sourceRefs: [{ url: "https://example.com/t026b-ctx" }],
+      status: "proposed"
+    })
+    .returning({ id: discoveryCandidates.id });
+  assert.ok(candidate);
+
+  const accept = await acceptDiscoveryCandidateCommand({
+    payload: { candidateId: candidate.id }
+  });
+  assert.equal(accept.ok, true);
+  if (!accept.ok) assert.fail(accept.failure.message);
+
+  // The accept auto-chains an enrichment command whose payload carries the
+  // research prompt. Find it by the candidate back-pointer and assert the
+  // campaign scope made it into the prompt.
+  const [enrichmentCommand] = await db
+    .select({ payloadJson: commands.payloadJson })
+    .from(commands)
+    .where(sql`${commands.commandType} = 'refresh_research_snapshot'
+      and ${commands.payloadJson}->>'triggeredByCandidateId' = ${candidate.id}`)
+    .limit(1);
+  const prompt = String(enrichmentCommand?.payloadJson["prompt"] ?? "");
+  assert.match(prompt, /<campaign_context>/);
+  assert.match(prompt, /Sell our SOC-2 audit automation platform\./);
+  assert.match(prompt, /Continuous SOC-2 evidence collection and audit automation\./);
+  assert.match(prompt, /fintech, healthtech/);
+  assert.match(prompt, /Book a 20-minute compliance readiness call\./);
+  assert.match(prompt, /Prioritize companies actively pursuing SOC-2\./);
+});
+
 async function clearT026BArtifacts(): Promise<void> {
   const db = getDb();
   await db.execute(sql`
@@ -258,5 +314,7 @@ async function clearT026BArtifacts(): Promise<void> {
        OR target_entity_id IN (SELECT id FROM campaigns WHERE name LIKE 't026b-%')
   `);
   await db.execute(sql`DELETE FROM discovery_candidates WHERE proposed_name LIKE 't026b-%'`);
+  // accept materializes an organization named from the candidate; drop those too.
+  await db.execute(sql`DELETE FROM organizations WHERE name LIKE 't026b-%'`);
   await db.execute(sql`DELETE FROM campaigns WHERE name LIKE 't026b-%'`);
 }

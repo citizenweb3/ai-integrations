@@ -6108,19 +6108,50 @@ function buildDefaultResearchSnapshotPrompt(input: {
   organizationName: string;
   domain: string | null;
   campaignName: string | null;
+  objective?: string | null;
+  offerSummary?: string | null;
+  targetSegments?: string[];
+  desiredCta?: string | null;
+  operatorNotes?: string | null;
 }): string {
   const safeName = sanitizePromptInsertion(input.organizationName, 200);
   const safeDomain = input.domain
     ? sanitizePromptInsertion(input.domain, 253)
     : null;
-  const safeCampaign = input.campaignName
-    ? sanitizePromptInsertion(input.campaignName, 200)
-    : null;
   const head = safeDomain ? `${safeName} (${safeDomain})` : safeName;
-  const campaignHint = safeCampaign
-    ? `Outreach is part of campaign "${safeCampaign}". `
+
+  // Campaign scope makes the snapshot outreach-specific: the same org should
+  // yield different facts depending on what we're selling and to whom. Emit a
+  // structured block (house style matches `<campaign_brief>` in the discovery
+  // prompt) and only include lines the operator actually filled in.
+  const contextLines: string[] = [];
+  if (input.campaignName) {
+    contextLines.push(`Campaign: ${sanitizePromptInsertion(input.campaignName, 200)}`);
+  }
+  if (input.objective) {
+    contextLines.push(`Objective: ${sanitizePromptInsertion(input.objective, 2000)}`);
+  }
+  if (input.offerSummary) {
+    contextLines.push(`What we offer: ${sanitizePromptInsertion(input.offerSummary, 2000)}`);
+  }
+  const segments = (input.targetSegments ?? [])
+    .map((segment) => sanitizePromptInsertion(segment, 200))
+    .filter((segment) => segment.length > 0);
+  if (segments.length > 0) {
+    contextLines.push(`Target segments: ${segments.join(", ")}`);
+  }
+  if (input.desiredCta) {
+    contextLines.push(`Desired call to action: ${sanitizePromptInsertion(input.desiredCta, 2000)}`);
+  }
+  if (input.operatorNotes) {
+    contextLines.push(`Operator notes: ${sanitizePromptInsertion(input.operatorNotes, 2000)}`);
+  }
+
+  const contextBlock = contextLines.length > 0
+    ? `\n\n<campaign_context>\n${contextLines.join("\n")}\n</campaign_context>\n\nUse this campaign context to focus the research: surface fit signals against the target segments, hooks aligned with the objective and offer, and angles that support the desired call to action.`
     : "";
-  return `Conduct a research snapshot for ${head}. ${campaignHint}Identify recent product launches, public revenue or growth signals, leadership team, hiring plans, and stated strategic priorities likely to be relevant for a personalized outreach email. Cite each fact with a source URL.`;
+
+  return `Conduct a research snapshot for ${head}. Identify recent product launches, public revenue or growth signals, leadership team, hiring plans, and stated strategic priorities likely to be relevant for a personalized outreach email. Cite each fact with a source URL.${contextBlock}`;
 }
 
 export async function acceptDiscoveryCandidateCommand(input: {
@@ -6308,7 +6339,14 @@ export async function acceptDiscoveryCandidateCommand(input: {
     }
 
     const [campaignRow] = await tx
-      .select({ name: campaigns.name })
+      .select({
+        name: campaigns.name,
+        objective: campaigns.objective,
+        offerSummary: campaigns.offerSummary,
+        targetSegments: campaigns.targetSegments,
+        desiredCta: campaigns.desiredCta,
+        operatorNotes: campaigns.operatorNotes
+      })
       .from(campaigns)
       .where(eq(campaigns.id, candidate.campaignId))
       .limit(1);
@@ -6316,7 +6354,12 @@ export async function acceptDiscoveryCandidateCommand(input: {
     const enrichmentPrompt = buildDefaultResearchSnapshotPrompt({
       organizationName: payload.organizationName ?? candidate.proposedName,
       domain: payload.domain ?? candidate.domain ?? null,
-      campaignName: campaignRow?.name ?? null
+      campaignName: campaignRow?.name ?? null,
+      objective: campaignRow?.objective ?? null,
+      offerSummary: campaignRow?.offerSummary ?? null,
+      targetSegments: campaignRow?.targetSegments ?? [],
+      desiredCta: campaignRow?.desiredCta ?? null,
+      operatorNotes: campaignRow?.operatorNotes ?? null
     });
     // Stable enrichment idempotency key tied to the accept's own key,
     // not wall clock — two retries of the same accept always collapse
