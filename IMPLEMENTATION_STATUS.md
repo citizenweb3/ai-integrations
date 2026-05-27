@@ -277,7 +277,7 @@ S2.1+S2.2+S2.5+S2.7 shipped in T-026B/C; S2.5 verified in T-026K; S2.4 shipped i
 
 **Gaps vs. canonical §67 / Tickets 3.4-3.6:**
 
-- [G3.1] Accept form override is name+domain only. `countryCode` / `region` are fixed to whatever the candidate carries. Minor.
+- [G3.1 done:T-026N] Accept form now overrides name + domain + `countryCode`. `region` override deferred — `organizations` has no `region` column, so persisting it is a schema change for a field nothing reads yet.
 - [G3.2] No UI for `linkToOrganizationId`. Operator sees `matchedOrganizationId` (badge in card) but cannot change the linked org — only accept what was auto-linked. Wrong auto-link → reject + recreate.
 - [G3.3] No re-link / un-link path. Once accept materializes the link it is permanent.
 - [G3.4 done:T-026J] **Enrichment prompt does not carry campaign context.** `buildDefaultResearchSnapshotPrompt` + the accept auto-chain now pipe campaign `objective / offerSummary / targetSegments / desiredCta / operatorNotes` into a `<campaign_context>` block, so the snapshot is outreach-specific. (`forbiddenClaims` intentionally omitted — it is a drafting guardrail, not a research signal.) Closed by T-026J.
@@ -291,7 +291,7 @@ S2.1+S2.2+S2.5+S2.7 shipped in T-026B/C; S2.5 verified in T-026K; S2.4 shipped i
 **Minimum production fix:**
 
 - [done:T-026B] [S3.1] Reduce to: post-filter check in `normalizeProposal` — if `sourceRefs.length === 0` after `isGroundingTrackerUrl` pass, reject the proposal before insert; redirected-only refs emit `campaign_discovery_router_failed{reason:'all_sourceRefs_redirected'}`. Closes residual G2.5.
-- [S3.2] Accept UI expansion: add `countryCode` + `region` override fields; add "Link to existing organization" picker (domain/name prefix search → top-N candidates → operator selects).
+- [partial done:T-026N] [S3.2] Accept UI: `countryCode` override field added (server was already wired). The dedupe-matched org is already surfaced in the candidate card with a link (G3.2 visibility). **Deferred:** `region` override (needs an `organizations.region` column) and the free-text "link to existing organization" picker (needs net-new client search infra — the dashboard has one client component; `linkToOrganizationId` is already wired server-side for when it lands).
 - [done:T-026J] [S3.3] `buildDefaultResearchSnapshotPrompt` now takes optional `{objective, offerSummary, targetSegments, desiredCta, operatorNotes}` and embeds them in a `<campaign_context>` block; the accept auto-chain widened its `campaigns` SELECT to pass them through. Added `offerSummary` beyond the original bullet because the gap ("selling AI vs SOC-2") is precisely that field (it post-dated the bullet, landing in T-026E S1). Closes G3.4 / G4.1.
 - [done:T-026B] [S3.4] Migration: add `discovery_candidates.rejection_reason_code text NULL`; introduce zod enum `discoveryRejectionReasonCodes = ['out_of_segment', 'dead_company', 'competitor', 'existing_customer', 'wrong_geo', 'private_pii', 'other']`. Reject UI = dropdown + optional free-text notes. Backfill existing `rejectionReason` parser as part of the migration.
 - [done:T-026B] [S3.5] Status gating: `assertCampaignActive(candidate.campaignId)` at the top of accept/reject txns. Failure code `campaign_not_active`.
