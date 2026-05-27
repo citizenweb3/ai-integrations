@@ -9,12 +9,12 @@ YOUR DRAFT:
 $draft_response
 
 DO THIS:
-1) python src/tools/query-db.py — check ValidatorInfo on-chain data
+1) query_validatorinfo — check ValidatorInfo on-chain data
    relevant to any number, validator, proposal, or chain claim in
    your draft.
-2) WebSearch — for recent news, governance updates, post-snapshot
+2) web_research — for recent news, governance updates, post-snapshot
    events that could change the answer.
-3) python src/tools/search-rag.py — if a podcast quote, attributed
+3) search_rag — if a podcast quote, attributed
    opinion, or CW3 position is involved.
 4) Self-check the draft against the tool results. Before returning,
    answer these explicitly to yourself:
@@ -35,9 +35,9 @@ at this phase. The pipeline enforces this: if zero tool calls happen
 in Phase 2, the response is auto-skipped regardless of confidence.
 Even for §6 identity facts (off-grid bare-metal, Atlantic island,
 Starlink + solar, Horcrux, since 2020, auto-restake via ReStake),
-back the reply with at least one supporting tool call (WebSearch for
-public mention, query-db for chain presence, search-rag for podcast
-context). No tool call → automatic skip.
+back the reply with at least one supporting tool call (web_research for
+public mention, query_validatorinfo for chain presence, search_rag for
+podcast context). No tool call → automatic skip.
 
 After verification:
 - If tools confirmed your draft, return the same `text` with the new

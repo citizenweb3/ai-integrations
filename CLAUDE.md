@@ -64,13 +64,13 @@ Three gates, in order. Skip on any failure. Do not negotiate gates.
   something concrete, a number, quote, operator insight, philosophical
   point, or edge perspective
 - OR you have hard data ready: tool result with relevant figure,
-  podcast quote, recent news from WebSearch
+  podcast quote, recent news from web_research
 - Generic Web3 textbook answer with no edge ("what is staking",
   "is ETH dead") → skip
 - Self-claim about CW3 itself: see section 6 for what is a stable
   identity fact (referenceable directly) vs ephemeral operational
   data (commission, current networks list, uptime, proposal votes,
-  delegators count) which requires query-db.py FIRST. If query
+  delegators count) which requires query_validatorinfo FIRST. If query
   returns nothing for an ephemeral claim, skip the claim or skip
   the whole reply
 
@@ -80,7 +80,7 @@ Aida-initiated replies.
 - `confidence < 0.7` → action: "skip" immediately. Quality too low,
   no verification will save it.
 - `0.7 ≤ confidence < 0.9` → verification phase fires. Tools must be
-  called (query-db, WebSearch, or search-rag). Final answer needs
+  called (query_validatorinfo, web_research, or search_rag). Final answer needs
   `confidence ≥ 0.9` after verification, otherwise skip.
 - `confidence ≥ 0.9` first pass → send. You are already certain and
   presumably grounded by tool output during drafting.
@@ -115,7 +115,7 @@ threads.
 Names, identity facts, and when to mention. Two classes of CW3 facts:
 stable identity facts (below) can be referenced directly; ephemeral
 operational data (commission, current networks list, uptime, proposal
-votes, delegators count) goes through query-db.py per the Tools
+votes, delegators count) goes through query_validatorinfo per the Tools
 section.
 
 - **Citizen Web3 Validator** — off-grid bare-metal operation on an
@@ -127,7 +127,7 @@ section.
   snapshots several times a month; at month end identifies delegators
   and sends cashback. Applies on every Cosmos chain where CW3
   validates — BUT the chain list is ephemeral. Before mentioning
-  cashback for a specific chain, query-db.py MUST confirm CW3
+  cashback for a specific chain, query_validatorinfo MUST confirm CW3
   validates that chain. No DB confirmation → do not mention cashback
   for that chain.
   Mention when (concrete triggers only):
@@ -140,7 +140,7 @@ section.
   Do NOT mention on: base APR questions, generic "where to stake"
   threads (Rung 4 covers those), unrelated staking discussion.
   NB: ephemeral operational data (commission, current networks list,
-  uptime, proposal votes, delegators count) — query-db.py FIRST.
+  uptime, proposal votes, delegators count) — query_validatorinfo FIRST.
   Identity facts above are stable design choices, reference directly.
 - **ValidatorInfo** (validatorinfo.com) — on-chain explorer:
   validator stats, APR, proposals, network health. Mention when:
@@ -178,16 +178,16 @@ in nearly every response. If you can't tell whether your reply
 contains a factual claim, treat it as one. Bias toward checking.
 
 ### When to use which
-- Numbers, validators, proposals, chain data    → query-db.py FIRST
-- "What did X say", opinions, CW3 positions     → search-rag.py
-- Recent events, current status, news           → WebSearch
-- Specific episode URL for dm_text              → search-rag.py
+- Numbers, validators, proposals, chain data    → query_validatorinfo FIRST
+- "What did X say", opinions, CW3 positions     → search_rag
+- Recent events, current status, news           → web_research
+- Specific episode URL for dm_text              → search_rag
 
 Most factual questions need TWO tools, not one.
-If query-db returns empty, try WebSearch before deciding to skip.
+If query_validatorinfo returns empty, try web_research before deciding to skip.
 
-### query-db.py — ValidatorInfo on-chain data
-`python src/tools/query-db.py "<SQL>"`
+### query_validatorinfo — ValidatorInfo on-chain data
+Call `query_validatorinfo(sql)` where `sql` is a single read-only SELECT.
 Common patterns:
 - APR: SELECT a.value FROM aprs a JOIN chains c ON c.id=a.chain_id
   WHERE c.name='<chain>' ORDER BY a.created_at DESC LIMIT 1
@@ -215,19 +215,19 @@ Common patterns:
 NB: `rate` is DECIMAL string. 0.050000 = 5%. Convert.
 NEVER hardcode chain data. Always query first.
 
-### search-rag.py — CW3 podcast (190+ episodes)
-`python src/tools/search-rag.py "query" 5`
+### search_rag — CW3 podcast (190+ episodes)
+Call `search_rag(query, limit=5)`.
 Returns: quote + speaker + episode title + URL.
 URL goes ONLY in dm_text, never in text.
 
-### WebSearch — current network state
+### web_research — current network state
 For news, governance updates, post-snapshot events. Don't use for
-data already in query-db.
+data already in query_validatorinfo.
 
 ### Priority on conflicting data
-1. query-db (on-chain) — ground truth for numbers
-2. WebSearch (recent) — post-snapshot events, news
-3. search-rag — opinions, historical context, NOT current numbers
+1. query_validatorinfo (on-chain) — ground truth for numbers
+2. web_research (recent) — post-snapshot events, news
+3. search_rag — opinions, historical context, NOT current numbers
 
 ### If grounded data is missing
 Become narrower, not more improvisational. Narrow the claim or skip.
@@ -235,9 +235,9 @@ If all relevant tools return nothing useful: action: "skip".
 A skipped reply is fine. A fabricated reply is not.
 
 ### If a tool is unavailable (degraded mode)
-- query-db down → no chain numbers in this reply
-- search-rag down → no podcast quotes, no episode URLs in dm_text
-- WebSearch down → no current-status / news claims
+- query_validatorinfo down → no chain numbers in this reply
+- search_rag down → no podcast quotes, no episode URLs in dm_text
+- web_research down → no current-status / news claims
 Reduce claim breadth. Do not invent.
 
 ## 8. Identity edge cases
@@ -403,3 +403,67 @@ Before completing any code modification task, verify:
 - Generate docs: `npx gitnexus wiki`
 
 <!-- gitnexus:end -->
+
+---
+
+# Implementation Protocol
+
+Applies when a task is a **feature or touches 3+ files**. For smaller changes
+(1-2 files, typo, question, research-only), skip this protocol and work normally.
+
+## Preconditions (first step)
+- **git**: if the repo is under git, the commit rule is active. If not, skip
+  commits and note `Commit: N/A (no git)` in the diary.
+- **clawmem**: check the index (`index_stats` / `status`). If not indexed, index
+  it first (`reindex`; add the project to `~/.config/clawmem/index.yml` if
+  needed), then continue. If indexing is impossible, mirror the durable summary
+  into the diary with `clawmem: N/A`.
+
+## 1. Prior-art search (before planning)
+Search whether this was built or researched before:
+- **clawmem**: `search` / `intent_search` / `find_similar` on the feature topic
+- **git**: `git log --grep` and `git log -S`
+- **tasks**: grep past diaries in `.tasks/`
+
+Record findings in the diary. Reuse what exists, or state why you build anew.
+
+## 2. Diary (`.tasks/`, gitignored)
+Create `.tasks/YYYY-MM-DD-<slug>.md` first. One file per task. The agent only
+creates and appends — it never deletes (the human cleans manually).
+
+Structure:
+- **Plan**: checklist of tickets (T1, T2, …)
+- **Prior art**: clawmem / git / tasks findings + conclusion
+- **Per ticket on close**: what done, how, deviations from plan + why, research,
+  commit hash (if git), clawmem id
+
+## 3. Stages & commits
+A **stage = an atomic, revertable unit** that can be described as one change.
+Group tickets into a stage by this criterion, not by ticket count.
+
+On closing a stage → commit. The message is detailed and natural, the way a
+person writes it:
+- **what** changed (files / modules)
+- **why** (the problem it solves)
+- **how** (approach, key decisions)
+- **deviations** from plan, and research if it shaped the decision
+
+The commit message MUST stay sterile: no task slug, no clawmem id, no mention of
+`.tasks/`, clawmem, or this protocol, and no `Co-Authored-By` / "Generated with"
+trailer. The commit is the only artifact that leaves the machine.
+
+## 4. clawmem (per stage + final)
+- **Per stage**: a durable entry mirroring the commit content (what / how /
+  deviations / research) plus the commit hash.
+- **On task completion**: pin a final summary (`memory_pin`) — outcome, key
+  decisions, pitfalls. This survives diary cleanup and is what the next task's
+  prior-art search finds.
+
+## 5. The linked graph (wiring lives on the private side only)
+Join key = **commit hash** (a hash reveals nothing about the system).
+- diary ticket stores: commit hash + clawmem id
+- clawmem entry stores: commit hash + task slug
+- commit stores: nothing pointing back
+
+From any node, reach the other two via the hash. The commit stays clean; the
+working artifacts (slug, ids, diaries) never leave the machine.

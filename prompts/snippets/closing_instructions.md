@@ -16,7 +16,7 @@ If `dm_request: true`:
   - Community chat: $community_chat
   - Explorer: https://validatorinfo.com
   - Podcast (general): https://podcast.citizenweb3.com
-  - Specific episode: only the URL returned by search-rag.py for
+  - Specific episode: only the URL returned by search_rag for
     that exact episode.
   - B.V.C.: https://bvc.citizenweb3.com
 
