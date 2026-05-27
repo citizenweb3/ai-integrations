@@ -18,6 +18,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./config.yaml:/app/config.yaml:ro
+      - ./secrets:/secrets:ro
     healthcheck:
       test: ["CMD", "python", "healthcheck.py"]
       interval: 60s
@@ -26,10 +27,11 @@ services:
       start_period: 30s
     env_file: .env
     environment:
-      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
-      - CLAUDE_ACCOUNT_UUID=${CLAUDE_ACCOUNT_UUID}
-      - CLAUDE_EMAIL=${CLAUDE_EMAIL}
-      - CLAUDE_ORG_UUID=${CLAUDE_ORG_UUID}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/vertex-sa.json
+      - GOOGLE_GENAI_USE_VERTEXAI=TRUE
+      - OLLAMA_TOKEN=${OLLAMA_TOKEN}
       - RAG_API_TOKEN=${RAG_API_TOKEN}
       - RAG_API_URL=${RAG_API_URL:-http://host.docker.internal:3000}
       - DATABASE_URL=${DATABASE_URL}

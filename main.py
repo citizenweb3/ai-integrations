@@ -13,6 +13,7 @@ from pathlib import Path
 from telethon import TelegramClient
 
 from src.config import load_config
+from src.ai.gemini_client import assert_vertex_env
 from src.storage.db import Database
 from src.ai.rag import RAGClient
 from src.ai.llm_router import LLMRouter
@@ -37,6 +38,10 @@ log = logging.getLogger("agent")
 
 async def main():
     config = load_config()
+
+    # 0. Vertex-only fail-fast before any side effects (DB/Telegram). Requires
+    #    GOOGLE_CLOUD_PROJECT/LOCATION + ADC, refuses GOOGLE_API_KEY.
+    assert_vertex_env()
 
     # 1. Database
     db = Database(config["database"]["path"])
