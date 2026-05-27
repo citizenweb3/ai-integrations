@@ -644,10 +644,10 @@ export const researchContactCandidates = pgTable("research_contact_candidates", 
   fullName: text("full_name"),
   confidence: integer("confidence").notNull().default(0),
   // Review lifecycle: pending (agent emitted, awaiting operator) →
-  // approved (operator accepted, conversion to contacts row queued) →
-  // converted (contacts row created, candidate is now historical) OR
-  // rejected (operator declined; can be re-surfaced by a later research run).
-  // CHECK constraint enforced in migration 0016.
+  // converted (operator approved, contacts row materialized, candidate now
+  // historical) OR rejected (operator declined; a later research run can
+  // re-surface it). Approval materializes the contact in one step, so there
+  // is no `approved` slot. CHECK constraint enforced in migrations 0016/0033.
   status: text("status").notNull().default("pending"),
   role: text("role"),
   // Where the agent found the candidate (e.g., "website_team_page",
@@ -671,12 +671,12 @@ export const researchContactCandidates = pgTable("research_contact_candidates", 
 }, (table) => ({
   orgEmailActiveIdx: uniqueIndex("research_contact_candidates_org_email_active_idx")
     .on(table.organizationId, sql`lower(${table.email})`)
-    .where(sql`${table.email} is not null and ${table.status} in ('pending','approved')`),
+    .where(sql`${table.email} is not null and ${table.status} = 'pending'`),
   orgStatusIdx: index("research_contact_candidates_org_status_idx")
     .on(table.organizationId, table.status, table.createdAt),
   orgNameActiveIdx: index("research_contact_candidates_org_name_active_idx")
     .on(table.organizationId, sql`lower(${table.fullName})`)
-    .where(sql`${table.email} is null and ${table.status} in ('pending','approved')`),
+    .where(sql`${table.email} is null and ${table.status} = 'pending'`),
   lastSeenIdx: index("research_contact_candidates_last_seen_idx").on(table.lastSeenAt),
   rejectionReasonCodeIdx: index("research_contact_candidates_rejection_reason_code_idx")
     .on(table.rejectionReasonCode)

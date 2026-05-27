@@ -10231,7 +10231,7 @@ export async function routeResearchSnapshotOutcome(input: {
         .from(researchContactCandidates)
         .where(and(
           eq(researchContactCandidates.organizationId, input.organizationId),
-          inArray(researchContactCandidates.status, ["pending", "approved"]),
+          eq(researchContactCandidates.status, "pending"),
           candidate.email
             ? sql`lower(${researchContactCandidates.email}) = ${candidate.email}`
             : sql`${researchContactCandidates.email} is null and lower(${researchContactCandidates.fullName}) = ${candidate.fullName.toLowerCase()}`

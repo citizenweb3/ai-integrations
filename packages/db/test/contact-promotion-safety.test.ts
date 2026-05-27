@@ -568,6 +568,36 @@ test("rejectContactCandidateCommand defaults the reason code to other", async (t
   assert.equal(updated?.rejectionReasonCode, "other");
 });
 
+test("research_contact_candidates rejects the removed approved status", async (t) => {
+  const db = getDb();
+  await clearT026Artifacts();
+  t.after(clearT026Artifacts);
+
+  const suffix = randomUUID();
+  const [organization] = await db
+    .insert(organizations)
+    .values({ name: `t026-approved-org-${suffix}`, domain: `t026-approved-${suffix}.example` })
+    .returning({ id: organizations.id });
+  assert.ok(organization);
+
+  // `approved` was collapsed out of the lifecycle in migration 0033; the CHECK
+  // constraint must now refuse it (column is plain text, so the guard is the DB).
+  // Drizzle wraps the driver error, so the constraint name lives on `.cause`.
+  await assert.rejects(
+    db.insert(researchContactCandidates).values({
+      organizationId: organization.id,
+      email: `t026-approved-${suffix}@example.com`,
+      fullName: "T026 Approved",
+      status: "approved"
+    }),
+    (error: unknown) => {
+      const cause = (error as { cause?: { message?: string; code?: string } }).cause;
+      return cause?.code === "23514"
+        || /research_contact_candidates_status_check/.test(cause?.message ?? "");
+    }
+  );
+});
+
 async function clearT026Artifacts(): Promise<void> {
   const db = getDb();
   await db.execute(sql`

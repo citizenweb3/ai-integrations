@@ -99,9 +99,13 @@ export type ReplyClass = (typeof replyClasses)[number];
 export const replyClassConfidences = ["low", "medium", "high"] as const;
 export type ReplyClassConfidence = (typeof replyClassConfidences)[number];
 
+// Contact-candidate review lifecycle. `pending` (agent emitted, awaiting
+// operator) → `converted` (operator approved, `contacts` row materialized)
+// OR `rejected` (operator declined; a later research run can re-surface it).
+// There is no `approved` slot: approval materializes the contact in one step,
+// flipping straight to `converted`. CHECK constraint in migrations 0016/0033.
 export const contactCandidateStatuses = [
   "pending",
-  "approved",
   "rejected",
   "converted"
 ] as const;
