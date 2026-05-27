@@ -1,4 +1,5 @@
-"""Ollama-based routing pre-filter for Claude calls."""
+"""Routing pre-filter. Default provider is Gemini (Vertex) via google.genai;
+Ollama is kept behind `router_provider: ollama` as a transition fallback."""
 
 import asyncio
 import json
@@ -7,10 +8,17 @@ from dataclasses import dataclass
 from time import monotonic
 
 import aiohttp
+from pydantic import BaseModel
 
 from src.ai.prompts import render as render_prompt
 
 log = logging.getLogger(__name__)
+
+
+class _RouterDecision(BaseModel):
+    """Gemini structured-output schema — matches the qwen_router JSON shape."""
+    respond: bool
+    reason: str
 
 
 @dataclass
@@ -77,23 +85,36 @@ def build_context_text(
 class LLMRouter:
     def __init__(self, config: dict):
         self.config = config
-        self._cfg = config.get("ollama", {})
-        self.enabled = bool(self._cfg.get("enabled", False))
-        self._base_url = str(self._cfg.get("url", "")).rstrip("/")
-        self._token = self._cfg.get("token", "")
-        self._model = self._cfg.get("model", "")
+        self._gem = config.get("gemini", {})
+        self._oll = config.get("ollama", {})
+        self._provider = self._gem.get("router_provider", "gemini")
+        if self._provider == "ollama":
+            self.enabled = bool(self._oll.get("enabled", False))
+        else:
+            self.enabled = bool(self._gem.get("router_enabled", True))
+
+        self._gemini_model = self._gem.get("model_router", "gemini-2.5-flash-lite")
+        # ollama transport (fallback provider)
+        self._base_url = str(self._oll.get("url", "")).rstrip("/")
+        self._token = self._oll.get("token", "")
+        self._model = self._oll.get("model", "")
         self._session: aiohttp.ClientSession | None = None
-        self._reactive_sem = asyncio.Semaphore(int(self._cfg.get("reactive_max_concurrent", 1)))
-        self._proactive_sem = asyncio.Semaphore(int(self._cfg.get("proactive_max_concurrent", 1)))
+
+        react_cc = int(self._gem.get("router_reactive_max_concurrent",
+                                     self._oll.get("reactive_max_concurrent", 3)))
+        proact_cc = int(self._gem.get("router_proactive_max_concurrent",
+                                      self._oll.get("proactive_max_concurrent", 1)))
+        self._reactive_sem = asyncio.Semaphore(react_cc)
+        self._proactive_sem = asyncio.Semaphore(proact_cc)
 
     async def start(self):
         if not self.enabled:
-            log.info("ollama_router_disabled")
+            log.info("router_disabled")
             return
-
-        self._session = aiohttp.ClientSession()
-        if self._cfg.get("warmup_on_start", False):
-            await self._warmup()
+        if self._provider == "ollama":
+            self._session = aiohttp.ClientSession()
+            if self._oll.get("warmup_on_start", False):
+                await self._warmup()
 
     async def close(self):
         if self._session:
@@ -111,16 +132,22 @@ class LLMRouter:
         if not self.enabled:
             return FilterResult(True, "disabled", "", 0, 0)
 
-        if not self._session:
+        if self._provider == "ollama" and not self._session:
             self._session = aiohttp.ClientSession()
 
         route = "proactive" if source == "proactive" else "reactive"
         semaphore = self._proactive_sem if route == "proactive" else self._reactive_sem
-        timeout_seconds = int(self._cfg.get(f"{route}_timeout_seconds", 120))
-        max_retries = int(self._cfg.get(f"max_retries_{route}", 0))
-        retry_delay = float(self._cfg.get("retry_delay_seconds", 0))
+        if self._provider == "ollama":
+            timeout_seconds = int(self._oll.get(f"{route}_timeout_seconds", 120))
+            max_retries = int(self._oll.get(f"max_retries_{route}", 0))
+            retry_delay = float(self._oll.get("retry_delay_seconds", 0))
+        else:
+            timeout_seconds = int(self._gem.get(f"router_{route}_timeout_seconds", 30))
+            max_retries = int(self._gem.get(f"router_max_retries_{route}", 1))
+            retry_delay = float(self._gem.get("router_retry_delay_seconds", 1))
         total_attempts = max(1, 1 + max(0, max_retries))
 
+        chat = self._chat if self._provider == "ollama" else self._gemini_chat
         prompt = self._build_filter_prompt(message, context, group_name, sender_name)
         started = monotonic()
         attempts = 0
@@ -131,7 +158,7 @@ class LLMRouter:
             attempts = attempt
             try:
                 async with semaphore:
-                    raw_output = await self._chat(prompt, timeout_seconds)
+                    raw_output = await chat(prompt, timeout_seconds)
                 result = self._parse_output(raw_output, attempts, started)
                 if result:
                     return result
@@ -139,20 +166,12 @@ class LLMRouter:
             except (asyncio.TimeoutError, TimeoutError) as exc:
                 timed_out += 1
                 errors.append(str(exc) or "timeout")
-                log.warning(
-                    "ollama_timeout source=%s attempt=%d timeout=%d",
-                    route,
-                    attempt,
-                    timeout_seconds,
-                )
-            except (aiohttp.ClientError, ValueError, KeyError, TypeError, OSError) as exc:
+                log.warning("router_timeout provider=%s source=%s attempt=%d timeout=%d",
+                            self._provider, route, attempt, timeout_seconds)
+            except Exception as exc:  # noqa: BLE001 — any transport error -> fail open
                 errors.append(str(exc))
-                log.warning(
-                    "ollama_request_error source=%s attempt=%d error=%s",
-                    route,
-                    attempt,
-                    exc,
-                )
+                log.warning("router_request_error provider=%s source=%s attempt=%d error=%s",
+                            self._provider, route, attempt, exc)
 
             if attempt < total_attempts:
                 await asyncio.sleep(retry_delay)
@@ -160,6 +179,30 @@ class LLMRouter:
         if timed_out == attempts:
             return self._fallback("timeout_fallback", attempts, started, error="; ".join(errors))
         return self._fallback("error_fallback", attempts, started, error="; ".join(errors))
+
+    async def _gemini_chat(self, prompt: str, timeout_seconds: int) -> str:
+        """Vertex Gemini routing call. Structured JSON output ({respond, reason})
+        removes the need for tolerant parsing. Sync genai call off the event loop."""
+        from google.genai import types
+
+        from src.ai.gemini_client import get_client
+
+        client = get_client()
+        cfg = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=_RouterDecision,
+            temperature=0,
+        )
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(
+                client.models.generate_content,
+                model=self._gemini_model,
+                contents=prompt,
+                config=cfg,
+            ),
+            timeout_seconds,
+        )
+        return resp.text or ""
 
     async def _warmup(self):
         if not self._session:
