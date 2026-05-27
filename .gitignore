@@ -11,3 +11,6 @@ sa.json
 *.tsbuildinfo
 .idea
 .gitnexus
+
+# Agent task diaries (local, never committed)
+.tasks/
