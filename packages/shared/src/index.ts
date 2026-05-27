@@ -744,6 +744,7 @@ export const approveContactCandidatePayloadSchema = z.object({
   fullName: z.string().trim().min(1).max(200).optional(),
   roleTitle: z.string().trim().min(1).max(200).optional(),
   notes: z.string().trim().max(2000).optional(),
+  confirmReattach: z.boolean().optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 

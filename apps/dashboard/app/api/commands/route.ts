@@ -307,6 +307,13 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           return NextResponse.json({ error: result.failure }, { status: 409 });
         }
         const redirect = safeRedirectUrl(request);
+        if (result.failure.code === "contact_org_mismatch") {
+          redirect.searchParams.set("confirmContactCandidateId", result.failure.candidateId);
+          redirect.searchParams.set("confirmContactId", result.failure.contactId);
+          redirect.searchParams.set("confirmExistingOrganizationId", result.failure.existingOrganizationId);
+          redirect.searchParams.set("confirmCandidateOrganizationId", result.failure.candidateOrganizationId);
+          redirect.searchParams.set("confirmEmail", result.failure.email);
+        }
         redirect.searchParams.set("error", `${result.failure.code}: ${result.failure.message}`);
         return NextResponse.redirect(redirect, { status: 303 });
       }
@@ -316,6 +323,8 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           candidateId: result.candidateId,
           contactId: result.contactId,
           contactCreated: result.contactCreated,
+          contactReattached: result.contactReattached,
+          previousContactOrganizationId: result.previousContactOrganizationId,
           deduplicated: result.deduplicated
         });
       }
@@ -998,6 +1007,7 @@ function formDataToCommand(formData: FormData) {
     const fullName = String(formData.get("fullName") ?? "").trim();
     const roleTitle = String(formData.get("roleTitle") ?? "").trim();
     const notes = String(formData.get("notes") ?? "").trim();
+    const confirmReattach = String(formData.get("confirmReattach") ?? "").trim() === "true";
     const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
     return {
       commandType,
@@ -1008,6 +1018,7 @@ function formDataToCommand(formData: FormData) {
         ...(fullName ? { fullName } : {}),
         ...(roleTitle ? { roleTitle } : {}),
         ...(notes ? { notes } : {}),
+        ...(confirmReattach ? { confirmReattach } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
     };

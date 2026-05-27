@@ -3669,6 +3669,8 @@ export type ApproveContactCandidateResult =
       candidateId: string;
       contactId: string;
       contactCreated: boolean;
+      contactReattached: boolean;
+      previousContactOrganizationId: string | null;
       idempotencyKey: string;
       deduplicated: boolean;
     }
@@ -3678,7 +3680,50 @@ export type ApproveContactCandidateResult =
         code: "not_found" | "not_pending" | "email_required" | "email_suppressed";
         message: string;
       };
+    }
+  | {
+      ok: false;
+      failure: {
+        code: "contact_org_mismatch";
+        message: string;
+        requiresConfirmation: true;
+        candidateId: string;
+        candidateOrganizationId: string;
+        contactId: string;
+        existingOrganizationId: string;
+        email: string;
+      };
     };
+
+type ApproveContactCandidateSuccess = Extract<ApproveContactCandidateResult, { ok: true }>;
+
+function readApproveContactCandidateReplay(
+  command: typeof commands.$inferSelect,
+  candidateId: string,
+  idempotencyKey: string
+): ApproveContactCandidateSuccess {
+  if (command.commandType !== "approve_contact_candidate" || command.targetEntityId !== candidateId) {
+    throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
+  }
+  const replayPayload = command.payloadJson as Record<string, unknown>;
+  const contactId = typeof replayPayload.contactId === "string" ? replayPayload.contactId : null;
+  if (!contactId) {
+    throw new Error(`Replayed approve command lacks contactId: ${idempotencyKey}`);
+  }
+  return {
+    ok: true,
+    command,
+    candidateId,
+    contactId,
+    contactCreated: replayPayload.contactCreated === true,
+    contactReattached: replayPayload.contactReattached === true,
+    previousContactOrganizationId: typeof replayPayload.previousContactOrganizationId === "string"
+      ? replayPayload.previousContactOrganizationId
+      : null,
+    idempotencyKey,
+    deduplicated: true
+  };
+}
 
 export type SetPrimaryContactResult =
   | {
@@ -3884,6 +3929,16 @@ export async function approveContactCandidateCommand(input: {
     }
 
     if (existing.status !== "pending") {
+      if (payload.idempotencyKey) {
+        const [existingCommand] = await tx
+          .select()
+          .from(commands)
+          .where(eq(commands.idempotencyKey, payload.idempotencyKey))
+          .limit(1);
+        if (existingCommand) {
+          return readApproveContactCandidateReplay(existingCommand, existing.id, payload.idempotencyKey);
+        }
+      }
       return {
         ok: false as const,
         failure: {
@@ -3928,6 +3983,34 @@ export async function approveContactCandidateCommand(input: {
     const fullName = (payload.fullName ?? existing.fullName ?? "").trim() || null;
     const roleTitle = (payload.roleTitle ?? existing.role ?? "").trim() || null;
 
+    const [existingContact] = await tx
+      .select({ id: contacts.id, organizationId: contacts.organizationId })
+      .from(contacts)
+      .where(eq(contacts.email, email))
+      .limit(1);
+
+    if (
+      existingContact
+      && existing.organizationId
+      && existingContact.organizationId
+      && existingContact.organizationId !== existing.organizationId
+      && payload.confirmReattach !== true
+    ) {
+      return {
+        ok: false as const,
+        failure: {
+          code: "contact_org_mismatch",
+          message: `Email ${email} is already attached to another organization; confirm reattach before approving`,
+          requiresConfirmation: true,
+          candidateId: existing.id,
+          candidateOrganizationId: existing.organizationId,
+          contactId: existingContact.id,
+          existingOrganizationId: existingContact.organizationId,
+          email
+        }
+      };
+    }
+
     const idempotencyKey = payload.idempotencyKey
       ?? buildApproveContactCandidateIdempotencyKey(existing.id, existing.updatedAt);
 
@@ -3953,50 +4036,36 @@ export async function approveContactCandidateCommand(input: {
         .from(commands)
         .where(eq(commands.idempotencyKey, idempotencyKey))
         .limit(1);
-      if (!existingCommand || existingCommand.commandType !== "approve_contact_candidate") {
+      if (!existingCommand) {
         throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
       }
-      // Replay path: the winning tx committed atomically, so `payloadJson`
-      // is always enriched with `contactId` + `contactCreated` by the time
-      // any reader observes the command row. No fallback to candidate.convertedContactId
-      // needed — if `contactId` is absent, something is structurally wrong.
-      const replayPayload = existingCommand.payloadJson as Record<string, unknown>;
-      const contactId = typeof replayPayload.contactId === "string" ? replayPayload.contactId : null;
-      if (!contactId) {
-        throw new Error(`Replayed approve command lacks contactId: ${idempotencyKey}`);
-      }
-      const contactCreated = replayPayload.contactCreated === true;
-      return {
-        ok: true as const,
-        command: existingCommand,
-        candidateId: existing.id,
-        contactId,
-        contactCreated,
-        idempotencyKey,
-        deduplicated: true
-      };
+      return readApproveContactCandidateReplay(existingCommand, existing.id, idempotencyKey);
     }
 
     const command = expectOne(insertedCommands, "approve_contact_candidate command");
 
-    // Reuse an existing contacts row when one already exists for this email.
-    // The unique index on contacts.email forces this anyway; checking up
-    // front lets us report contactCreated honestly and preserves the
-    // existing fullName/roleTitle that another flow may have curated.
-    const [existingContact] = await tx
-      .select({ id: contacts.id, organizationId: contacts.organizationId })
-      .from(contacts)
-      .where(eq(contacts.email, email))
-      .limit(1);
-
     let contactId: string;
     let contactCreated: boolean;
     let contactOrganizationId: string | null;
+    let contactReattached = false;
+    let previousContactOrganizationId: string | null = null;
 
     if (existingContact) {
       contactId = existingContact.id;
       contactCreated = false;
       contactOrganizationId = existingContact.organizationId;
+      if (existing.organizationId && existingContact.organizationId !== existing.organizationId) {
+        previousContactOrganizationId = existingContact.organizationId ?? null;
+        await tx
+          .update(contacts)
+          .set({
+            organizationId: existing.organizationId,
+            updatedAt: new Date()
+          })
+          .where(eq(contacts.id, existingContact.id));
+        contactOrganizationId = existing.organizationId;
+        contactReattached = true;
+      }
     } else {
       const inserted = await tx
         .insert(contacts)
@@ -4026,6 +4095,26 @@ export async function approveContactCandidateCommand(input: {
         contactId = raced.id;
         contactOrganizationId = raced.organizationId;
         contactCreated = false;
+        if (
+          existing.organizationId
+          && raced.organizationId
+          && raced.organizationId !== existing.organizationId
+          && payload.confirmReattach !== true
+        ) {
+          throw new Error(`contacts row raced into another organization before approve confirmation: ${email}`);
+        }
+        if (existing.organizationId && raced.organizationId !== existing.organizationId) {
+          previousContactOrganizationId = raced.organizationId ?? null;
+          await tx
+            .update(contacts)
+            .set({
+              organizationId: existing.organizationId,
+              updatedAt: new Date()
+            })
+            .where(eq(contacts.id, raced.id));
+          contactOrganizationId = existing.organizationId;
+          contactReattached = true;
+        }
       }
     }
 
@@ -4071,6 +4160,8 @@ export async function approveContactCandidateCommand(input: {
           ...(payload as unknown as Record<string, unknown>),
           contactId,
           contactCreated,
+          contactReattached,
+          previousContactOrganizationId,
           primaryContactSet
         },
         updatedAt: new Date()
@@ -4087,6 +4178,8 @@ export async function approveContactCandidateCommand(input: {
         candidateId: existing.id,
         contactId,
         contactCreated,
+        contactReattached,
+        previousContactOrganizationId,
         primaryContactSet,
         email,
         ...(existing.organizationId ? { organizationId: existing.organizationId } : {})
@@ -4099,6 +4192,8 @@ export async function approveContactCandidateCommand(input: {
       candidateId: existing.id,
       contactId,
       contactCreated,
+      contactReattached,
+      previousContactOrganizationId,
       idempotencyKey,
       deduplicated: false
     };

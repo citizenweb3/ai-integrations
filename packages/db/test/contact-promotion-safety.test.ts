@@ -5,6 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import {
   approveContactCandidateCommand,
   closeDb,
+  commands,
   contacts,
   eventLog,
   generateDraftCommand,
@@ -135,6 +136,131 @@ test("approveContactCandidateCommand sets the organization primary contact on fi
     .where(eq(organizations.id, organization.id))
     .limit(1);
   assert.deepEqual(afterSecond, { primaryContactId: first.contactId });
+});
+
+test("approveContactCandidateCommand requires confirmation before reattaching an existing email across organizations", async (t) => {
+  const db = getDb();
+  await clearT026Artifacts();
+  t.after(clearT026Artifacts);
+
+  const suffix = randomUUID();
+  const email = `t026-reattach-${suffix}@example.com`;
+  const [sourceOrganization, targetOrganization] = await db
+    .insert(organizations)
+    .values([
+      { name: `t026-reattach-source-org-${suffix}`, domain: `t026-reattach-source-${suffix}.example` },
+      { name: `t026-reattach-target-org-${suffix}`, domain: `t026-reattach-target-${suffix}.example` }
+    ])
+    .returning({ id: organizations.id });
+  assert.ok(sourceOrganization);
+  assert.ok(targetOrganization);
+
+  const [existingContact] = await db
+    .insert(contacts)
+    .values({
+      organizationId: sourceOrganization.id,
+      email,
+      fullName: "T026 Existing Contact"
+    })
+    .returning({ id: contacts.id });
+  assert.ok(existingContact);
+
+  const [candidate] = await db
+    .insert(researchContactCandidates)
+    .values({
+      organizationId: targetOrganization.id,
+      email,
+      fullName: "T026 Existing Contact",
+      role: "VP Partnerships",
+      status: "pending"
+    })
+    .returning({ id: researchContactCandidates.id });
+  assert.ok(candidate);
+
+  const blocked = await approveContactCandidateCommand({
+    payload: { candidateId: candidate.id }
+  });
+  assert.equal(blocked.ok, false);
+  if (blocked.ok) assert.fail("cross-org existing email should require confirmation");
+  assert.equal(blocked.failure.code, "contact_org_mismatch");
+  assert.equal(blocked.failure.requiresConfirmation, true);
+  assert.equal(blocked.failure.contactId, existingContact.id);
+  assert.equal(blocked.failure.existingOrganizationId, sourceOrganization.id);
+  assert.equal(blocked.failure.candidateOrganizationId, targetOrganization.id);
+
+  const [candidateAfterBlocked] = await db
+    .select({
+      status: researchContactCandidates.status,
+      convertedContactId: researchContactCandidates.convertedContactId
+    })
+    .from(researchContactCandidates)
+    .where(eq(researchContactCandidates.id, candidate.id))
+    .limit(1);
+  assert.deepEqual(candidateAfterBlocked, { status: "pending", convertedContactId: null });
+
+  const commandRowsAfterBlocked = await db
+    .select({ id: commands.id })
+    .from(commands)
+    .where(eq(commands.targetEntityId, candidate.id));
+  assert.equal(commandRowsAfterBlocked.length, 0);
+
+  const confirmed = await approveContactCandidateCommand({
+    payload: {
+      candidateId: candidate.id,
+      confirmReattach: true
+    }
+  });
+  assert.equal(confirmed.ok, true);
+  if (!confirmed.ok) assert.fail(confirmed.failure.message);
+  assert.equal(confirmed.contactId, existingContact.id);
+  assert.equal(confirmed.contactCreated, false);
+  assert.equal(confirmed.contactReattached, true);
+  assert.equal(confirmed.previousContactOrganizationId, sourceOrganization.id);
+
+  const replay = await approveContactCandidateCommand({
+    payload: {
+      candidateId: candidate.id,
+      confirmReattach: true,
+      idempotencyKey: confirmed.idempotencyKey
+    }
+  });
+  assert.equal(replay.ok, true);
+  if (!replay.ok) assert.fail(replay.failure.message);
+  assert.equal(replay.deduplicated, true);
+  assert.equal(replay.command.id, confirmed.command.id);
+  assert.equal(replay.contactReattached, true);
+
+  const [contactAfterConfirm] = await db
+    .select({ organizationId: contacts.organizationId })
+    .from(contacts)
+    .where(eq(contacts.id, existingContact.id))
+    .limit(1);
+  assert.deepEqual(contactAfterConfirm, { organizationId: targetOrganization.id });
+
+  const [candidateAfterConfirm] = await db
+    .select({
+      status: researchContactCandidates.status,
+      convertedContactId: researchContactCandidates.convertedContactId
+    })
+    .from(researchContactCandidates)
+    .where(eq(researchContactCandidates.id, candidate.id))
+    .limit(1);
+  assert.deepEqual(candidateAfterConfirm, { status: "converted", convertedContactId: existingContact.id });
+
+  const [targetAfterConfirm] = await db
+    .select({ primaryContactId: organizations.primaryContactId })
+    .from(organizations)
+    .where(eq(organizations.id, targetOrganization.id))
+    .limit(1);
+  assert.deepEqual(targetAfterConfirm, { primaryContactId: existingContact.id });
+
+  const [event] = await db
+    .select({ payloadJson: eventLog.payloadJson })
+    .from(eventLog)
+    .where(eq(eventLog.entityId, candidate.id))
+    .limit(1);
+  assert.equal(event?.payloadJson["contactReattached"], true);
+  assert.equal(event?.payloadJson["previousContactOrganizationId"], sourceOrganization.id);
 });
 
 test("setPrimaryContactCommand lets an operator change the organization primary contact", async (t) => {

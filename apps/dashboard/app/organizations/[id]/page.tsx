@@ -1,5 +1,8 @@
 import { getOrganizationDetail } from "@bizdev/db";
-import { buildSetPrimaryContactIdempotencyKey } from "@bizdev/shared";
+import {
+  buildApproveContactCandidateIdempotencyKey,
+  buildSetPrimaryContactIdempotencyKey
+} from "@bizdev/shared";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
@@ -8,14 +11,23 @@ import BlockTitle from "@/components/block-title";
 
 export const dynamic = "force-dynamic";
 
-type Props = { params: Promise<{ id: string }> };
+type Props = {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
 
-export default async function OrganizationDetailPage({ params }: Props) {
+export default async function OrganizationDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const query = await searchParams;
   const org = await getOrganizationDetail(id);
   if (!org) {
     notFound();
   }
+  const confirmCandidateId = singleQueryParam(query.confirmContactCandidateId);
+  const confirmContactId = singleQueryParam(query.confirmContactId);
+  const confirmExistingOrganizationId = singleQueryParam(query.confirmExistingOrganizationId);
+  const confirmCandidateOrganizationId = singleQueryParam(query.confirmCandidateOrganizationId);
+  const confirmEmail = singleQueryParam(query.confirmEmail);
 
   return (
     <>
@@ -232,6 +244,31 @@ export default async function OrganizationDetailPage({ params }: Props) {
                         ))}
                       </ul>
                     </details>
+                  ) : null}
+                  {confirmCandidateId === c.id && confirmCandidateOrganizationId === org.id && confirmContactId && confirmExistingOrganizationId && confirmEmail ? (
+                    <div className="mb-3 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent)]/10 p-3 text-xs">
+                      <div className="font-semibold text-[var(--accent)]">Email already belongs to another organization</div>
+                      <div className="mt-1 opacity-80 break-all">
+                        {confirmEmail} · contact {confirmContactId.slice(0, 8)}... · current org {confirmExistingOrganizationId.slice(0, 8)}...
+                      </div>
+                      <form className="mt-3 flex flex-wrap gap-2" action="/api/commands" method="post">
+                        <input type="hidden" name="commandType" value="approve_contact_candidate" />
+                        <input type="hidden" name="candidateId" value={c.id} />
+                        <input type="hidden" name="email" value={confirmEmail} />
+                        <input type="hidden" name="confirmReattach" value="true" />
+                        <input
+                          type="hidden"
+                          name="idempotencyKey"
+                          value={buildApproveContactCandidateIdempotencyKey(c.id, c.updatedAt)}
+                        />
+                        <button
+                          type="submit"
+                          className="rounded-lg bg-[var(--accent)] px-3 py-1.5 font-bold text-black hover:opacity-90"
+                        >
+                          Confirm reattach
+                        </button>
+                      </form>
+                    </div>
                   ) : null}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <form className="space-y-2" action="/api/commands" method="post">
@@ -459,4 +496,9 @@ function confidenceLabel(score: number): string {
 function safeEvidenceHref(raw: string | null): string | null {
   if (!raw) return null;
   return /^https?:\/\//i.test(raw) ? raw : null;
+}
+
+function singleQueryParam(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
 }
