@@ -18,3 +18,11 @@ def test_load_config_exports_vertex_flag(monkeypatch):
     monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
     load_config()
     assert os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") == "TRUE"
+
+
+def test_load_config_exports_yaml_default_location(monkeypatch):
+    # .env may omit GOOGLE_CLOUD_LOCATION; the yaml default must still reach os.environ
+    # so assert_vertex_env (reads os.environ) does not fail-fast erroneously.
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+    load_config()
+    assert os.environ.get("GOOGLE_CLOUD_LOCATION")  # resolved from yaml vertex.location

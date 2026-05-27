@@ -83,8 +83,14 @@ def load_config() -> dict:
     # The in-process tools (query_validatorinfo, search_rag), the genai client, and
     # assert_vertex_env() all read os.environ directly. Mirror resolved values there so
     # local `.env` runs behave like docker-compose (real env always wins via setdefault).
-    for _key in ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
-                 "GOOGLE_APPLICATION_CREDENTIALS", "OLLAMA_TOKEN"):
+    # Export RESOLVED project/location (env > .env > yaml default) so assert_vertex_env
+    # — which reads os.environ — sees the yaml-default location even when .env omits it.
+    if config["vertex"]["project"]:
+        environ.setdefault("GOOGLE_CLOUD_PROJECT", config["vertex"]["project"])
+    if config["vertex"]["location"]:
+        environ.setdefault("GOOGLE_CLOUD_LOCATION", config["vertex"]["location"])
+    # Secrets that live only in .env: mirror to os.environ (real env wins; warn on divergence).
+    for _key in ("GOOGLE_APPLICATION_CREDENTIALS", "OLLAMA_TOKEN"):
         _val = dotenv.get(_key)
         if not _val:
             continue
