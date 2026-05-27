@@ -10109,6 +10109,177 @@ function normalizeQualityGateStringList(input: unknown, maxItems: number, maxLen
   return out;
 }
 
+// Shared contact-candidate persistence: normalize + in-run de-dup + cross-run
+// merge (active email match, else null-email full-name match) + insert. Used by
+// both the research snapshot router (legacy, until G4.2 stage split lands fully)
+// and the dedicated contact-discovery router. The caller owns the transaction
+// and any per-org advisory lock.
+async function routeContactCandidatesIntoOrg(
+  tx: DbTransaction,
+  input: { organizationId: string; agentRunId: string; candidateInputs: unknown[] }
+): Promise<{ inserted: number; updated: number }> {
+  let inserted = 0;
+  let updated = 0;
+  // Track emails seen within this run so two near-identical candidate entries
+  // from one agent run don't both fight for the partial unique index slot. The
+  // DB index is the durable guard against cross-run dups.
+  const emailSeenInRun = new Set<string>();
+  // Null-email candidates are not covered by the partial unique index (it
+  // filters `WHERE email IS NOT NULL`), so two entries for the same person with
+  // no email would both insert. Dedup by lowercased fullName within the run as a
+  // best-effort guard; cross-run dedup of null-email rows is the operator's job.
+  const namelessSeenInRun = new Set<string>();
+  for (const rawCandidate of input.candidateInputs) {
+    const candidate = normalizeContactCandidate(rawCandidate);
+    if (!candidate) continue;
+    if (candidate.email) {
+      if (emailSeenInRun.has(candidate.email)) continue;
+      emailSeenInRun.add(candidate.email);
+    } else {
+      const nameKey = candidate.fullName.toLowerCase();
+      if (namelessSeenInRun.has(nameKey)) continue;
+      namelessSeenInRun.add(nameKey);
+    }
+    const [existingCandidate] = await tx
+      .select({
+        id: researchContactCandidates.id,
+        confidence: researchContactCandidates.confidence,
+        sourceRefs: researchContactCandidates.sourceRefs,
+        evidenceUrl: researchContactCandidates.evidenceUrl,
+        notes: researchContactCandidates.notes
+      })
+      .from(researchContactCandidates)
+      .where(and(
+        eq(researchContactCandidates.organizationId, input.organizationId),
+        eq(researchContactCandidates.status, "pending"),
+        candidate.email
+          ? sql`lower(${researchContactCandidates.email}) = ${candidate.email}`
+          : sql`${researchContactCandidates.email} is null and lower(${researchContactCandidates.fullName}) = ${candidate.fullName.toLowerCase()}`
+      ))
+      .orderBy(desc(researchContactCandidates.updatedAt))
+      .limit(1);
+
+    if (existingCandidate) {
+      await tx
+        .update(researchContactCandidates)
+        .set({
+          role: candidate.role ?? undefined,
+          source: candidate.source ?? undefined,
+          evidenceUrl: candidate.evidenceUrl ?? existingCandidate.evidenceUrl,
+          sourceRefs: mergeResearchContactSourceRefs(existingCandidate.sourceRefs, candidate.sourceRefs),
+          confidence: Math.max(existingCandidate.confidence, candidate.confidence),
+          notes: candidate.notes ?? existingCandidate.notes,
+          agentRunId: input.agentRunId,
+          lastSeenAt: new Date(),
+          updatedAt: new Date()
+        })
+        .where(eq(researchContactCandidates.id, existingCandidate.id));
+      updated += 1;
+      continue;
+    }
+
+    const inserts = await tx
+      .insert(researchContactCandidates)
+      .values({
+        organizationId: input.organizationId,
+        fullName: candidate.fullName,
+        email: candidate.email,
+        role: candidate.role,
+        source: candidate.source,
+        evidenceUrl: candidate.evidenceUrl,
+        sourceRefs: candidate.sourceRefs,
+        confidence: candidate.confidence,
+        notes: candidate.notes,
+        agentRunId: input.agentRunId,
+        lastSeenAt: new Date(),
+        status: "pending"
+      })
+      .onConflictDoNothing()
+      .returning({ id: researchContactCandidates.id });
+    if (inserts.length > 0) inserted += 1;
+  }
+  return { inserted, updated };
+}
+
+function buildDefaultContactDiscoveryPrompt(input: {
+  organizationName: string;
+  domain: string | null;
+}): string {
+  const safeName = sanitizePromptInsertion(input.organizationName, 200);
+  const safeDomain = input.domain ? sanitizePromptInsertion(input.domain, 253) : null;
+  const head = safeDomain ? `${safeName} (${safeDomain})` : safeName;
+  return `Find public contact candidates for ${head} — people the operator could plausibly reach out to (founders, heads of partnerships / sales / BD, relevant product leads). Cite a primary source URL for each. Return only contact candidates; do not produce company facts or questions.`;
+}
+
+export type ContactDiscoveryRouterResult = {
+  contactCandidateCount: number;
+  insertedCount: number;
+  updatedCount: number;
+};
+
+// G4.2: route the dedicated contact-discovery stage output into the org's
+// contact-candidate review queue. Reuses the shared persistence helper and the
+// same per-org advisory lock as the snapshot router so the two never race.
+export async function routeContactDiscoveryOutcome(input: {
+  agentRunId: string;
+  organizationId: string;
+  finalText: string;
+  correlationId: string;
+  jobId?: string;
+}): Promise<ContactDiscoveryRouterResult | null> {
+  const parsed = tryParseResearchOutput(input.finalText);
+  if (!parsed) {
+    await appendEvent({
+      eventType: "contact_discovery_router_failed",
+      entityType: "agent_run",
+      entityId: input.agentRunId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      correlationId: input.correlationId,
+      payloadJson: { reason: "final_response is not valid JSON" }
+    });
+    return null;
+  }
+
+  const candidateInputs = Array.isArray(parsed.contactCandidates)
+    ? parsed.contactCandidates.slice(0, CONTACT_CANDIDATE_CAP)
+    : [];
+
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`
+      select pg_advisory_xact_lock(
+        hashtextextended(${"research_snapshot:" + input.organizationId}, 0)
+      )
+    `);
+    const { inserted, updated } = await routeContactCandidatesIntoOrg(tx, {
+      organizationId: input.organizationId,
+      agentRunId: input.agentRunId,
+      candidateInputs
+    });
+
+    await tx.insert(eventLog).values({
+      eventType: "contact_discovery_completed",
+      entityType: "organization",
+      entityId: input.organizationId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      correlationId: input.correlationId,
+      payloadJson: {
+        organizationId: input.organizationId,
+        contactCandidateCount: inserted + updated,
+        contactCandidateInsertedCount: inserted,
+        contactCandidateUpdatedCount: updated,
+        agentRunId: input.agentRunId
+      }
+    });
+
+    return {
+      contactCandidateCount: inserted + updated,
+      insertedCount: inserted,
+      updatedCount: updated
+    };
+  });
+}
+
 export async function routeResearchSnapshotOutcome(input: {
   agentRunId: string;
   organizationId: string;
@@ -10140,7 +10311,7 @@ export async function routeResearchSnapshotOutcome(input: {
   const db = getDb();
   return db.transaction(async (tx) => {
     const [organization] = await tx
-      .select({ domain: organizations.domain })
+      .select({ name: organizations.name, domain: organizations.domain })
       .from(organizations)
       .where(eq(organizations.id, input.organizationId))
       .limit(1);
@@ -10248,90 +10419,18 @@ export async function routeResearchSnapshotOutcome(input: {
       }
     }
 
-    const candidateInputs = Array.isArray(parsed.contactCandidates)
-      ? parsed.contactCandidates.slice(0, CONTACT_CANDIDATE_CAP)
-      : [];
-    let candidateInserted = 0;
-    let candidateUpdated = 0;
-    // Track emails seen within this snapshot so two near-identical candidate
-    // entries from one agent run don't both fight for the partial unique
-    // index slot. The DB index is the durable guard against cross-run dups.
-    const emailSeenInRun = new Set<string>();
-    // Null-email candidates are not covered by the partial unique index
-    // (it filters `WHERE email IS NOT NULL`), so two entries for the same
-    // person with no email would both insert. Dedup by lowercased fullName
-    // within the run as a best-effort guard; cross-run dedup of null-email
-    // rows is the operator's job (typically a small subset).
-    const namelessSeenInRun = new Set<string>();
-    for (const rawCandidate of candidateInputs) {
-      const candidate = normalizeContactCandidate(rawCandidate);
-      if (!candidate) continue;
-      if (candidate.email) {
-        if (emailSeenInRun.has(candidate.email)) continue;
-        emailSeenInRun.add(candidate.email);
-      } else {
-        const nameKey = candidate.fullName.toLowerCase();
-        if (namelessSeenInRun.has(nameKey)) continue;
-        namelessSeenInRun.add(nameKey);
-      }
-      const [existingCandidate] = await tx
-        .select({
-          id: researchContactCandidates.id,
-          confidence: researchContactCandidates.confidence,
-          sourceRefs: researchContactCandidates.sourceRefs,
-          evidenceUrl: researchContactCandidates.evidenceUrl,
-          notes: researchContactCandidates.notes
-        })
-        .from(researchContactCandidates)
-        .where(and(
-          eq(researchContactCandidates.organizationId, input.organizationId),
-          eq(researchContactCandidates.status, "pending"),
-          candidate.email
-            ? sql`lower(${researchContactCandidates.email}) = ${candidate.email}`
-            : sql`${researchContactCandidates.email} is null and lower(${researchContactCandidates.fullName}) = ${candidate.fullName.toLowerCase()}`
-        ))
-        .orderBy(desc(researchContactCandidates.updatedAt))
-        .limit(1);
-
-      if (existingCandidate) {
-        await tx
-          .update(researchContactCandidates)
-          .set({
-            role: candidate.role ?? undefined,
-            source: candidate.source ?? undefined,
-            evidenceUrl: candidate.evidenceUrl ?? existingCandidate.evidenceUrl,
-            sourceRefs: mergeResearchContactSourceRefs(existingCandidate.sourceRefs, candidate.sourceRefs),
-            confidence: Math.max(existingCandidate.confidence, candidate.confidence),
-            notes: candidate.notes ?? existingCandidate.notes,
-            agentRunId: input.agentRunId,
-            lastSeenAt: new Date(),
-            updatedAt: new Date()
-          })
-          .where(eq(researchContactCandidates.id, existingCandidate.id));
-        candidateUpdated += 1;
-        continue;
-      }
-
-      const inserts = await tx
-          .insert(researchContactCandidates)
-          .values({
-            organizationId: input.organizationId,
-            fullName: candidate.fullName,
-            email: candidate.email,
-            role: candidate.role,
-            source: candidate.source,
-            evidenceUrl: candidate.evidenceUrl,
-            sourceRefs: candidate.sourceRefs,
-            confidence: candidate.confidence,
-            notes: candidate.notes,
-            agentRunId: input.agentRunId,
-            lastSeenAt: new Date(),
-            status: "pending"
-          })
-          .onConflictDoNothing()
-          .returning({ id: researchContactCandidates.id });
-      if (inserts.length > 0) candidateInserted += 1;
-    }
+    // G4.2 transition: the research snapshot still emits contactCandidates for
+    // now (removed in the final step), so keep routing them through the shared
+    // helper. The dedicated contact-discovery stage uses the same helper, and
+    // cross-run dedup merges any overlap between the two during the transition.
+    const { inserted: candidateInserted, updated: candidateUpdated } =
+      await routeContactCandidatesIntoOrg(tx, {
+        organizationId: input.organizationId,
+        agentRunId: input.agentRunId,
+        candidateInputs: Array.isArray(parsed.contactCandidates)
+          ? parsed.contactCandidates.slice(0, CONTACT_CANDIDATE_CAP)
+          : []
+      });
 
     // Canonical §67 D7: auto-chain discovery candidates whose accept fired
     // this enrichment to the terminal `enriched` state. Multiple campaigns
@@ -10403,6 +10502,29 @@ export async function routeResearchSnapshotOutcome(input: {
         enrichedCandidateCount: enrichedRows.length,
         agentRunId: input.agentRunId
       }
+    });
+
+    // G4.2 model A: chain contact discovery as its own stage so the contact
+    // agent runs with its focused prompt after the snapshot lands. Command-less
+    // (system-internal, like cron jobs); audited via agent_run + the
+    // contact_discovery_completed event. concurrencyKey shares the per-org
+    // research key so it serializes with snapshot/refresh runs for the org.
+    await tx.insert(jobs).values({
+      jobType: "job.discover_contacts",
+      status: "queued",
+      workerPool: "background",
+      targetEntityType: "organization",
+      targetEntityId: input.organizationId,
+      payloadJson: {
+        organizationId: input.organizationId,
+        prompt: buildDefaultContactDiscoveryPrompt({
+          organizationName: organization?.name ?? "the organization",
+          domain: organization?.domain ?? null
+        }),
+        sourceSnapshotId: snapshotRow.id
+      },
+      concurrencyKey: `research_snapshot:${input.organizationId}`,
+      correlationId: input.correlationId
     });
 
     return {
@@ -11656,6 +11778,130 @@ export async function completeRefreshResearchSnapshotJob(input: {
           correlationId: input.job.correlation_id
         }) }
       : {})
+  });
+}
+
+// G4.2: dedicated contact-discovery job. Mirrors the research snapshot handler
+// (record run → stream stage → route) but runs the focused
+// `contact_candidate_discovery` stage and has no quality gate. Enqueued by the
+// snapshot router after a snapshot lands (model A: sequential chain).
+export async function completeDiscoverContactsJob(input: {
+  job: LeasedJob;
+  runId: string;
+  workerId: string;
+  organizationId: string;
+  prompt: string;
+  dispatcher: AgentStageDispatcher;
+}): Promise<void> {
+  const { id: agentRunId } = await recordAgentRunStart({
+    stage: "contact_candidate_discovery",
+    jobId: input.job.id,
+    inputSnapshotJson: {
+      organizationId: input.organizationId,
+      prompt: input.prompt
+    }
+  });
+
+  await appendEvent({
+    eventType: "agent_run_started",
+    entityType: "agent_run",
+    entityId: agentRunId,
+    jobId: input.job.id,
+    correlationId: input.job.correlation_id,
+    payloadJson: { stage: "contact_candidate_discovery", organizationId: input.organizationId }
+  });
+
+  let finalText: string | null = null;
+  let runFailed = false;
+  let failureReason: string | null = null;
+
+  try {
+    for await (const event of input.dispatcher({
+      stage: "contact_candidate_discovery",
+      prompt: input.prompt
+    })) {
+      await recordAgentRunEvent({
+        agentRunId,
+        eventType: event.eventType,
+        payloadJson: event.payloadJson
+      });
+
+      if (event.eventType === "final_response") {
+        const text = event.payloadJson["text"];
+        if (typeof text === "string") {
+          finalText = text;
+        }
+      }
+
+      if (event.eventType === "run_failed") {
+        runFailed = true;
+        const reason = event.payloadJson["error"];
+        failureReason = typeof reason === "string" ? reason : "agent run failed";
+        break;
+      }
+    }
+  } catch (error) {
+    runFailed = true;
+    failureReason = error instanceof Error ? error.message : String(error);
+    await recordAgentRunEvent({
+      agentRunId,
+      eventType: "transport_error",
+      payloadJson: { error: failureReason }
+    });
+  }
+
+  if (runFailed) {
+    await completeAgentRun({
+      agentRunId,
+      status: "failed",
+      outputJson: { error: failureReason }
+    });
+    await appendEvent({
+      eventType: "agent_run_failed",
+      entityType: "agent_run",
+      entityId: agentRunId,
+      jobId: input.job.id,
+      correlationId: input.job.correlation_id,
+      payloadJson: { stage: "contact_candidate_discovery", error: failureReason }
+    });
+    throw new Error(`contact_candidate_discovery agent run failed: ${failureReason ?? "unknown"}`);
+  }
+
+  let routerResult: ContactDiscoveryRouterResult | null = null;
+  if (finalText !== null) {
+    await recordAgentRunArtifact({
+      agentRunId,
+      artifactType: "contact_discovery_output",
+      payloadJson: { finalText }
+    });
+    routerResult = await routeContactDiscoveryOutcome({
+      agentRunId,
+      organizationId: input.organizationId,
+      finalText,
+      correlationId: input.job.correlation_id,
+      jobId: input.job.id
+    });
+  }
+
+  await completeAgentRun({
+    agentRunId,
+    status: "succeeded",
+    outputJson: finalText !== null ? { finalText } : {}
+  });
+
+  await completeJob({
+    job: input.job,
+    runId: input.runId,
+    workerId: input.workerId,
+    eventType: "agent_run_completed",
+    eventEntityType: "agent_run",
+    eventEntityId: agentRunId,
+    eventPayload: {
+      stage: "contact_candidate_discovery",
+      organizationId: input.organizationId,
+      hasFinalText: finalText !== null,
+      contactCandidateCount: routerResult?.contactCandidateCount ?? 0
+    }
   });
 }
 

@@ -10,6 +10,7 @@ import {
   completeQueueDepthWatchdogJob,
   completeRefreshResearchSnapshotJob,
   completeResearchMoreJob,
+  completeDiscoverContactsJob,
   completeRecoverStaleJobsCronJob,
   completeRollupAgentCostsCronJob,
   completeRotateEventLogCronJob,
@@ -362,6 +363,20 @@ async function runJobWithinTrace(job: LeasedJob) {
         const organizationId = readString(job.payload_json, "organizationId");
         const prompt = readString(job.payload_json, "prompt");
         await completeRefreshResearchSnapshotJob({
+          job,
+          runId: run.id,
+          workerId,
+          organizationId,
+          prompt,
+          dispatcher: agentDispatcher
+        });
+        break;
+      }
+
+      case "job.discover_contacts": {
+        const organizationId = readString(job.payload_json, "organizationId");
+        const prompt = readString(job.payload_json, "prompt");
+        await completeDiscoverContactsJob({
           job,
           runId: run.id,
           workerId,
