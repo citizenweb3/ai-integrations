@@ -10,6 +10,7 @@ import {
   discoveryCandidates,
   eventLog,
   getDb,
+  jobs,
   rejectDiscoveryCandidateCommand,
   routeCampaignDiscoveryOutcome
 } from "../src";
@@ -289,6 +290,79 @@ test("accept auto-chain enrichment prompt carries campaign context", async (t) =
   assert.match(prompt, /fintech, healthtech/);
   assert.match(prompt, /Book a 20-minute compliance readiness call\./);
   assert.match(prompt, /Prioritize companies actively pursuing SOC-2\./);
+});
+
+test("accept with skipEnrichment links the org without queueing research", async (t) => {
+  const db = getDb();
+  await clearT026BArtifacts();
+  t.after(clearT026BArtifacts);
+
+  const suffix = randomUUID();
+  const [campaign] = await db
+    .insert(campaigns)
+    .values({
+      name: `t026b-skip-${suffix}`,
+      status: "active",
+      objective: "Skip enrichment when a fresh snapshot already exists.",
+      targetSegments: ["T026B"]
+    })
+    .returning({ id: campaigns.id });
+  assert.ok(campaign);
+
+  const [candidate] = await db
+    .insert(discoveryCandidates)
+    .values({
+      campaignId: campaign.id,
+      proposedName: `t026b-skip-org-${suffix}`,
+      domain: `t026b-skip-${suffix}.example`,
+      sourceRefs: [{ url: "https://example.com/t026b-skip" }],
+      status: "proposed"
+    })
+    .returning({ id: discoveryCandidates.id });
+  assert.ok(candidate);
+
+  const accept = await acceptDiscoveryCandidateCommand({
+    payload: { candidateId: candidate.id, skipEnrichment: true }
+  });
+  assert.equal(accept.ok, true);
+  if (!accept.ok) assert.fail(accept.failure.message);
+  assert.equal(accept.enrichmentJobId, null);
+
+  // Candidate is accepted + org-linked, but NOT queued_for_enrichment.
+  const [candidateRow] = await db
+    .select({
+      status: discoveryCandidates.status,
+      matched: discoveryCandidates.matchedOrganizationId
+    })
+    .from(discoveryCandidates)
+    .where(eq(discoveryCandidates.id, candidate.id))
+    .limit(1);
+  assert.equal(candidateRow?.status, "accepted");
+  assert.equal(candidateRow?.matched, accept.organizationId);
+
+  // No refresh_research_snapshot command or job was enqueued for the org.
+  const enrichmentCommands = await db
+    .select({ id: commands.id })
+    .from(commands)
+    .where(sql`${commands.commandType} = 'refresh_research_snapshot'
+      and ${commands.targetEntityId} = ${accept.organizationId}`);
+  assert.equal(enrichmentCommands.length, 0);
+  const enrichmentJobs = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(sql`${jobs.jobType} = 'job.refresh_research_snapshot'
+      and ${jobs.targetEntityId} = ${accept.organizationId}`);
+  assert.equal(enrichmentJobs.length, 0);
+
+  // The accept event records the skip for audit.
+  const [event] = await db
+    .select({ payloadJson: eventLog.payloadJson })
+    .from(eventLog)
+    .where(sql`${eventLog.eventType} = 'discovery_candidate_accepted'
+      and ${eventLog.entityId} = ${candidate.id}`)
+    .limit(1);
+  assert.equal(event?.payloadJson["skippedEnrichment"], true);
+  assert.equal(event?.payloadJson["enrichmentJobId"], null);
 });
 
 async function clearT026BArtifacts(): Promise<void> {

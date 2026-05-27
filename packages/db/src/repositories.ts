@@ -6087,7 +6087,7 @@ export type AcceptDiscoveryCandidateResult =
       candidateId: string;
       organizationId: string;
       organizationCreated: boolean;
-      enrichmentJobId: string;
+      enrichmentJobId: string | null;
       idempotencyKey: string;
       deduplicated: boolean;
     }
@@ -6257,7 +6257,9 @@ export async function acceptDiscoveryCandidateCommand(input: {
         typeof replayPayload["enrichmentJobId"] === "string"
           ? (replayPayload["enrichmentJobId"] as string)
           : null;
-      if (!replayedOrgId || !replayedJobId) {
+      // A skipped-enrichment accept legitimately has a null enrichmentJobId.
+      const replayedSkipped = replayPayload["skippedEnrichment"] === true;
+      if (!replayedOrgId || (!replayedJobId && !replayedSkipped)) {
         throw new Error(`Replayed accept command lacks organizationId/enrichmentJobId: ${idempotencyKey}`);
       }
       return {
@@ -6308,10 +6310,16 @@ export async function acceptDiscoveryCandidateCommand(input: {
     // `stale_state` failure to the operator. The throw rolls back this
     // entire tx — command insert + new org row + any prior writes are
     // discarded, so retrying after a refresh sees a clean slate.
+    // Operator may skip the auto-chained enrichment (S3.8) — typically when a
+    // fresh research snapshot already exists for the resolved org. Skipping
+    // leaves the candidate `accepted` (org linked, not enriched) and queues no
+    // research job; the normal path goes `queued_for_enrichment` then flips to
+    // `enriched` once the snapshot lands.
+    const skipEnrichment = payload.skipEnrichment === true;
     const updated = await tx
       .update(discoveryCandidates)
       .set({
-        status: "queued_for_enrichment",
+        status: skipEnrichment ? "accepted" : "queued_for_enrichment",
         matchedOrganizationId: organizationId,
         updatedAt: new Date()
       })
@@ -6372,7 +6380,7 @@ export async function acceptDiscoveryCandidateCommand(input: {
     // into the existing enrichment pipeline. The job has its own command
     // row tagged by `accept_discovery_candidate`'s correlation id so the
     // event audit trail joins back to the operator click.
-    const insertedEnrichmentCommand = await tx
+    const insertedEnrichmentCommand = skipEnrichment ? [] : await tx
       .insert(commands)
       .values({
         source: "system",
@@ -6395,7 +6403,7 @@ export async function acceptDiscoveryCandidateCommand(input: {
       ? expectOne(insertedEnrichmentCommand, "auto enrichment command")
       : null;
 
-    let enrichmentJobId: string;
+    let enrichmentJobId: string | null = null;
     if (enrichmentCommand) {
       const insertedJobs = await tx
         .insert(jobs)
@@ -6415,10 +6423,11 @@ export async function acceptDiscoveryCandidateCommand(input: {
         })
         .returning({ id: jobs.id });
       enrichmentJobId = expectOne(insertedJobs, "auto enrichment job").id;
-    } else {
+    } else if (!skipEnrichment) {
       // Same-millisecond accept submits with the same triggeredAt
       // collapse onto the prior enrichment command row + job. Look up
       // the job for the existing command so we can return its id.
+      // (When enrichment was skipped, enrichmentJobId stays null.)
       const [racedCommand] = await tx
         .select({ id: commands.id })
         .from(commands)
@@ -6445,7 +6454,8 @@ export async function acceptDiscoveryCandidateCommand(input: {
           ...(payload as unknown as Record<string, unknown>),
           organizationId,
           organizationCreated,
-          enrichmentJobId
+          enrichmentJobId,
+          skippedEnrichment: skipEnrichment
         },
         updatedAt: new Date()
       })
@@ -6456,7 +6466,7 @@ export async function acceptDiscoveryCandidateCommand(input: {
       entityType: "discovery_candidate",
       entityId: candidate.id,
       commandId: command.id,
-      jobId: enrichmentJobId,
+      ...(enrichmentJobId ? { jobId: enrichmentJobId } : {}),
       correlationId,
       payloadJson: {
         candidateId: candidate.id,
@@ -6464,6 +6474,7 @@ export async function acceptDiscoveryCandidateCommand(input: {
         organizationId,
         organizationCreated,
         enrichmentJobId,
+        skippedEnrichment: skipEnrichment,
         previousStatus: candidate.status
       }
     });

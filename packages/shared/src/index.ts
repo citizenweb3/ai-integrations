@@ -800,6 +800,10 @@ export const acceptDiscoveryCandidatePayloadSchema = z
     // (linking adopts the target org's identity, overrides would be
     // ambiguous).
     linkToOrganizationId: z.string().uuid().optional(),
+    // Skip the auto-chained research enrichment (e.g. a fresh snapshot already
+    // exists for the resolved org). When true the candidate is accepted +
+    // org-linked but no `refresh_research_snapshot` job is queued.
+    skipEnrichment: z.boolean().optional(),
     notes: z.string().trim().max(2000).optional(),
     idempotencyKey: z.string().trim().min(1).max(200).optional()
   })

@@ -575,6 +575,10 @@ function CandidateRow({ candidate }: { candidate: DiscoveryCandidateView }) {
                 name="domain"
                 placeholder={`Override domain (default: ${candidate.domain ?? "—"})`}
               />
+              <label className="flex items-center gap-2 text-xs opacity-80">
+                <input type="checkbox" name="skipEnrichment" />
+                Skip research enrichment (org already has a fresh snapshot)
+              </label>
               <Button type="submit" size="sm">Accept</Button>
             </form>
           ) : null}

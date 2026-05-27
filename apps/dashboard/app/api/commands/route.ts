@@ -1340,6 +1340,8 @@ function formDataToCommand(formData: FormData) {
     const linkToOrganizationId = String(formData.get("linkToOrganizationId") ?? "").trim();
     const notes = String(formData.get("notes") ?? "").trim();
     const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
+    // Checkbox: present in the form data only when the operator ticked it.
+    const skipEnrichment = formData.get("skipEnrichment") != null;
     return {
       commandType,
       ...base,
@@ -1349,6 +1351,7 @@ function formDataToCommand(formData: FormData) {
         ...(domain ? { domain } : {}),
         ...(countryCode ? { countryCode } : {}),
         ...(linkToOrganizationId ? { linkToOrganizationId } : {}),
+        ...(skipEnrichment ? { skipEnrichment: true } : {}),
         ...(notes ? { notes } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
