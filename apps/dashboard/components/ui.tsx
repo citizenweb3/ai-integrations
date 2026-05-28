@@ -129,6 +129,29 @@ export const InfoRow: FC<{ label: string; value: ReactNode; className?: string }
   );
 };
 
+// Form field wrapper — uppercase label above the control + optional hint
+// underneath. Wrap any input/textarea/select to give it a proper visible label
+// instead of relying on placeholder text alone.
+export const Field: FC<
+  PropsWithChildren<{
+    label: string;
+    hint?: ReactNode;
+    required?: boolean;
+    className?: string;
+  }>
+> = ({ label, hint, required, className, children }) => {
+  return (
+    <label className={twMerge("flex flex-col gap-2", className)}>
+      <span className="text-xs font-semibold tracking-[0.15em] uppercase opacity-70">
+        {label}
+        {required ? <span className="text-[var(--accent)] ml-1">*</span> : null}
+      </span>
+      {children}
+      {hint ? <span className="text-xs font-light opacity-55 leading-snug">{hint}</span> : null}
+    </label>
+  );
+};
+
 // Section label — uppercase tracking-wide tag with a hairline running to the
 // right edge. Pairs with the existing brand language (BlockTitle uses the same
 // tracking-[0.05em] / uppercase rhythm).
