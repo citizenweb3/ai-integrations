@@ -16390,7 +16390,6 @@ export async function failJob(input: { job: LeasedJob; runId: string; workerId: 
         and ${jobRuns.status} = 'running'
       `)
       .returning({ id: jobRuns.id });
-    expectOne(updatedRuns, "running job run to fail");
 
     const updatedJobs = await tx
       .update(jobs)
@@ -16409,7 +16408,32 @@ export async function failJob(input: { job: LeasedJob; runId: string; workerId: 
         and ${jobs.status} = 'running'
       `)
       .returning({ id: jobs.id });
-    expectOne(updatedJobs, "running job to fail");
+
+    // Soft-tolerance: if the row predicate missed, the stale-lease recovery
+    // cron (or another reconciler) already moved the job out of `running`
+    // while this attempt was still executing. That is not a bug — it is the
+    // intended cleanup path for long-running agent tasks that overrun the
+    // 60s lease. Skip the rest of the bookkeeping: recovery already wrote
+    // the job state, the run row is at worst a stale `running` (harmless;
+    // stale_jobs_recovery clears these), and re-emitting `job_failed` /
+    // `job_dead_lettered` events here would be a duplicate.
+    if (updatedJobs.length === 0) {
+      await tx.insert(eventLog).values({
+        eventType: "job_fail_skipped_due_to_recovery",
+        entityType: "job",
+        entityId: input.job.id,
+        jobId: input.job.id,
+        correlationId: input.job.correlation_id,
+        payloadJson: {
+          jobType: input.job.job_type,
+          workerId: input.workerId,
+          attempts: input.job.attempts,
+          reason: "row not in running/leased state — likely recovered by stale-lease cron",
+          runFinalized: updatedRuns.length > 0
+        }
+      });
+      return;
+    }
 
     await tx.insert(eventLog).values({
       eventType: "job_failed",

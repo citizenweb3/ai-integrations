@@ -276,6 +276,7 @@ export const eventTypes = [
   "research_snapshot_router_failed",
   "contact_discovery_completed",
   "contact_discovery_router_failed",
+  "job_fail_skipped_due_to_recovery",
   "manual_org_research_completed",
   "organization_primary_contact_set",
   "contact_candidate_approved",
