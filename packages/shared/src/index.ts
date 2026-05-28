@@ -199,6 +199,25 @@ export const jobTypes = [
   "job.run_campaign_discovery"
 ] as const;
 
+// System / housekeeping job types — cron ticks and policy-state resurfacing
+// that run continuously regardless of operator activity. UIs default to hiding
+// these so the operator's own work is not buried in heartbeat noise. The
+// `satisfies` clause makes TS reject any entry missing from `jobTypes`.
+export const systemJobTypes = [
+  "job.resurface_policy_states",
+  "job.cron_recover_stale_jobs",
+  "job.cron_worker_heartbeat_watchdog",
+  "job.cron_queue_depth_watchdog",
+  "job.cron_rotate_event_log",
+  "job.cron_rollup_agent_costs"
+] as const satisfies ReadonlyArray<(typeof jobTypes)[number]>;
+
+export type SystemJobType = (typeof systemJobTypes)[number];
+
+export function isSystemJobType(jobType: string): boolean {
+  return (systemJobTypes as readonly string[]).includes(jobType);
+}
+
 export const jobStatuses = [
   "queued",
   "leased",

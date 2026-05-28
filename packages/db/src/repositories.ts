@@ -76,7 +76,8 @@ import {
   type DiscoveryCandidateStatus,
   type EventType,
   agentTokenUsageSchema,
-  type AgentTokenUsage
+  type AgentTokenUsage,
+  systemJobTypes
 } from "@bizdev/shared";
 import { dedupeOrganization, type DedupeDb } from "./dedupe";
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
@@ -1416,11 +1417,20 @@ function parseJobDeadLetterReason(lastError: string | null): string {
 
 export async function getDashboardSnapshot() {
   const db = getDb();
+  // Reuse the system-jobtype list as a parameterized SQL fragment so both the
+  // jobs filter and the events subquery share one source of truth.
+  const systemTypesFragment = sql.join(
+    systemJobTypes.map((t) => sql`${t}`),
+    sql`, `
+  );
   const [
     recentCampaigns,
     recentCommands,
     recentJobs,
+    recentBusinessJobs,
     recentEvents,
+    recentBusinessEvents,
+    systemJobsTotal,
     recentWebhookEvents,
     recentSuppressions,
     activeWorkItems
@@ -1428,7 +1438,24 @@ export async function getDashboardSnapshot() {
     db.select().from(campaigns).orderBy(desc(campaigns.createdAt)).limit(10),
     db.select().from(commands).orderBy(desc(commands.createdAt)).limit(10),
     db.select().from(jobs).orderBy(desc(jobs.createdAt)).limit(10),
+    // Operator-relevant jobs only — cron + policy-state resurfacing hidden.
+    db.select().from(jobs)
+      .where(sql`${jobs.jobType} not in (${systemTypesFragment})`)
+      .orderBy(desc(jobs.createdAt)).limit(10),
     db.select().from(eventLog).orderBy(desc(eventLog.createdAt)).limit(20),
+    // Events tied to a system job (`job_started` / `job_succeeded` from a cron
+    // tick, etc.) are noise on the operator view; events with no jobId or tied
+    // to a business job stay.
+    db.select().from(eventLog)
+      .where(sql`
+        ${eventLog.jobId} is null
+        or ${eventLog.jobId} not in (
+          select id from jobs where job_type in (${systemTypesFragment})
+        )
+      `)
+      .orderBy(desc(eventLog.createdAt)).limit(20),
+    db.select({ count: sql<number>`count(*)::int` }).from(jobs)
+      .where(sql`${jobs.jobType} in (${systemTypesFragment})`),
     db.select().from(webhookEvents).orderBy(desc(webhookEvents.createdAt)).limit(10),
     db.select().from(suppressionEntries).orderBy(desc(suppressionEntries.createdAt)).limit(10),
     db
@@ -1446,7 +1473,10 @@ export async function getDashboardSnapshot() {
     campaigns: recentCampaigns,
     commands: recentCommands,
     jobs: recentJobs,
+    businessJobs: recentBusinessJobs,
     events: recentEvents,
+    businessEvents: recentBusinessEvents,
+    systemJobsTotal: systemJobsTotal[0]?.count ?? 0,
     webhookEvents: recentWebhookEvents,
     suppressions: recentSuppressions,
     workItems: activeWorkItems

@@ -39,8 +39,11 @@ export default async function DashboardHome() {
   const reviewQueue = await loadReviewQueue();
   const campaigns = snapshot.data?.campaigns ?? [];
   const commands = snapshot.data?.commands ?? [];
-  const jobs = snapshot.data?.jobs ?? [];
-  const events = snapshot.data?.events ?? [];
+  // Business arrays exclude cron + policy-state-resurfacing noise. The raw
+  // `jobs` / `events` are still available if a later view needs the system feed.
+  const businessJobs = snapshot.data?.businessJobs ?? [];
+  const businessEvents = snapshot.data?.businessEvents ?? [];
+  const systemJobsTotal = snapshot.data?.systemJobsTotal ?? 0;
   const webhookEvents = snapshot.data?.webhookEvents ?? [];
   const suppressions = snapshot.data?.suppressions ?? [];
   const workItems = snapshot.data?.workItems ?? [];
@@ -76,12 +79,18 @@ export default async function DashboardHome() {
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
           <MetricCard label="Campaigns" value={campaigns.length} />
           <MetricCard label="Commands" value={commands.length} />
-          <MetricCard label="Jobs" value={jobs.length} />
-          <MetricCard label="Events" value={events.length} />
+          <MetricCard label="Jobs" value={businessJobs.length} />
+          <MetricCard label="Events" value={businessEvents.length} />
           <MetricCard label="Webhooks" value={webhookEvents.length} />
           <MetricCard label="Suppressions" value={suppressions.length} />
           <MetricCard label="Work items" value={workItems.length} accent={workItems.length > 0} />
         </div>
+
+        {systemJobsTotal > 0 ? (
+          <p className="text-xs opacity-50 -mt-4">
+            Counts exclude {systemJobsTotal} background housekeeping job{systemJobsTotal === 1 ? "" : "s"} (cron ticks, watchdogs, policy-state resurfacing).
+          </p>
+        ) : null}
 
         {reviewQueue.length > 0 ? (
           <Card className="border border-[hsl(var(--primary))]/30">
@@ -289,16 +298,23 @@ export default async function DashboardHome() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <BlockTitle title="Recent jobs" className="mb-4 text-left" />
-            <ul className="space-y-2">
-              {jobs.map((job) => (
-                <li key={job.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                  <strong className="font-medium">{job.jobType}</strong>
-                  <span className="text-xs opacity-60">
-                    {job.status} / attempts {job.attempts}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            {businessJobs.length === 0 ? (
+              <p className="text-sm font-light opacity-60">
+                No recent operator-driven jobs.
+                {systemJobsTotal > 0 ? ` Background housekeeping (${systemJobsTotal}) is running and hidden.` : ""}
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {businessJobs.map((job) => (
+                  <li key={job.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
+                    <strong className="font-medium">{job.jobType}</strong>
+                    <span className="text-xs opacity-60">
+                      {job.status} / attempts {job.attempts}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
 
           <Card>
@@ -344,16 +360,22 @@ export default async function DashboardHome() {
 
         <Card>
           <BlockTitle title="Event log" className="mb-4 text-left" />
-          <ul className="space-y-2">
-            {events.map((event) => (
-              <li key={event.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                <strong className="font-medium">{event.eventType}</strong>
-                <span className="text-xs opacity-60">
-                  {event.entityType ?? "system"} / {event.entityId ?? "none"}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {businessEvents.length === 0 ? (
+            <p className="text-sm font-light opacity-60">
+              No recent operator-driven events. System lifecycle events (cron job_started / job_succeeded etc.) are hidden here.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {businessEvents.map((event) => (
+                <li key={event.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
+                  <strong className="font-medium">{event.eventType}</strong>
+                  <span className="text-xs opacity-60">
+                    {event.entityType ?? "system"} / {event.entityId ?? "none"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       </section>
     </>
