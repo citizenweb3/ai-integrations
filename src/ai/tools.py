@@ -110,6 +110,12 @@ async def search_rag(query: str, limit: int = 5) -> str:
     lines: list[str] = []
     for r in results:
         lines.append(f'- "{r.get("quote", "")}"')
-        lines.append(f'  Speaker: {r.get("speakerName", "?")}, Episode: {r.get("episodeTitle", "")}')
+        speaker = r.get("speakerName") or "?"
+        role = r.get("speakerRole") or ""
+        if role:
+            # Surface HOST/GUEST role so the LLM can apply CW3 disclosure
+            # rules in cite mode (see prompts/system.md §6, §7).
+            speaker = f"{speaker} ({role})"
+        lines.append(f'  Speaker: {speaker}, Episode: {r.get("episodeTitle", "")}')
         lines.append(f'  URL: {r.get("episodeUrl", "")}')
     return "\n".join(lines)
