@@ -1,10 +1,16 @@
 import { getCampaignsNeedingReview, getDashboardSnapshot } from "@bizdev/db";
 import { buildWorkItemActionIdempotencyKey } from "@bizdev/shared";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import ConsoleHero from "@/components/console-hero";
-import Card from "@/components/card";
-import BlockTitle from "@/components/block-title";
-import { inputClass, textareaClass } from "@/components/ui";
+import {
+  ActivityList,
+  Badge,
+  PillLink,
+  SectionLabel,
+  SecondaryStat,
+  TriageCallout
+} from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -21,8 +27,8 @@ async function loadReviewQueue() {
   try {
     return await getCampaignsNeedingReview();
   } catch {
-    // The DB-unavailable banner already surfaces the snapshot failure; the
-    // review tile just stays hidden rather than throwing the whole page.
+    // DB-unavailable banner already surfaces the snapshot failure; the review
+    // section silently disappears rather than throwing the whole page.
     return [];
   }
 }
@@ -37,227 +43,143 @@ function priorityBand(priority: number) {
 export default async function DashboardHome() {
   const snapshot = await loadSnapshot();
   const reviewQueue = await loadReviewQueue();
+
   const campaigns = snapshot.data?.campaigns ?? [];
-  const commands = snapshot.data?.commands ?? [];
-  // Business arrays exclude cron + policy-state-resurfacing noise. The raw
-  // `jobs` / `events` are still available if a later view needs the system feed.
   const businessJobs = snapshot.data?.businessJobs ?? [];
   const businessEvents = snapshot.data?.businessEvents ?? [];
   const systemJobsTotal = snapshot.data?.systemJobsTotal ?? 0;
+  const workItems = snapshot.data?.workItems ?? [];
   const webhookEvents = snapshot.data?.webhookEvents ?? [];
   const suppressions = snapshot.data?.suppressions ?? [];
-  const workItems = snapshot.data?.workItems ?? [];
+
+  const reviewQueueTotal = reviewQueue.reduce((s, c) => s + c.needsReview + c.proposed, 0);
+  const urgentWorkItems = workItems.filter((w) => w.priority >= 90).length;
 
   return (
     <>
       <ConsoleHero
-        eyebrow="Zero-autosend MVP"
-        title="Operator Console"
-        subtitle="Postgres-backed command/job/event foundation for campaign-driven outreach. Every outbound email remains operator-approved."
-        actions={
-          <>
-            <PillLink href="/inbox" primary>
-              Open Inbox
-            </PillLink>
-            <PillLink href="/campaigns">Campaigns</PillLink>
-            <PillLink href="/organizations">Organizations</PillLink>
-            <PillLink href="/drafts">Drafts</PillLink>
-            <PillLink href="/policies">Policies</PillLink>
-            <PillLink href="/operations">Operations</PillLink>
-          </>
-        }
+        currentNav="console"
+        eyebrow="Operator Console · v0.1"
+        title="BizDev Outreach"
+        subtitle="Zero-autosend. Every email approved by hand. Postgres-coordinated commands, jobs, events — one operator, one decision at a time."
       />
-
-      <section className="max-w-[80vw] mx-auto px-4 pb-24 space-y-8">
+      <section className="max-w-7xl mx-auto px-6 pb-24 space-y-14">
         {snapshot.error ? (
-          <Card className="border border-red-500/40">
-            <BlockTitle title="Database unavailable" className="mb-2 text-left text-red-400" />
-            <p className="text-sm font-light opacity-80">{snapshot.error}</p>
-          </Card>
+          <div className="border border-red-500/40 bg-red-500/5 p-5 rounded-md">
+            <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-red-400 mb-2">
+              Database unavailable
+            </div>
+            <p className="text-sm opacity-80">{snapshot.error}</p>
+          </div>
         ) : null}
 
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-          <MetricCard label="Campaigns" value={campaigns.length} />
-          <MetricCard label="Commands" value={commands.length} />
-          <MetricCard label="Jobs" value={businessJobs.length} />
-          <MetricCard label="Events" value={businessEvents.length} />
-          <MetricCard label="Webhooks" value={webhookEvents.length} />
-          <MetricCard label="Suppressions" value={suppressions.length} />
-          <MetricCard label="Work items" value={workItems.length} accent={workItems.length > 0} />
-        </div>
+        {/* TRIAGE — primary attention surface */}
+        <section>
+          <SectionLabel meta="prioritized">Needs your attention</SectionLabel>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <TriageCallout
+              label="Work items"
+              value={workItems.length}
+              sublabel={
+                urgentWorkItems > 0
+                  ? `${urgentWorkItems} urgent (P0)`
+                  : workItems.length === 0
+                    ? "All clear"
+                    : "review queued"
+              }
+              tone={urgentWorkItems > 0 ? "danger" : workItems.length > 0 ? "accent" : "neutral"}
+              href="/inbox"
+            />
+            <TriageCallout
+              label="Discovery review"
+              value={reviewQueueTotal}
+              sublabel={
+                reviewQueue.length === 0
+                  ? "No campaigns awaiting"
+                  : `across ${reviewQueue.length} campaign${reviewQueue.length === 1 ? "" : "s"}`
+              }
+              tone={reviewQueueTotal > 0 ? "accent" : "neutral"}
+              href={reviewQueue[0] ? `/campaigns/${reviewQueue[0].campaignId}` : "/campaigns"}
+            />
+            <TriageCallout
+              label="Operator activity"
+              value={businessJobs.length}
+              sublabel={
+                businessJobs.length === 0
+                  ? "no jobs yet — start a campaign"
+                  : "recent business jobs"
+              }
+              tone={businessJobs.length > 0 ? "accent" : "neutral"}
+              href="/operations"
+            />
+          </div>
+          {systemJobsTotal > 0 ? (
+            <p className="font-mono text-[10px] tracking-[0.2em] uppercase opacity-40 mt-5 pl-1">
+              + {systemJobsTotal} background housekeeping job{systemJobsTotal === 1 ? "" : "s"} (cron, watchdogs) hidden
+            </p>
+          ) : null}
+        </section>
 
-        {systemJobsTotal > 0 ? (
-          <p className="text-xs opacity-50 -mt-4">
-            Counts exclude {systemJobsTotal} background housekeeping job{systemJobsTotal === 1 ? "" : "s"} (cron ticks, watchdogs, policy-state resurfacing).
-          </p>
-        ) : null}
+        {/* QUICK ACTIONS */}
+        <section>
+          <SectionLabel>Quick actions</SectionLabel>
+          <div className="flex flex-wrap gap-3">
+            <PillLink href="/campaigns/new" primary>
+              + New campaign
+            </PillLink>
+            <PillLink href="/campaigns">All campaigns</PillLink>
+            <PillLink href="/inbox">Operator inbox</PillLink>
+            <PillLink href="/drafts">Drafts queue</PillLink>
+            <PillLink href="/organizations">Organizations</PillLink>
+            <PillLink href="/operations/events">Event log</PillLink>
+          </div>
+        </section>
 
+        {/* REVIEW QUEUE — only when non-empty */}
         {reviewQueue.length > 0 ? (
-          <Card className="border border-[hsl(var(--primary))]/30">
-            <BlockTitle title="Campaigns needing review" className="mb-4 text-left" />
+          <section>
+            <SectionLabel meta={`${reviewQueue.length} ${reviewQueue.length === 1 ? "campaign" : "campaigns"}`}>
+              Campaigns awaiting discovery review
+            </SectionLabel>
             <ul className="space-y-2">
               {reviewQueue.map((c) => (
                 <li key={c.campaignId}>
                   <Link
                     href={`/campaigns/${c.campaignId}`}
-                    className="flex items-center justify-between gap-3 rounded-lg bg-[#1A1A1B] border border-white/10 px-3 py-2 hover:border-[hsl(var(--primary))]/40"
+                    className="flex items-center justify-between gap-4 px-4 py-3 rounded-md bg-[var(--surface-1)] border border-white/[0.06] hover:border-[var(--accent)]/40 hover:no-underline transition-colors"
                   >
-                    <span className="text-sm font-medium truncate">{c.campaignName}</span>
-                    <span className="flex items-center gap-2 text-xs whitespace-nowrap">
+                    <span className="flex items-baseline gap-3 min-w-0">
+                      <span className="font-mono text-[10px] tracking-[0.15em] uppercase opacity-40 shrink-0">
+                        {c.campaignStatus}
+                      </span>
+                      <span className="font-medium truncate">{c.campaignName}</span>
+                    </span>
+                    <span className="flex items-center gap-2 shrink-0">
                       {c.needsReview > 0 ? (
-                        <span className="px-2 py-0.5 rounded-full border border-[var(--accent)]/40 text-[var(--accent)]">
-                          {c.needsReview} needs review
-                        </span>
+                        <Badge tone="accent">{c.needsReview} needs review</Badge>
                       ) : null}
-                      {c.proposed > 0 ? (
-                        <span className="px-2 py-0.5 rounded-full border border-white/15 opacity-80">
-                          {c.proposed} proposed
-                        </span>
-                      ) : null}
+                      {c.proposed > 0 ? <Badge>{c.proposed} proposed</Badge> : null}
                     </span>
                   </Link>
                 </li>
               ))}
             </ul>
-          </Card>
+          </section>
         ) : null}
 
-        <Card>
-          <BlockTitle title="Create campaign command" className="mb-4 text-left" />
-          <p className="text-sm font-light opacity-70 mb-4">
-            Full scope form:{" "}
-            <Link href="/campaigns/new" className="text-[hsl(var(--primary))]">
-              /campaigns/new
-            </Link>
-          </p>
-          <form className="grid grid-cols-1 md:grid-cols-2 gap-3" action="/api/commands" method="post">
-            <input type="hidden" name="commandType" value="start_campaign" />
-            <input
-              name="name"
-              placeholder="AI integration services outreach"
-              required
-              className={`${inputClass} md:col-span-2`}
-            />
-            <textarea
-              name="objective"
-              placeholder="Sell our AI integration services to..."
-              required
-              rows={3}
-              className={`${textareaClass} md:col-span-2`}
-            />
-            <textarea
-              name="offerSummary"
-              placeholder="Offer summary"
-              rows={3}
-              className={textareaClass}
-            />
-            <textarea
-              name="desiredCta"
-              placeholder="Desired CTA"
-              rows={3}
-              className={textareaClass}
-            />
-            <textarea
-              name="targetSegments"
-              placeholder="Target segments"
-              rows={3}
-              className={textareaClass}
-            />
-            <textarea
-              name="operatorNotes"
-              placeholder="Operator notes"
-              rows={3}
-              className={textareaClass}
-            />
-            <textarea
-              name="forbiddenClaims"
-              placeholder="Forbidden claims"
-              rows={3}
-              className={textareaClass}
-            />
-            <textarea
-              name="discoverySourceHints"
-              placeholder="Discovery source hints"
-              rows={3}
-              className={textareaClass}
-            />
-            <textarea
-              name="discoveryExclusions"
-              placeholder="Discovery exclusions"
-              rows={3}
-              className={textareaClass}
-            />
-            <input
-              name="allowedRegions"
-              placeholder="Allowed regions"
-              aria-label="Allowed regions"
-              className={inputClass}
-            />
-            <input
-              name="maxOrganizationsToDiscover"
-              type="number"
-              aria-label="Max organizations to discover"
-              min={1}
-              max={500}
-              defaultValue={25}
-              className={inputClass}
-            />
-            <input
-              name="maxConcurrentEnrichments"
-              type="number"
-              aria-label="Max concurrent enrichments"
-              min={1}
-              max={100}
-              defaultValue={3}
-              className={inputClass}
-            />
-            <input
-              name="maxConcurrentDrafts"
-              type="number"
-              aria-label="Max concurrent drafts"
-              min={1}
-              max={100}
-              defaultValue={5}
-              className={inputClass}
-            />
-            <input
-              name="maxOpenDraftReviews"
-              type="number"
-              aria-label="Max open draft reviews"
-              min={1}
-              max={500}
-              defaultValue={25}
-              className={inputClass}
-            />
-            <input
-              name="cooldownBetweenDiscoverySeconds"
-              type="number"
-              aria-label="Cooldown between discovery seconds"
-              min={0}
-              max={604800}
-              defaultValue={3600}
-              className={inputClass}
-            />
-            <button
-              type="submit"
-              className="rounded-lg bg-[var(--accent)] text-black font-bold py-3 hover:opacity-90 md:col-span-2"
-            >
-              Create command
-            </button>
-          </form>
-        </Card>
-
-        <Card>
-          <BlockTitle title="Operator Inbox" className="mb-4 text-left" />
-          {workItems.length === 0 ? (
-            <p className="text-sm font-light opacity-60">
-              No active work items. Webhook triage, suppression reviews, and draft approvals will appear here.
-            </p>
-          ) : (
+        {/* OPERATOR INBOX — work items with action forms */}
+        {workItems.length > 0 ? (
+          <section>
+            <SectionLabel meta={`${workItems.length} ${workItems.length === 1 ? "item" : "items"}`}>
+              Operator inbox
+            </SectionLabel>
             <ul className="space-y-3">
               {workItems.map((item) => (
-                <li key={item.id} className="border border-white/10 rounded-xl p-4">
-                  <div className="flex justify-between items-start gap-4 mb-2">
+                <li
+                  key={item.id}
+                  className="border border-white/[0.07] bg-[var(--surface-1)] rounded-md p-5"
+                >
+                  <div className="flex justify-between items-start gap-4 mb-4">
                     <div className="min-w-0">
                       <Link
                         href={`/work-items/${item.id}`}
@@ -265,18 +187,18 @@ export default async function DashboardHome() {
                       >
                         {item.title}
                       </Link>
-                      <div className="text-xs opacity-60 mt-1">
-                        {item.type} / {item.reasonCode}
+                      <div className="font-mono text-[10px] opacity-50 mt-1 tracking-[0.1em]">
+                        {item.type} · {item.reasonCode}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
-                      <span className="px-2 py-0.5 rounded-full bg-[var(--accent)] text-black text-xs font-bold">
+                      <span className="px-2 py-0.5 rounded-full bg-[var(--accent)] text-black font-mono text-[10px] font-bold tracking-[0.15em]">
                         {priorityBand(item.priority)}
                       </span>
-                      <span className="text-xs opacity-60">{item.status}</span>
+                      <span className="font-mono text-[10px] opacity-50">{item.status}</span>
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2 mt-2">
+                  <div className="flex flex-wrap gap-2">
                     <ActionForm itemId={item.id} updatedAt={item.updatedAt} action="resolve" label="Resolve" tone="primary" />
                     <ActionForm itemId={item.id} updatedAt={item.updatedAt} action="block" label="Block" tone="ghost" />
                     <ActionForm
@@ -292,114 +214,95 @@ export default async function DashboardHome() {
                 </li>
               ))}
             </ul>
-          )}
-        </Card>
+          </section>
+        ) : null}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <BlockTitle title="Recent jobs" className="mb-4 text-left" />
-            {businessJobs.length === 0 ? (
-              <p className="text-sm font-light opacity-60">
-                No recent operator-driven jobs.
-                {systemJobsTotal > 0 ? ` Background housekeeping (${systemJobsTotal}) is running and hidden.` : ""}
+        {/* ACTIVITY — operator jobs + events, side by side */}
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 gap-y-10">
+          <ActivityList
+            title="Recent jobs"
+            meta={businessJobs.length > 0 ? `${businessJobs.length}` : undefined}
+            empty={`No operator-driven jobs yet.${systemJobsTotal > 0 ? ` ${systemJobsTotal} background housekeeping job${systemJobsTotal === 1 ? "" : "s"} hidden.` : ""}`}
+            items={businessJobs.map((j) => ({
+              id: j.id,
+              primary: j.jobType,
+              secondary: `${j.status} · attempts ${j.attempts}`
+            }))}
+          />
+          <ActivityList
+            title="Event log"
+            meta={businessEvents.length > 0 ? `${businessEvents.length}` : undefined}
+            empty="No operator-driven events yet. Cron job_started / job_succeeded ticks are hidden."
+            items={businessEvents.map((e) => ({
+              id: e.id,
+              primary: e.eventType,
+              secondary: `${e.entityType ?? "system"} · ${(e.entityId ?? "").slice(0, 8) || "—"}`
+            }))}
+          />
+        </section>
+
+        {/* CAMPAIGNS + WEBHOOKS + SUPPRESSIONS — compact reference */}
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-10">
+          <div>
+            <SectionLabel meta={campaigns.length > 0 ? `${campaigns.length}` : undefined}>
+              Recent campaigns
+            </SectionLabel>
+            {campaigns.length === 0 ? (
+              <p className="font-display italic text-sm opacity-60 px-1">
+                No campaigns yet. Use “+ New campaign” to start.
               </p>
             ) : (
-              <ul className="space-y-2">
-                {businessJobs.map((job) => (
-                  <li key={job.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                    <strong className="font-medium">{job.jobType}</strong>
-                    <span className="text-xs opacity-60">
-                      {job.status} / attempts {job.attempts}
+              <ul className="space-y-px">
+                {campaigns.map((c) => (
+                  <li
+                    key={c.id}
+                    className="flex justify-between items-baseline gap-3 px-3 py-2.5 bg-[var(--surface-1)]/60 border-l border-white/[0.06]"
+                  >
+                    <span className="font-medium truncate">{c.name}</span>
+                    <span className="font-mono text-[10px] opacity-60 shrink-0">{c.status}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <SectionLabel meta={suppressions.length > 0 ? `${suppressions.length}` : undefined}>
+              Active suppressions
+            </SectionLabel>
+            {suppressions.length === 0 ? (
+              <p className="font-display italic text-sm opacity-60 px-1">
+                None. Unsubscribes / complaints will surface here.
+              </p>
+            ) : (
+              <ul className="space-y-px">
+                {suppressions.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex justify-between items-baseline gap-3 px-3 py-2.5 bg-[var(--surface-1)]/60 border-l border-white/[0.06]"
+                  >
+                    <span className="font-mono text-xs truncate">{s.email}</span>
+                    <span className="font-mono text-[10px] opacity-50 shrink-0">
+                      {s.reason} · {s.source}
                     </span>
                   </li>
                 ))}
               </ul>
             )}
-          </Card>
+          </div>
+        </section>
 
-          <Card>
-            <BlockTitle title="Recent campaigns" className="mb-4 text-left" />
-            <ul className="space-y-2">
-              {campaigns.map((campaign) => (
-                <li key={campaign.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                  <strong className="font-medium">{campaign.name}</strong>
-                  <span className="text-xs opacity-60">{campaign.status}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-
-          <Card>
-            <BlockTitle title="Recent webhook events" className="mb-4 text-left" />
-            <ul className="space-y-2">
-              {webhookEvents.map((event) => (
-                <li key={event.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                  <strong className="font-medium">{event.eventType}</strong>
-                  <span className="text-xs opacity-60">
-                    {event.status} / {event.recipientEmail ?? "no recipient"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-
-          <Card>
-            <BlockTitle title="Active suppressions" className="mb-4 text-left" />
-            <ul className="space-y-2">
-              {suppressions.map((suppression) => (
-                <li key={suppression.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                  <strong className="font-medium">{suppression.email}</strong>
-                  <span className="text-xs opacity-60">
-                    {suppression.reason} / {suppression.source}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        </div>
-
-        <Card>
-          <BlockTitle title="Event log" className="mb-4 text-left" />
-          {businessEvents.length === 0 ? (
-            <p className="text-sm font-light opacity-60">
-              No recent operator-driven events. System lifecycle events (cron job_started / job_succeeded etc.) are hidden here.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {businessEvents.map((event) => (
-                <li key={event.id} className="flex justify-between border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                  <strong className="font-medium">{event.eventType}</strong>
-                  <span className="text-xs opacity-60">
-                    {event.entityType ?? "system"} / {event.entityId ?? "none"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
+        {/* SYSTEM OVERVIEW — de-emphasized footer */}
+        <section>
+          <SectionLabel muted meta="reference">System overview</SectionLabel>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-3">
+            <SecondaryStat label="Webhook events" value={webhookEvents.length} />
+            <SecondaryStat label="Suppressions" value={suppressions.length} />
+            <SecondaryStat label="Campaigns" value={campaigns.length} />
+            <SecondaryStat label="Background jobs" value={systemJobsTotal} muted />
+          </div>
+        </section>
       </section>
     </>
-  );
-}
-
-function PillLink({ href, children, primary = false }: { href: string; children: React.ReactNode; primary?: boolean }) {
-  const base = "px-5 py-2 rounded-[10px] text-sm font-semibold tracking-wide transition-colors hover:no-underline";
-  const tone = primary
-    ? "bg-[var(--accent)] text-black hover:opacity-90"
-    : "bg-[#1A1A1B] border-b border-[#262626] text-white hover:bg-[#262626]";
-  return (
-    <Link href={href} className={`${base} ${tone}`}>
-      {children}
-    </Link>
-  );
-}
-
-function MetricCard({ label, value, accent = false }: { label: string; value: number; accent?: boolean }) {
-  return (
-    <Card className="min-h-0 p-5">
-      <div className={`text-3xl font-bold ${accent ? "text-[var(--accent)]" : ""}`}>{value}</div>
-      <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-2">{label}</div>
-    </Card>
   );
 }
 
@@ -416,13 +319,13 @@ function ActionForm({
   action: "resolve" | "block" | "snooze" | "dismiss";
   label: string;
   tone: "primary" | "ghost" | "danger";
-  extraInputs?: React.ReactNode;
+  extraInputs?: ReactNode;
 }) {
   const cls =
     tone === "primary"
-      ? "bg-[var(--accent)] text-black"
+      ? "bg-[var(--accent)] text-black hover:opacity-90"
       : tone === "danger"
-        ? "bg-[#7f2d20] text-white"
+        ? "bg-[#7f2d20] text-white hover:opacity-90"
         : "bg-transparent border border-white/15 text-white hover:bg-white/5";
   return (
     <form action="/api/work-items" method="post" className="m-0">
@@ -437,7 +340,7 @@ function ActionForm({
         type="submit"
         name="action"
         value={action}
-        className={`${cls} rounded-full px-3 py-1 text-xs font-bold hover:no-underline`}
+        className={`${cls} rounded-full px-3 py-1 font-mono text-[10px] font-bold tracking-[0.15em] uppercase hover:no-underline transition-colors`}
       >
         {label}
       </button>
