@@ -1,7 +1,8 @@
 """Load the agent system instruction.
 
-CLAUDE.md was auto-loaded by `claude -p` from the working directory. ADK has no
-such mechanism, so its content is read here and passed as the ADK `Agent.instruction`.
+Aida's persona/gates/output-schema live in `prompts/system.md` and are passed to
+the ADK Agent as `instruction` via `agents._static_instruction` so ADK does not
+treat literal `{...}` (JSON schema examples) as state-template placeholders.
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-_INSTRUCTION_PATH = Path(__file__).resolve().parents[2] / "CLAUDE.md"
+_INSTRUCTION_PATH = Path(__file__).resolve().parents[2] / "prompts" / "system.md"
 
 
 @lru_cache(maxsize=1)
