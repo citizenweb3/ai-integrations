@@ -94,6 +94,11 @@ export const campaigns = pgTable("campaigns", {
   maxConcurrentDrafts: integer("max_concurrent_drafts").notNull().default(5),
   maxOpenDraftReviews: integer("max_open_draft_reviews").notNull().default(25),
   cooldownBetweenDiscoverySeconds: integer("cooldown_between_discovery_seconds").notNull().default(3600),
+  // Opt-in fallback for the contact-discovery agent: when true and no specific
+  // person was found, the agent may return ONE candidate pointing at a generic
+  // outreach inbox (partners@ / bd@ / sales@ / hello@ / contact@), strictly
+  // sourced verbatim from a public page. See T-026V + `_CONTACT_DISCOVERY_INSTRUCTION`.
+  allowGenericInboxFallback: boolean("allow_generic_inbox_fallback").notNull().default(false),
   discoveryScopeVersion: integer("discovery_scope_version").notNull().default(1),
   createdAt: createdAt(),
   updatedAt: updatedAt()

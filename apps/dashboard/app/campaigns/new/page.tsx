@@ -258,6 +258,23 @@ export default function NewCampaignPage() {
               />
             </Field>
 
+            <label className="md:col-span-2 flex items-start gap-3 p-3 rounded-lg bg-[#1A1A1B] border border-white/10 cursor-pointer">
+              <input
+                type="checkbox"
+                name="allowGenericInboxFallback"
+                className="mt-1 accent-[var(--accent)]"
+              />
+              <span className="flex flex-col gap-1">
+                <span className="text-sm font-medium">Allow generic-inbox fallback</span>
+                <span className="text-xs font-light opacity-65 leading-snug">
+                  When no specific person can be found, the contact-discovery agent may surface ONE generic outreach inbox
+                  (<code className="font-mono">partners@</code>, <code className="font-mono">bd@</code>, <code className="font-mono">sales@</code>, <code className="font-mono">hello@</code>, <code className="font-mono">contact@</code>) —
+                  strictly read verbatim from the company's public page, never guessed. Confidence is always low; specific
+                  people always win if both are found.
+                </span>
+              </span>
+            </label>
+
             <Button type="submit" className="md:col-span-2">
               Create campaign
             </Button>

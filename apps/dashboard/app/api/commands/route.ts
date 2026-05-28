@@ -887,6 +887,7 @@ function formDataToCommand(formData: FormData) {
         maxConcurrentDrafts: optionalPositiveInteger(formData, "maxConcurrentDrafts") ?? 5,
         maxOpenDraftReviews: optionalPositiveInteger(formData, "maxOpenDraftReviews") ?? 25,
         cooldownBetweenDiscoverySeconds: optionalPositiveInteger(formData, "cooldownBetweenDiscoverySeconds") ?? 3600,
+        allowGenericInboxFallback: formData.get("allowGenericInboxFallback") != null,
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
     };
@@ -1395,7 +1396,8 @@ function formDataToCommand(formData: FormData) {
       maxConcurrentEnrichments: optionalPositiveInteger(formData, "maxConcurrentEnrichments") ?? 3,
       maxConcurrentDrafts: optionalPositiveInteger(formData, "maxConcurrentDrafts") ?? 5,
       maxOpenDraftReviews: optionalPositiveInteger(formData, "maxOpenDraftReviews") ?? 25,
-      cooldownBetweenDiscoverySeconds: optionalPositiveInteger(formData, "cooldownBetweenDiscoverySeconds") ?? 3600
+      cooldownBetweenDiscoverySeconds: optionalPositiveInteger(formData, "cooldownBetweenDiscoverySeconds") ?? 3600,
+      allowGenericInboxFallback: formData.get("allowGenericInboxFallback") != null
     }
   };
 }

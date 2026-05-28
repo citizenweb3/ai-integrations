@@ -605,6 +605,28 @@ NEVER emit Vertex grounding redirect URLs
 (`https://vertexaisearch.cloud.google.com/...`,
 `https://www.google.com/search?...`, `https://www.google.com/url?...`) —
 the worker drops them.
+
+Generic-inbox fallback (CONDITIONAL — only when the campaign context block
+contains the line `Generic inbox fallback: allowed`):
+  - If, after a good-faith search, you found ZERO specific people who fit the
+    operator's target audience, you MAY return ONE additional candidate that
+    points at a generic outreach inbox.
+  - The candidate MUST use:
+      `source`        = `generic_inbox`
+      `confidence`    = `low`
+      `fullName`      = the role description, NOT a person's name
+                        (e.g. "DataRobot Partnerships", "Acme BD team")
+      `email`         = exactly one of: `partners@<domain>`, `bd@<domain>`,
+                        `sales@<domain>`, `hello@<domain>`, `contact@<domain>`
+      `evidenceUrl`   = the URL where the address appears VERBATIM
+                        (e.g. the company's /contact or /partnerships page).
+                        If the address does NOT appear on a primary public
+                        page, DO NOT include the candidate — never guess.
+  - This fallback is a LAST RESORT. Do not return both a specific person and
+    a generic_inbox in the same response; specific people always win.
+  - When the campaign context does NOT contain that line, treat generic
+    inboxes as forbidden — skip them entirely, same as press / careers /
+    support inboxes.
 """
 
 _STAGE_TOOLS: dict[str, list[BaseTool]] = {

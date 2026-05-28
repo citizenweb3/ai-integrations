@@ -596,6 +596,7 @@ export const startCampaignPayloadSchema = z.object({
   maxConcurrentDrafts: z.number().int().min(1).max(100).default(5),
   maxOpenDraftReviews: z.number().int().min(1).max(500).default(25),
   cooldownBetweenDiscoverySeconds: z.number().int().min(0).max(604800).default(3600),
+  allowGenericInboxFallback: z.boolean().default(false),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 
@@ -618,6 +619,7 @@ export const updateCampaignScopePayloadSchema = z.object({
   maxConcurrentDrafts: z.number().int().min(1).max(100).optional(),
   maxOpenDraftReviews: z.number().int().min(1).max(500).optional(),
   cooldownBetweenDiscoverySeconds: z.number().int().min(0).max(604800).optional(),
+  allowGenericInboxFallback: z.boolean().optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 

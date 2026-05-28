@@ -596,6 +596,7 @@ export async function createStartCampaignCommand(input: {
           maxConcurrentDrafts: input.payload.maxConcurrentDrafts ?? 5,
           maxOpenDraftReviews: input.payload.maxOpenDraftReviews ?? 25,
           cooldownBetweenDiscoverySeconds: input.payload.cooldownBetweenDiscoverySeconds ?? 3600,
+          allowGenericInboxFallback: input.payload.allowGenericInboxFallback ?? false,
           status: "drafting_scope"
         })
         .returning(), "campaign");
@@ -785,6 +786,9 @@ export async function updateCampaignScopeCommand(input: {
           ...(payload.maxOpenDraftReviews !== undefined ? { maxOpenDraftReviews: payload.maxOpenDraftReviews } : {}),
           ...(payload.cooldownBetweenDiscoverySeconds !== undefined
             ? { cooldownBetweenDiscoverySeconds: payload.cooldownBetweenDiscoverySeconds }
+            : {}),
+          ...(payload.allowGenericInboxFallback !== undefined
+            ? { allowGenericInboxFallback: payload.allowGenericInboxFallback }
             : {}),
           discoveryScopeVersion: sql`${campaigns.discoveryScopeVersion} + 1`,
           updatedAt: new Date()
@@ -10234,11 +10238,19 @@ async function routeContactCandidatesIntoOrg(
 function buildDefaultContactDiscoveryPrompt(input: {
   organizationName: string;
   domain: string | null;
+  allowGenericInboxFallback?: boolean;
 }): string {
   const safeName = sanitizePromptInsertion(input.organizationName, 200);
   const safeDomain = input.domain ? sanitizePromptInsertion(input.domain, 253) : null;
   const head = safeDomain ? `${safeName} (${safeDomain})` : safeName;
-  return `Find public contact candidates for ${head} — people the operator could plausibly reach out to (founders, heads of partnerships / sales / BD, relevant product leads). Cite a primary source URL for each. Return only contact candidates; do not produce company facts or questions.`;
+  // T-026V: when the campaign opted in, attach a campaign-context block with
+  // exactly the line the agent instruction reads to unlock the generic-inbox
+  // fallback. Anything else than this exact phrase leaves the default
+  // conservative behaviour in place.
+  const contextBlock = input.allowGenericInboxFallback
+    ? "\n\n<campaign_context>\nGeneric inbox fallback: allowed\n</campaign_context>"
+    : "";
+  return `Find public contact candidates for ${head} — people the operator could plausibly reach out to (founders, heads of partnerships / sales / BD, relevant product leads). Cite a primary source URL for each. Return only contact candidates; do not produce company facts or questions.${contextBlock}`;
 }
 
 export type ContactDiscoveryRouterResult = {
@@ -10546,6 +10558,19 @@ export async function routeResearchSnapshotOutcome(input: {
     // research key so it serializes with snapshot/refresh runs for the org.
     // Skipped for research_more (chainContactDiscovery === false).
     if (input.chainContactDiscovery !== false) {
+      // T-026V: Generic-inbox fallback is opt-in per campaign. Multiple
+      // campaigns may have queued this org; allow the fallback if ANY of them
+      // ticked the box. If no campaign matched (manual refresh path), the
+      // OR-aggregate returns null → coerced to false (conservative default).
+      const fallbackRow = await tx.execute(sql`
+        select bool_or(c.allow_generic_inbox_fallback) as allow
+        from discovery_candidates dc
+        join campaigns c on c.id = dc.campaign_id
+        where dc.matched_organization_id = ${input.organizationId}
+          and dc.status in ('enriched', 'accepted', 'queued_for_enrichment')
+      `) as unknown as Array<{ allow: boolean | null }>;
+      const allowGenericInboxFallback = fallbackRow[0]?.allow === true;
+
       await tx.insert(jobs).values({
         jobType: "job.discover_contacts",
         status: "queued",
@@ -10556,9 +10581,11 @@ export async function routeResearchSnapshotOutcome(input: {
           organizationId: input.organizationId,
           prompt: buildDefaultContactDiscoveryPrompt({
             organizationName: organization?.name ?? "the organization",
-            domain: organization?.domain ?? null
+            domain: organization?.domain ?? null,
+            allowGenericInboxFallback
           }),
-          sourceSnapshotId: snapshotRow.id
+          sourceSnapshotId: snapshotRow.id,
+          allowGenericInboxFallback
         },
         concurrencyKey: `research_snapshot:${input.organizationId}`,
         correlationId: input.correlationId
