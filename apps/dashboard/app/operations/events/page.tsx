@@ -68,7 +68,7 @@ export default async function OperationsEventsPage({ searchParams }: Props) {
   return (
     <>
       <OperationsEventsAutoRefresh intervalMs={5000} />
-      <ConsoleHero
+      <ConsoleHero currentNav="operations"
         eyebrow={
           <>
             <Link href="/operations" className="text-[hsl(var(--primary))]">

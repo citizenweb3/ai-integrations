@@ -11,7 +11,7 @@ export default async function CampaignsIndexPage() {
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="campaigns"
         eyebrow={
           <>
             <Link href="/" className="text-[hsl(var(--primary))]">

@@ -42,7 +42,7 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="organizations"
         eyebrow={
           <>
             <Link href="/organizations" className="text-[hsl(var(--primary))]">

@@ -97,7 +97,7 @@ export default async function CampaignDetailPage({
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="campaigns"
         eyebrow={
           <>
             <Link href="/" className="text-[hsl(var(--primary))]">

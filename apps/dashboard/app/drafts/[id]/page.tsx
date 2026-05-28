@@ -111,7 +111,7 @@ export default async function DraftDetailPage({ params }: Props) {
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="drafts"
         eyebrow={
           <>
             <Link href="/drafts" className="text-[hsl(var(--primary))]">

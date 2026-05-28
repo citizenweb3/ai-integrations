@@ -69,7 +69,7 @@ export default async function JobsByTypePage({
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="operations"
         eyebrow={
           <>
             <Link href="/operations" className="text-[hsl(var(--primary))]">

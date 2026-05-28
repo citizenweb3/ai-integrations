@@ -1,31 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  /* Operator console palette. Off-black surfaces for warmth; the cyan accent
-     is the project's brand signal and stays untouched. A warm signal-amber
-     stands by for occasional emphasis (timestamps, "live" pulses). */
-  --background: #0a0a0b;
-  --surface-1: #101012;
-  --surface-2: #16161a;
-  --foreground: #ededed;
+  --background: #000000;
+  --foreground: #E6E6E6;
   --border: 220 10% 22%;
   --card: 220 10% 10%;
-  --muted: 220 10% 46%;
+  --muted: 220 10% 64%;
   --primary: 248 100% 70%;
-  --accent: #2ffbf7;
-  --signal: #ffa765;
-  --grid: rgba(255, 255, 255, 0.022);
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-accent: var(--accent);
-  --color-signal: var(--signal);
-  --font-display: var(--font-display);
-  --font-mono: var(--font-mono);
-  --font-body: var(--font-body);
-  --font-sans: var(--font-body);
+  --accent: #2FFBF7;
 }
 
 html,
@@ -34,22 +16,23 @@ body {
 }
 
 html {
-  font-size: 16px;
+  font-size: 0.9vw;
+}
+
+@media (max-width: 1024px) {
+  html {
+    font-size: 14px;
+  }
+}
+
+* {
+  scrollbar-color: unset;
+  scrollbar-width: unset;
 }
 
 body {
   @apply bg-background text-foreground antialiased;
-  font-family: var(--font-body), system-ui, sans-serif;
-  font-feature-settings: "ss01", "cv11";
-}
-
-/* Typography utility classes — the three-font system surfaces here. */
-.font-display {
-  font-family: var(--font-display), Georgia, serif;
-  font-feature-settings: "ss01";
-}
-.font-mono {
-  font-family: var(--font-mono), ui-monospace, monospace;
+  font-family: var(--font-inter), system-ui, sans-serif;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -60,64 +43,45 @@ body {
   scrollbar-width: none;
 }
 
-/* Terminal grid — 1px lines on a 56px lattice, very low contrast. Replaces
-   the mesh-bg cyan/purple radial that read as generic AI gradient. */
-.terminal-grid {
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+}
+
+/* Brand mesh-bg — cyan + primary + muted radial wash + faint dot pattern.
+   Lifted verbatim from the ai-integrations / ai-landing reference so the
+   operator console reads as part of the same product family. */
+.mesh-bg {
   position: relative;
   isolation: isolate;
 }
-.terminal-grid::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -2;
-  background-image:
-    linear-gradient(to right, var(--grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
-  background-size: 56px 56px;
-  mask-image: radial-gradient(ellipse 90% 60% at 50% 30%, #000 0%, transparent 80%);
-}
-.terminal-grid::after {
+.mesh-bg::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
-  pointer-events: none;
   background:
-    radial-gradient(ellipse 80% 40% at 50% 0%, hsl(var(--primary) / 0.07), transparent 70%),
-    radial-gradient(ellipse 50% 30% at 90% 10%, hsl(var(--accent) / 0.04), transparent 80%);
+    radial-gradient(1000px 400px at 50% -10%, hsl(var(--accent) / 0.20), transparent),
+    radial-gradient(800px 400px at -10% 50%, hsl(var(--primary) / 0.18), transparent),
+    radial-gradient(800px 400px at 110% 60%, hsl(var(--muted) / 0.16), transparent);
 }
-
-/* Faint hairline divider used between sections; pairs with mono section labels. */
-.hairline {
-  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.08), transparent);
-  height: 1px;
-}
-
-/* Live indicator — slow blink for "system is alive". Used sparingly. */
-@keyframes terminal-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.9); }
-}
-.terminal-pulse {
-  animation: terminal-pulse 2.4s ease-in-out infinite;
-}
-
-/* Staggered fade-in for the hero load — one well-orchestrated reveal. */
-@keyframes terminal-rise {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.terminal-rise {
-  animation: terminal-rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+.mesh-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.4;
+  mix-blend-mode: screen;
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.06) 2px, transparent 3px),
+    radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.06) 2px, transparent 3px),
+    radial-gradient(circle at 60% 70%, rgba(255, 255, 255, 0.06) 2px, transparent 3px);
+  background-size: 120px 120px, 160px 160px, 200px 200px;
 }
 
 @layer components {
   a:hover {
     text-decoration: underline;
-  }
-  ::selection {
-    background: hsl(248 100% 70% / 0.3);
-    color: var(--foreground);
   }
 }

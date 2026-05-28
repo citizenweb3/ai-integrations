@@ -32,7 +32,7 @@ export default async function OperationsPage() {
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="operations"
         eyebrow={
           <>
             <Link href="/" className="text-[hsl(var(--primary))]">

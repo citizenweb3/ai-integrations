@@ -17,7 +17,7 @@ export default async function PoliciesPage() {
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="policies"
         eyebrow={
           <>
             <Link href="/" className="text-[hsl(var(--primary))]">

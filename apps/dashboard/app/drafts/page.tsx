@@ -12,7 +12,7 @@ export default async function DraftsListPage() {
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="drafts"
         eyebrow={
           <>
             <Link href="/" className="text-[hsl(var(--primary))]">

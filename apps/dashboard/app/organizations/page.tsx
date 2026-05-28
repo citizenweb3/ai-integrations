@@ -10,7 +10,7 @@ export default async function OrganizationsIndexPage() {
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="organizations"
         eyebrow={
           <>
             <Link href="/" className="text-[hsl(var(--primary))]">

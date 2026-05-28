@@ -129,8 +129,9 @@ export const InfoRow: FC<{ label: string; value: ReactNode; className?: string }
   );
 };
 
-// Editorial section label: tiny mono uppercase tag + a hairline that runs to
-// the right edge. Sets a deliberate rhythm without competing with the data.
+// Section label — uppercase tracking-wide tag with a hairline running to the
+// right edge. Pairs with the existing brand language (BlockTitle uses the same
+// tracking-[0.05em] / uppercase rhythm).
 export const SectionLabel: FC<PropsWithChildren<{ muted?: boolean; meta?: ReactNode }>> = ({
   children,
   muted = false,
@@ -140,15 +141,15 @@ export const SectionLabel: FC<PropsWithChildren<{ muted?: boolean; meta?: ReactN
     <div className="flex items-center gap-4 mb-5">
       <span
         className={twMerge(
-          "font-mono text-[10px] tracking-[0.3em] uppercase shrink-0",
+          "text-xs font-semibold tracking-[0.2em] uppercase shrink-0",
           muted ? "opacity-40" : "opacity-70"
         )}
       >
         {children}
       </span>
-      <span className="flex-1 h-px hairline" />
+      <span className="flex-1 h-px bg-white/10" />
       {meta ? (
-        <span className="font-mono text-[10px] uppercase tracking-[0.2em] opacity-50 shrink-0">
+        <span className="text-xs font-semibold tracking-[0.15em] uppercase opacity-50 shrink-0">
           {meta}
         </span>
       ) : null}
@@ -156,10 +157,10 @@ export const SectionLabel: FC<PropsWithChildren<{ muted?: boolean; meta?: ReactN
   );
 };
 
-// Primary attention surface — one of the three "needs you" callouts at the
-// top of the console. Large mono numeral, label below, optional sublabel
-// gives context. Whole tile is a link; the border picks up the accent when
-// the value is non-zero so the eye lands on what matters first.
+// Primary attention surface — one of the "needs you" callouts at the top of
+// the console. Large bold numeral, label below, optional sublabel. Whole tile
+// is a link; border picks up the accent when value is non-zero so the eye
+// lands on what matters first. Uses the brand card gradient.
 export const TriageCallout: FC<{
   label: string;
   value: number;
@@ -169,85 +170,76 @@ export const TriageCallout: FC<{
 }> = ({ label, value, sublabel, href, tone = "neutral" }) => {
   const palette =
     tone === "danger"
-      ? "border-red-500/45 bg-red-500/[0.06] hover:border-red-400"
+      ? "border-red-500/40 bg-red-500/[0.08] hover:border-red-400"
       : tone === "accent"
-        ? "border-[var(--accent)]/40 bg-[var(--accent)]/[0.04] hover:border-[var(--accent)]"
-        : "border-white/[0.08] bg-[var(--surface-1)] hover:border-white/25";
+        ? "border-[var(--accent)]/40 bg-[var(--accent)]/[0.05] hover:border-[var(--accent)]"
+        : "border-white/10 hover:border-white/25";
   const numberColor =
     tone === "danger" ? "text-red-400" : tone === "accent" ? "text-[var(--accent)]" : "text-foreground";
   return (
     <Link
       href={href}
       className={twMerge(
-        "group block rounded-md border p-6 transition-colors hover:no-underline",
+        "group block rounded-2xl border bg-linear-to-t from-[#7C7C81]/25 to-[#1A1A1B]/25 p-8 shadow-[0_18px_60px_rgba(0,0,0,0.35)] transition-colors hover:no-underline",
         palette
       )}
     >
       <div className="flex items-baseline justify-between">
-        <span className={twMerge("font-mono text-5xl tabular-nums tracking-tight", numberColor)}>
+        <span className={twMerge("text-5xl font-bold tabular-nums tracking-tight", numberColor)}>
           {value}
         </span>
-        <span className="font-mono text-[10px] tracking-[0.2em] uppercase opacity-40 group-hover:opacity-80 transition-opacity">
+        <span className="text-[10px] font-semibold tracking-[0.2em] uppercase opacity-40 group-hover:opacity-80 transition-opacity">
           drill in →
         </span>
       </div>
-      <div className="mt-5">
-        <div className="font-display text-xl leading-tight">{label}</div>
+      <div className="mt-6">
+        <div className="text-lg font-bold tracking-[0.02em]">{label}</div>
         {sublabel ? (
-          <div className="font-mono text-[11px] mt-1 opacity-60">{sublabel}</div>
+          <div className="text-sm font-light opacity-65 mt-1">{sublabel}</div>
         ) : null}
       </div>
     </Link>
   );
 };
 
-// Compact list for the activity feeds. Empty state owns its own copy so the
-// page can be expressive about *why* the list is empty.
+// Compact ordered list — used for "recent campaigns" / "active suppressions"
+// surfaces. Items are dark pills with hover affordance.
 export const ActivityList: FC<{
   title: string;
   empty: string;
-  items: Array<{ id: string; primary: string; secondary: string }>;
+  items: Array<{ id: string; primary: string; secondary: string; href?: string }>;
   meta?: ReactNode;
 }> = ({ title, empty, items, meta }) => {
   return (
     <div>
       <SectionLabel meta={meta}>{title}</SectionLabel>
       {items.length === 0 ? (
-        <p className="font-display italic text-sm opacity-60 px-1">{empty}</p>
+        <p className="text-sm font-light opacity-60 px-1">{empty}</p>
       ) : (
-        <ul className="space-y-px">
-          {items.map((item) => (
-            <li
-              key={item.id}
-              className="flex items-center justify-between gap-3 px-3 py-2.5 bg-[var(--surface-1)]/60 border-l border-white/[0.06] hover:border-l-[var(--accent)] transition-colors"
-            >
-              <span className="font-mono text-xs truncate">{item.primary}</span>
-              <span className="font-mono text-[10px] opacity-50 shrink-0 truncate max-w-[55%] text-right">
-                {item.secondary}
+        <ul className="space-y-2">
+          {items.map((item) => {
+            const inner = (
+              <span className="flex items-center justify-between gap-3 px-4 py-3 rounded-[10px] bg-[#1A1A1B] border-b border-[#262626] hover:bg-[#262626] hover:no-underline transition-colors">
+                <span className="text-sm font-medium truncate">{item.primary}</span>
+                <span className="text-xs font-light opacity-60 shrink-0 truncate max-w-[55%] text-right">
+                  {item.secondary}
+                </span>
               </span>
-            </li>
-          ))}
+            );
+            return (
+              <li key={item.id}>
+                {item.href ? (
+                  <Link href={item.href} className="block hover:no-underline">
+                    {inner}
+                  </Link>
+                ) : (
+                  inner
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
-    </div>
-  );
-};
-
-// Bottom-of-page secondary stats. De-emphasized on purpose.
-export const SecondaryStat: FC<{ label: string; value: number | string; muted?: boolean }> = ({
-  label,
-  value,
-  muted = false
-}) => {
-  return (
-    <div
-      className={twMerge(
-        "flex items-baseline justify-between border-b border-white/[0.08] pb-2.5",
-        muted && "opacity-50"
-      )}
-    >
-      <span className="font-mono text-[10px] uppercase tracking-[0.2em] opacity-60">{label}</span>
-      <span className="font-mono text-xl tabular-nums">{value}</span>
     </div>
   );
 };

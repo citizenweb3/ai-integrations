@@ -98,7 +98,7 @@ export default async function InboxPage({ searchParams }: Props) {
 
   return (
     <>
-      <ConsoleHero
+      <ConsoleHero currentNav="inbox"
         eyebrow={
           <>
             <Link href="/" className="text-[hsl(var(--primary))]">
