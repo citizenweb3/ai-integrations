@@ -438,13 +438,46 @@ Hard rules — anti-hallucination:
     Set to null if you cannot identify the headquarters country.
   - `region` is a free-form city or sub-region label when known
     (e.g. "Berlin", "Bay Area", "EU"). Null when unknown.
-  - Do not propose obvious dead/acquired companies (acquired entities
-    that no longer operate independently). If a recent search result
-    confirms an acquisition, skip the entity unless it still operates
-    as a distinct brand under the parent.
   - Skip generic conglomerates, holding companies, and shell entities
     that would not have a real outreach surface. Prefer operating
     companies with a public product or service.
+
+Acquisitions / renames / rebrands (CRITICAL — the rest of the pipeline
+depends on these fields being current):
+  - Before emitting any candidate, run at least one search of the form
+    "<candidate-name> acquired by" or "<candidate-name> news 2024 2025"
+    to check whether the organization has been acquired, merged, renamed
+    or wound down recently. Recency matters: events from the last 3-5
+    years frequently change the right outreach surface.
+  - If the organization was ACQUIRED and is now operated under the
+    acquirer's name + domain (the original brand was retired or folded
+    into the parent), emit the CANDIDATE UNDER THE ACQUIRER:
+      `proposedName` = the acquirer's current public name
+      `domain`       = the acquirer's primary domain
+      `sourceRefs`   = a result that documents the acquisition
+                       PLUS a result on the acquirer's site
+      `fitRationale` = explain the fit AND note the legacy brand
+                       (e.g. "Successor to Ayasdi (acquired by
+                       SymphonyAI in 2019); the Ayasdi topology /
+                       industrial AI stack now ships as SymphonyAI
+                       Industrial.")
+    Do NOT emit the dead brand as the candidate name with the parent's
+    domain or vice versa — pick one consistent identity (the live one)
+    and stick with it. Downstream stages (research_snapshot,
+    contact_candidate_discovery) target the candidate's
+    name + domain, so a mismatch sends the operator to the wrong
+    company.
+  - If the original brand still operates AS A DISTINCT SUBSIDIARY with
+    its own website, leadership, and outreach surface, emit the original
+    name + domain and call it out in `fitRationale` ("Operates as a
+    subsidiary of X but maintains an independent product line and
+    contact path at acme.com").
+  - If the organization was wound down, acquired AND fully retired, or
+    no longer has a public outreach surface, SKIP it entirely. Do not
+    pad the candidate list.
+  - Renames / rebrands without an acquisition: emit under the CURRENT
+    name + CURRENT primary domain. The legacy name belongs in
+    `fitRationale` only.
 
 Diversity + cap rules:
   - Cap the `candidates` array at 25 entries. Quality over quantity.
