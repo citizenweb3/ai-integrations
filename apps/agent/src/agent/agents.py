@@ -608,25 +608,66 @@ the worker drops them.
 
 Generic-inbox fallback (CONDITIONAL — only when the campaign context block
 contains the line `Generic inbox fallback: allowed`):
-  - If, after a good-faith search, you found ZERO specific people who fit the
-    operator's target audience, you MAY return ONE additional candidate that
-    points at a generic outreach inbox.
-  - The candidate MUST use:
+
+  Purpose: the operator must end the run with at least one ADDRESSABLE
+  candidate — i.e. one whose `email` is non-null — whenever such an address
+  exists publicly. Without that, the whole pipeline cannot send.
+
+  Trigger (include the fallback when ANY of these is true):
+    a) You returned ZERO specific people; or
+    b) You returned specific people, but NONE of them carry a non-null
+       `email` (which is the common case for company team pages that
+       expose photos + titles but no email addresses).
+
+  When the trigger fires, ADD exactly ONE additional candidate IN ADDITION
+  to whatever specific people you already returned:
       `source`        = `generic_inbox`
       `confidence`    = `low`
       `fullName`      = the role description, NOT a person's name
                         (e.g. "DataRobot Partnerships", "Acme BD team")
-      `email`         = exactly one of: `partners@<domain>`, `bd@<domain>`,
-                        `sales@<domain>`, `hello@<domain>`, `contact@<domain>`
+      `email`         = an address whose LOCAL PART (the bit before `@`)
+                        is one of the allowed role-style values OR is the
+                        company's name / slug, and whose DOMAIN may be the
+                        company's own OR a public mail provider (gmail.com,
+                        outlook.com, protonmail.com, yahoo.com, icloud.com).
+                        Many small companies post a free-provider address
+                        because they have no domain mail set up — that is
+                        OK as long as the address appears verbatim on the
+                        company's own public page.
+
+                        Allowed local parts:
+                          `partners` / `bd` / `business` / `sales` /
+                          `info` / `hello` / `contact` / `team` /
+                          `<company-name>` / `<company-slug>`
+
+                        Examples that are ALLOWED:
+                          `partners@datarobot.com`,
+                          `info@acme.io`,
+                          `datarobot@gmail.com` (company name on free
+                            provider, shown verbatim on their site),
+                          `acme.team@protonmail.com`.
+
+                        Examples that are FORBIDDEN:
+                          `john.smith@datarobot.com` (specific person's
+                            address — return as a regular candidate, not
+                            generic_inbox),
+                          a guessed `info@<domain>` you have not actually
+                            seen on the public page.
       `evidenceUrl`   = the URL where the address appears VERBATIM
-                        (e.g. the company's /contact or /partnerships page).
-                        If the address does NOT appear on a primary public
-                        page, DO NOT include the candidate — never guess.
-  - This fallback is a LAST RESORT. Do not return both a specific person and
-    a generic_inbox in the same response; specific people always win.
-  - When the campaign context does NOT contain that line, treat generic
-    inboxes as forbidden — skip them entirely, same as press / careers /
-    support inboxes.
+                        (e.g. the company's /contact, /partnerships, About
+                        or footer). If the address does NOT appear on a
+                        primary public page, DO NOT include the
+                        candidate — never guess from the company name or
+                        domain alone.
+
+  Hard rule: never include the generic_inbox candidate when at least one
+  specific person was already returned with a non-null `email`. In that
+  case the operator already has a directly addressable contact and the
+  generic inbox is redundant.
+
+  When the campaign context does NOT contain the `Generic inbox fallback:
+  allowed` line, treat generic inboxes as forbidden — skip them entirely,
+  same as press / careers / support inboxes.
 """
 
 _STAGE_TOOLS: dict[str, list[BaseTool]] = {
