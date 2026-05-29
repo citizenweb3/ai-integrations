@@ -21,6 +21,7 @@ import {
   inputClass,
   textareaClass
 } from "@/components/ui";
+import { deriveCampaignStage, type CampaignStageSnapshot } from "@/lib/campaign-stage";
 
 export const dynamic = "force-dynamic";
 
@@ -95,6 +96,14 @@ export default async function CampaignDetailPage({
   );
   const isActiveCampaign = view.campaign.status === "active";
   const isDraftingScope = view.campaign.status === "drafting_scope";
+  const stage = deriveCampaignStage(view);
+  // The first candidate panel rendered in the PANEL_ORDER loop gets the
+  // `candidate-triage` anchor so the stage strip's "Review N candidates"
+  // CTA jumps there. We need the loop to know which one is the first
+  // present so we precompute it.
+  const firstCandidatePanel = PANEL_ORDER.find(
+    (status) => view.candidatesByStatus[status].length > 0
+  );
   const replyClassBreakdown = Object.entries(view.progress.replyClassCounts)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([replyClass, count]) => `${formatReplyClass(replyClass)}: ${count}`)
@@ -131,6 +140,8 @@ export default async function CampaignDetailPage({
             </p>
           </div>
         ) : null}
+
+        <StageStrip stage={stage} />
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard label="Total candidates" value={totals} />
@@ -263,7 +274,7 @@ export default async function CampaignDetailPage({
 
         {isDraftingScope ? <CampaignScopeForm campaign={view.campaign} /> : null}
 
-        <Card>
+        <Card id="run-discovery">
           <BlockTitle title="Run discovery" className="mb-4 text-left" />
           {!isActiveCampaign ? (
             <p className="text-sm font-light opacity-70">
@@ -327,7 +338,7 @@ export default async function CampaignDetailPage({
           if (list.length === 0) return null;
           const display = STATUS_DISPLAY[status];
           return (
-            <Card key={status}>
+            <Card key={status} id={status === firstCandidatePanel ? "candidate-triage" : undefined}>
               <div className="flex items-center gap-3 mb-4">
                 <BlockTitle title={display.label} className="text-left" />
                 <Badge tone={display.tone}>{list.length}</Badge>
@@ -353,9 +364,52 @@ function formatMultilineValue(values: string[]) {
   return values.join("\n");
 }
 
-function CampaignScopeForm({ campaign }: { campaign: CampaignDiscoveryViewModel["campaign"] }) {
+// T-026AD: the "you are here" strip that lives at the top of the campaign
+// detail page. The stage + CTA are derived in `deriveCampaignStage` from the
+// already-loaded view; this component is just the visual primitive.
+function StageStrip({ stage }: { stage: CampaignStageSnapshot }) {
+  const action = stage.nextAction;
+  const ctaIsAnchor = action?.href.startsWith("#");
   return (
     <Card>
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="text-xs uppercase tracking-[0.2em] opacity-60">Stage</span>
+            <Badge tone={stage.tone}>{stage.label}</Badge>
+          </div>
+          <p className="text-sm font-light opacity-90 max-w-2xl">{stage.description}</p>
+        </div>
+        {action ? (
+          <div className="flex flex-col items-start md:items-end gap-2">
+            {ctaIsAnchor ? (
+              <a
+                href={action.href}
+                className="px-5 py-2 rounded-[10px] text-sm font-semibold tracking-wide bg-[var(--accent)] text-black hover:opacity-90 transition-colors"
+              >
+                {action.title}
+              </a>
+            ) : (
+              <Link
+                href={action.href}
+                className="px-5 py-2 rounded-[10px] text-sm font-semibold tracking-wide bg-[var(--accent)] text-black hover:opacity-90 transition-colors"
+              >
+                {action.title}
+              </Link>
+            )}
+            <p className="text-xs font-light opacity-60 max-w-xs text-left md:text-right">
+              {action.hint}
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
+function CampaignScopeForm({ campaign }: { campaign: CampaignDiscoveryViewModel["campaign"] }) {
+  return (
+    <Card id="scope-form">
       <BlockTitle title="Edit scope" className="mb-4 text-left" />
       <form action="/api/commands" method="post" className="space-y-5">
         <input type="hidden" name="commandType" value="update_campaign_scope" />
