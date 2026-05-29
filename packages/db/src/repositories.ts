@@ -9475,7 +9475,24 @@ function readOptionalJobNumber(payload: JsonRecord, key: string): number | null 
 
 type CampaignScopeReadinessRow = typeof campaigns.$inferSelect;
 
-function validateCampaignScopeReadiness(campaign: CampaignScopeReadinessRow): {
+// T-026AL: validator only reads a structural subset of the campaign
+// shape. Accept that subset (works for both the DB row and the raw
+// start_campaign payload) so the API route can short-circuit before
+// any INSERT lands.
+type CampaignScopeReadinessInput = Pick<
+  CampaignScopeReadinessRow,
+  | "name"
+  | "objective"
+  | "offerSummary"
+  | "desiredCta"
+  | "targetSegments"
+  | "maxOrganizationsToDiscover"
+  | "maxConcurrentEnrichments"
+  | "maxConcurrentDrafts"
+  | "maxOpenDraftReviews"
+>;
+
+export function validateCampaignScopeReadiness(campaign: CampaignScopeReadinessInput): {
   ready: boolean;
   missing: string[];
 } {

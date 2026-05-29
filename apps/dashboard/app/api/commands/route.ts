@@ -6,6 +6,7 @@ import {
   clearSuppressionCommand,
   createDraftCommand,
   createStartCampaignCommand,
+  validateCampaignScopeReadiness,
   discardDraftCommand,
   generateDraftCommand,
   generateWarmDraftCommand,
@@ -90,6 +91,37 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
   try {
   switch (parsed.data.commandType) {
     case "start_campaign": {
+      // T-026AL: synchronous scope validation BEFORE the INSERT. The
+      // same rules the worker enforces in completeCampaignExpansionJob
+      // run here so the operator gets immediate feedback at submit
+      // time. The previous "INSERT drafting_scope, expansion job
+      // validates" path remains as a safety net for any pre-existing
+      // drafting_scope rows or external callers.
+      const validation = validateCampaignScopeReadiness({
+        name: parsed.data.payload.name,
+        objective: parsed.data.payload.objective,
+        offerSummary: parsed.data.payload.offerSummary ?? null,
+        desiredCta: parsed.data.payload.desiredCta ?? null,
+        targetSegments: parsed.data.payload.targetSegments,
+        maxOrganizationsToDiscover: parsed.data.payload.maxOrganizationsToDiscover ?? 25,
+        maxConcurrentEnrichments: parsed.data.payload.maxConcurrentEnrichments ?? 3,
+        maxConcurrentDrafts: parsed.data.payload.maxConcurrentDrafts ?? 5,
+        maxOpenDraftReviews: parsed.data.payload.maxOpenDraftReviews ?? 25
+      });
+      if (!validation.ready) {
+        const failure = {
+          code: "scope_incomplete" as const,
+          message: `Missing required scope fields: ${validation.missing.join(", ")}`,
+          missing: validation.missing
+        };
+        if (isJson) {
+          return NextResponse.json({ error: failure }, { status: 409 });
+        }
+        const redirect = safeRedirectUrl(request);
+        redirect.searchParams.set("error", `${failure.code}: ${failure.message}`);
+        return NextResponse.redirect(redirect, { status: 303 });
+      }
+
       const result = traceCommandResult(traceSpan, await createStartCampaignCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
         payload: parsed.data.payload

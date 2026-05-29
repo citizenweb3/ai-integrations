@@ -3,10 +3,19 @@ import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 import { Button, Field, PageBody, inputClass, textareaClass } from "@/components/ui";
+import { DismissableBanner } from "@/components/dismissable-banner";
 
 export const dynamic = "force-dynamic";
 
-export default function NewCampaignPage() {
+export default async function NewCampaignPage({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const query = await searchParams;
+  const errorRaw = query["error"];
+  const errorMessage =
+    typeof errorRaw === "string" ? errorRaw : Array.isArray(errorRaw) ? errorRaw[0] : null;
   return (
     <>
       <ConsoleHero currentNav="campaigns"
@@ -23,10 +32,20 @@ export default function NewCampaignPage() {
           </>
         }
         title="New campaign"
-        subtitle="Create a scoped campaign, then the expansion job will validate readiness before discovery starts."
+        subtitle="Fill the campaign brief. The server validates the scope synchronously — on Save you land on the campaign page and discovery starts running automatically."
       />
 
       <PageBody>
+        {errorMessage ? (
+          <DismissableBanner
+            tone="error"
+            queryKey="error"
+            eyebrow="Submission rejected"
+            message={errorMessage}
+            hint="Fix the highlighted fields and submit again. Nothing was saved to the database."
+          />
+        ) : null}
+
         <Card>
           <BlockTitle title="Campaign scope" className="mb-6 text-left" />
           <form className="grid grid-cols-1 md:grid-cols-2 gap-5" action="/api/commands" method="post">
