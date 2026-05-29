@@ -20537,6 +20537,17 @@ export type CampaignDiscoveryView = {
     updatedAt: Date;
     correlationId: string | null;
   }>;
+  // T-026AD/B: count of in-flight jobs scoped to this campaign, broken out
+  // by pipeline stage so the detail page can render a "background activity"
+  // indicator instead of leaving the operator wondering whether the agent
+  // is running. A job is in flight when its status is queued, leased, or
+  // running. Cron jobs and one-shot expansion jobs are excluded.
+  liveActivity: {
+    discoveryRunning: number;
+    researchInFlight: number;
+    contactDiscoveryInFlight: number;
+    draftingInFlight: number;
+  };
 };
 
 export type CampaignReviewQueueRow = {
@@ -20706,6 +20717,50 @@ export async function getCampaignDiscoveryView(
 
   const progress = await getCampaignProgress(campaignId);
 
+  // T-026AD/B: aggregate active jobs scoped to this campaign so the detail
+  // page can render a "background activity" indicator. A job is in flight
+  // when it sits in queued/leased/running. We scope by job_type + the
+  // appropriate target_entity_id (campaign for discovery, accepted-org for
+  // research / contact_discovery, draft for drafting). Cron / housekeeping
+  // jobs are excluded by job_type filter.
+  const activityRows = await db.execute(sql`
+    with campaign_orgs as (
+      select distinct matched_organization_id as org_id
+      from discovery_candidates
+      where campaign_id = ${campaignId}::uuid
+        and matched_organization_id is not null
+    ),
+    campaign_drafts as (
+      select id as draft_id from drafts where campaign_id = ${campaignId}::uuid
+    )
+    select
+      count(*) filter (
+        where j.job_type = 'job.run_campaign_discovery'
+          and j.target_entity_id = ${campaignId}::uuid
+      )::int as discovery,
+      count(*) filter (
+        where j.job_type in ('job.refresh_research_snapshot', 'job.research_more')
+          and j.target_entity_id in (select org_id from campaign_orgs)
+      )::int as research,
+      count(*) filter (
+        where j.job_type = 'job.discover_contacts'
+          and j.target_entity_id in (select org_id from campaign_orgs)
+      )::int as contact_discovery,
+      count(*) filter (
+        where j.job_type in ('job.generate_cold_draft', 'job.revalidate_draft_claims')
+          and j.target_entity_id in (select draft_id from campaign_drafts)
+      )::int as drafting
+    from jobs j
+    where j.status in ('queued', 'leased', 'running')
+  `);
+
+  const activity = (activityRows as unknown as Array<{
+    discovery: number;
+    research: number;
+    contact_discovery: number;
+    drafting: number;
+  }>)[0] ?? { discovery: 0, research: 0, contact_discovery: 0, drafting: 0 };
+
   return {
     campaign: {
       id: campaign.id,
@@ -20739,6 +20794,12 @@ export async function getCampaignDiscoveryView(
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       correlationId: r.correlationId
-    }))
+    })),
+    liveActivity: {
+      discoveryRunning: Number(activity.discovery),
+      researchInFlight: Number(activity.research),
+      contactDiscoveryInFlight: Number(activity.contact_discovery),
+      draftingInFlight: Number(activity.drafting)
+    }
   };
 }
