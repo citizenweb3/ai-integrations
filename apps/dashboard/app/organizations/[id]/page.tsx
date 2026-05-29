@@ -244,148 +244,51 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
         <Card>
           <BlockTitle title="Pending contact candidates" className="mb-4 text-left" />
           <p className="text-sm font-light opacity-70 mb-4">
-            Operator review queue from research_snapshot stage.
+            Operator review queue from research_snapshot stage. Candidates with a discovered email are
+            ready to approve straight away; the rest need an email supplied manually or a rejection.
           </p>
-          {org.pendingContactCandidates.length === 0 ? (
-            <p className="text-sm font-light opacity-60">No pending candidates.</p>
-          ) : (
-            <ul className="space-y-4">
-              {org.pendingContactCandidates.map((c) => (
-                <li key={c.id} className="border border-white/10 rounded-xl p-4">
-                  <div className="flex justify-between flex-wrap gap-2 mb-2">
-                    <strong className="text-base">{c.fullName ?? "(no name)"}</strong>
-                    <span className="text-xs opacity-60">
-                      {confidenceLabel(c.confidence)}
-                      {c.role ? ` · ${c.role}` : ""}
-                      {c.source ? ` · ${c.source}` : ""}
-                    </span>
-                  </div>
-                  <div className="text-sm opacity-80 mb-3">
-                    {c.email ?? "(no email — supply one to approve)"}
-                    {safeEvidenceHref(c.evidenceUrl) ? (
-                      <>
-                        {" · "}
-                        <a
-                          href={safeEvidenceHref(c.evidenceUrl) as string}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[var(--accent)]"
-                        >
-                          evidence
-                        </a>
-                      </>
-                    ) : null}
-                  </div>
-                  {c.notes ? <p className="text-xs opacity-60 mb-3 whitespace-pre-wrap">{c.notes}</p> : null}
-                  {c.sourceRefs.length > 0 ? (
-                    <details className="text-xs opacity-80 mb-3">
-                      <summary className="cursor-pointer opacity-60">
-                        {c.sourceRefs.length} source{c.sourceRefs.length === 1 ? "" : "s"}
-                      </summary>
-                      <ul className="mt-2 space-y-1">
-                        {c.sourceRefs.map((s, i) => (
-                          <li key={`${s.url}-${i}`}>
-                            <a
-                              href={s.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[var(--accent)] break-all"
-                            >
-                              {s.title ?? prettifyUrl(s.url)}
-                            </a>
-                            {s.snippet ? <span className="opacity-60"> · {s.snippet}</span> : null}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  ) : null}
-                  {confirmCandidateId === c.id && confirmCandidateOrganizationId === org.id && confirmContactId && confirmExistingOrganizationId && confirmEmail ? (
-                    <div className="mb-3 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent)]/10 p-3 text-xs">
-                      <div className="font-semibold text-[var(--accent)]">Email already belongs to another organization</div>
-                      <div className="mt-1 opacity-80 break-all">
-                        {confirmEmail} · contact {confirmContactId.slice(0, 8)}... · current org {confirmExistingOrganizationId.slice(0, 8)}...
-                      </div>
-                      <form className="mt-3 flex flex-wrap gap-2" action="/api/commands" method="post">
-                        <input type="hidden" name="commandType" value="approve_contact_candidate" />
-                        <input type="hidden" name="candidateId" value={c.id} />
-                        <input type="hidden" name="email" value={confirmEmail} />
-                        <input type="hidden" name="confirmReattach" value="true" />
-                        <input
-                          type="hidden"
-                          name="idempotencyKey"
-                          value={buildApproveContactCandidateIdempotencyKey(c.id, c.updatedAt)}
-                        />
-                        <button
-                          type="submit"
-                          className="rounded-lg bg-[var(--accent)] px-3 py-1.5 font-bold text-black hover:opacity-90"
-                        >
-                          Confirm reattach
-                        </button>
-                      </form>
-                    </div>
-                  ) : null}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <form className="space-y-2" action="/api/commands" method="post">
-                      <input type="hidden" name="commandType" value="approve_contact_candidate" />
-                      <input type="hidden" name="candidateId" value={c.id} />
-                      <input
-                        name="email"
-                        type="email"
-                        placeholder="email (required if missing)"
-                        defaultValue={c.email ?? ""}
-                        className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
-                      />
-                      <input
-                        name="fullName"
-                        placeholder="full name (optional)"
-                        defaultValue={c.fullName ?? ""}
-                        className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
-                      />
-                      <input
-                        name="roleTitle"
-                        placeholder="role (optional)"
-                        defaultValue={c.role ?? ""}
-                        className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
-                      />
-                      <button
-                        type="submit"
-                        className="w-full rounded-lg bg-[var(--accent)] text-black font-bold py-2 text-xs"
-                      >
-                        Approve
-                      </button>
-                    </form>
-                    <form className="space-y-2" action="/api/commands" method="post">
-                      <input type="hidden" name="commandType" value="reject_contact_candidate" />
-                      <input type="hidden" name="candidateId" value={c.id} />
-                      <select
-                        name="reasonCode"
-                        defaultValue="other"
-                        className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
-                      >
-                        {contactRejectionReasonCodes.map((code) => (
-                          <option key={code} value={code}>
-                            {CONTACT_REJECTION_REASON_LABELS[code]}
-                          </option>
-                        ))}
-                      </select>
-                      <textarea
-                        name="reasonText"
-                        placeholder="rejection notes (optional)"
-                        rows={2}
-                        className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
-                      />
-                      <button
-                        type="submit"
-                        className="w-full rounded-lg bg-[#7f2d20] text-white font-bold py-2 text-xs"
-                      >
-                        Reject
-                      </button>
-                    </form>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+          {(() => {
+            const withEmail = org.pendingContactCandidates.filter((c) => c.email !== null && c.email !== "");
+            const withoutEmail = org.pendingContactCandidates.filter((c) => c.email === null || c.email === "");
+            if (org.pendingContactCandidates.length === 0) {
+              return <p className="text-sm font-light opacity-60">No pending candidates.</p>;
+            }
+            return (
+              <div className="space-y-8">
+                <PendingCandidateGroup
+                  title="Addressable"
+                  subtitle="Candidate carries a discovered email. Approve to convert into a contact and unlock drafting."
+                  tone="accent"
+                  candidates={withEmail}
+                  org={org}
+                  confirms={{
+                    confirmCandidateId,
+                    confirmCandidateOrganizationId,
+                    confirmContactId,
+                    confirmExistingOrganizationId,
+                    confirmEmail
+                  }}
+                />
+                <PendingCandidateGroup
+                  title="No email"
+                  subtitle={
+                    "Agent could not find an email on the public source. Supply one manually before Approve, " +
+                    "reject (Low confidence / Private PII fit), or leave pending — they do not progress on their own."
+                  }
+                  tone="warning"
+                  candidates={withoutEmail}
+                  org={org}
+                  confirms={{
+                    confirmCandidateId,
+                    confirmCandidateOrganizationId,
+                    confirmContactId,
+                    confirmExistingOrganizationId,
+                    confirmEmail
+                  }}
+                />
+              </div>
+            );
+          })()}
         </Card>
         </>
         ) : null}
@@ -417,6 +320,203 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
         ) : null}
       </section>
     </>
+  );
+}
+
+// T-026AH fixup: split pending contact candidates into "Addressable"
+// (has email) and "No email" sub-groups so the operator can see at a
+// glance which candidates are ready to approve and which need manual
+// email entry before they can move forward.
+type PendingCandidate = NonNullable<
+  Awaited<ReturnType<typeof getOrganizationDetail>>
+>["pendingContactCandidates"][number];
+
+type PendingCandidateConfirms = {
+  confirmCandidateId: string | null;
+  confirmCandidateOrganizationId: string | null;
+  confirmContactId: string | null;
+  confirmExistingOrganizationId: string | null;
+  confirmEmail: string | null;
+};
+
+function PendingCandidateGroup({
+  title,
+  subtitle,
+  tone,
+  candidates,
+  org,
+  confirms
+}: {
+  title: string;
+  subtitle: string;
+  tone: "accent" | "warning";
+  candidates: PendingCandidate[];
+  org: { id: string; updatedAt: Date };
+  confirms: PendingCandidateConfirms;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3">
+        <h3 className="text-sm font-semibold tracking-[0.18em] uppercase opacity-90">{title}</h3>
+        <Badge tone={tone}>{candidates.length}</Badge>
+      </div>
+      <p className="text-xs font-light opacity-60 max-w-2xl">{subtitle}</p>
+      {candidates.length === 0 ? (
+        <p className="text-sm font-light opacity-50">None.</p>
+      ) : (
+        <ul className="space-y-4">
+          {candidates.map((c) => (
+            <PendingCandidateRow key={c.id} candidate={c} org={org} confirms={confirms} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function PendingCandidateRow({
+  candidate: c,
+  org,
+  confirms
+}: {
+  candidate: PendingCandidate;
+  org: { id: string; updatedAt: Date };
+  confirms: PendingCandidateConfirms;
+}) {
+  const { confirmCandidateId, confirmCandidateOrganizationId, confirmContactId, confirmExistingOrganizationId, confirmEmail } = confirms;
+  return (
+    <li className="border border-white/10 rounded-xl p-4">
+      <div className="flex justify-between flex-wrap gap-2 mb-2">
+        <strong className="text-base">{c.fullName ?? "(no name)"}</strong>
+        <span className="text-xs opacity-60">
+          {confidenceLabel(c.confidence)}
+          {c.role ? ` · ${c.role}` : ""}
+          {c.source ? ` · ${c.source}` : ""}
+        </span>
+      </div>
+      <div className="text-sm opacity-80 mb-3">
+        {c.email ?? "(no email — supply one to approve)"}
+        {safeEvidenceHref(c.evidenceUrl) ? (
+          <>
+            {" · "}
+            <a
+              href={safeEvidenceHref(c.evidenceUrl) as string}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[var(--accent)]"
+            >
+              evidence
+            </a>
+          </>
+        ) : null}
+      </div>
+      {c.notes ? <p className="text-xs opacity-60 mb-3 whitespace-pre-wrap">{c.notes}</p> : null}
+      {c.sourceRefs.length > 0 ? (
+        <details className="text-xs opacity-80 mb-3">
+          <summary className="cursor-pointer opacity-60">
+            {c.sourceRefs.length} source{c.sourceRefs.length === 1 ? "" : "s"}
+          </summary>
+          <ul className="mt-2 space-y-1">
+            {c.sourceRefs.map((s, i) => (
+              <li key={`${s.url}-${i}`}>
+                <a
+                  href={s.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[var(--accent)] break-all"
+                >
+                  {s.title ?? prettifyUrl(s.url)}
+                </a>
+                {s.snippet ? <span className="opacity-60"> · {s.snippet}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {confirmCandidateId === c.id && confirmCandidateOrganizationId === org.id && confirmContactId && confirmExistingOrganizationId && confirmEmail ? (
+        <div className="mb-3 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent)]/10 p-3 text-xs">
+          <div className="font-semibold text-[var(--accent)]">Email already belongs to another organization</div>
+          <div className="mt-1 opacity-80 break-all">
+            {confirmEmail} · contact {confirmContactId.slice(0, 8)}... · current org {confirmExistingOrganizationId.slice(0, 8)}...
+          </div>
+          <form className="mt-3 flex flex-wrap gap-2" action="/api/commands" method="post">
+            <input type="hidden" name="commandType" value="approve_contact_candidate" />
+            <input type="hidden" name="candidateId" value={c.id} />
+            <input type="hidden" name="email" value={confirmEmail} />
+            <input type="hidden" name="confirmReattach" value="true" />
+            <input
+              type="hidden"
+              name="idempotencyKey"
+              value={buildApproveContactCandidateIdempotencyKey(c.id, c.updatedAt)}
+            />
+            <button
+              type="submit"
+              className="rounded-lg bg-[var(--accent)] px-3 py-1.5 font-bold text-black hover:opacity-90"
+            >
+              Confirm reattach
+            </button>
+          </form>
+        </div>
+      ) : null}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <form className="space-y-2" action="/api/commands" method="post">
+          <input type="hidden" name="commandType" value="approve_contact_candidate" />
+          <input type="hidden" name="candidateId" value={c.id} />
+          <input
+            name="email"
+            type="email"
+            placeholder="email (required if missing)"
+            defaultValue={c.email ?? ""}
+            className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
+          />
+          <input
+            name="fullName"
+            placeholder="full name (optional)"
+            defaultValue={c.fullName ?? ""}
+            className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
+          />
+          <input
+            name="roleTitle"
+            placeholder="role (optional)"
+            defaultValue={c.role ?? ""}
+            className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
+          />
+          <button
+            type="submit"
+            className="w-full rounded-lg bg-[var(--accent)] text-black font-bold py-2 text-xs"
+          >
+            Approve
+          </button>
+        </form>
+        <form className="space-y-2" action="/api/commands" method="post">
+          <input type="hidden" name="commandType" value="reject_contact_candidate" />
+          <input type="hidden" name="candidateId" value={c.id} />
+          <select
+            name="reasonCode"
+            defaultValue="other"
+            className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
+          >
+            {contactRejectionReasonCodes.map((code) => (
+              <option key={code} value={code}>
+                {CONTACT_REJECTION_REASON_LABELS[code]}
+              </option>
+            ))}
+          </select>
+          <textarea
+            name="reasonText"
+            placeholder="rejection notes (optional)"
+            rows={2}
+            className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-2 text-xs"
+          />
+          <button
+            type="submit"
+            className="w-full rounded-lg bg-[#7f2d20] text-white font-bold py-2 text-xs"
+          >
+            Reject
+          </button>
+        </form>
+      </div>
+    </li>
   );
 }
 
