@@ -77,16 +77,22 @@ class RAGClient:
     async def health_check(self) -> bool:
         """Quick check if RAG API is reachable."""
         try:
-            async with self._session.get(
-                f"{self._base_url}/api/rag/search",
-                params={"q": "test", "limit": "1"},
-                headers={"x-rag-api-token": self._token},
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as resp:
-                ok = resp.status == 200
-                if ok:
-                    self._consecutive_failures = 0
-                    self._circuit_open_until = 0
-                return ok
-        except Exception:
+            # Use a fresh connector to avoid stale TCP connections from long-running sessions
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as session:
+                async with session.get(
+                    f"{self._base_url}/api/rag/search",
+                    params={"q": "test", "limit": "1"},
+                    headers={"x-rag-api-token": self._token},
+                ) as resp:
+                    ok = resp.status == 200
+                    if ok:
+                        self._consecutive_failures = 0
+                        self._circuit_open_until = 0
+                    else:
+                        log.warning("rag_health_check_http_error", status=resp.status)
+                    return ok
+        except Exception as e:
+            log.warning("rag_health_check_failed: %s: %s", type(e).__name__, e)
             return False
