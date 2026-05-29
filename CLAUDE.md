@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **bizdev-email-agent** (665 symbols, 1548 relationships, 45 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **bizdev-email-agent** (681 symbols, 1583 relationships, 46 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -101,12 +101,20 @@ Applies when a task is a **feature or touches 3+ files**. For smaller changes
   into the diary with `clawmem: N/A`.
 
 ## 1. Prior-art search (before planning)
-Search whether this was built or researched before:
-- **clawmem**: `search` / `intent_search` / `find_similar` on the feature topic
+Search whether this was built or researched before — including by other agents
+in other projects (clawmem covers all indexed collections simultaneously):
+- **clawmem**: `search` / `intent_search` for direct matches;
+  `find_similar` for semantically close patterns;
+  `kg_query` / `find_causal_links` for graph-based cross-project discovery
 - **git**: `git log --grep` and `git log -S`
 - **tasks**: grep past diaries in `.tasks/`
 
-Record findings in the diary. Reuse what exists, or state why you build anew.
+Record findings in the diary. If a similar feature exists in another project,
+reuse or adapt — note what was borrowed and why.
+
+If a brainstorm precedes the work, run this same search during the brainstorm
+too — the findings sharpen the design doc. This does not replace the
+pre-planning search; do both.
 
 ## 2. Diary (`.tasks/`, gitignored)
 Create `.tasks/YYYY-MM-DD-<slug>.md` first. One file per task. The agent only
@@ -148,3 +156,36 @@ Join key = **commit hash** (a hash reveals nothing about the system).
 
 From any node, reach the other two via the hash. The commit stays clean; the
 working artifacts (slug, ids, diaries) never leave the machine.
+
+## Team mode
+
+Triggered only when the user explicitly requests team work (or `/team-feature-development`).
+Without an explicit request, work single-agent — the protocol above as written.
+
+In team mode the protocol roles redistribute:
+
+| Protocol element | Single-agent | Team mode |
+|---|---|---|
+| Prior-art search | the agent | the lead, once, in the brainstorm/planning phase |
+| Diary (`.tasks/`) | the agent | the lead owns the master diary; teammates report stage results, the lead records them |
+| Stage = atomic commit | agent commits sequentially | each teammate commits their own atomic stages in parallel, within their file-ownership boundary (no two teammates touch the same file) |
+| Verification | the agent (+ human) | the lead: review-with-scoring (finder ≠ judge) + a verification pass |
+| clawmem per stage + final pin | the agent | teammates write per-stage entries; the lead writes the final `memory_pin` |
+
+**Milestone vs stage.** A stage is one teammate's atomic revertable commit (fine-grained,
+parallel, no gate). A milestone is an integration point where several teammates' parallel
+work converges into something coherent. The lead defines milestones in the plan, before
+spawning the team.
+
+**Milestone cycle (the human gate):**
+1. the lead hands the milestone's parallel tasks to teammates
+2. teammates work in parallel, committing their atomic stages
+3. teammates report completion to the lead
+4. the lead runs review-with-scoring + verification on the milestone
+5. the lead records the milestone in the master diary + clawmem
+6. the lead STOPS, shows the milestone result to the human, waits for approval
+7. approval → next milestone; otherwise → fixes within the current milestone
+
+Parallelism stays within a milestone; milestones are serialized by the human gate. If the
+feature is a single milestone, there is one gate, at the end before merge. The commit
+sterility rule and the linked-graph wiring are unchanged.
