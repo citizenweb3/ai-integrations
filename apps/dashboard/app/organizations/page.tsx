@@ -59,8 +59,13 @@ export default async function OrganizationsIndexPage() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-4 mt-6">
+                  <div className="grid grid-cols-4 gap-4 mt-6">
                     <Stat label="Contacts" value={org.contactCount} />
+                    <Stat
+                      label="Pending review"
+                      value={org.pendingContactCandidateCount}
+                      highlight={org.pendingContactCandidateCount > 0}
+                    />
                     <Stat label="Threads" value={org.threadCount} />
                     <Stat
                       label="Open items"

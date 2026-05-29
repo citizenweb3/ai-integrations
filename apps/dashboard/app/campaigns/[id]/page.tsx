@@ -339,6 +339,8 @@ export default async function CampaignDetailPage({
           ) : null}
         </Card>
 
+        <AcceptedOrganisationsCard view={view} />
+
       </PageBody>
     </>
   );
@@ -346,6 +348,72 @@ export default async function CampaignDetailPage({
 
 function formatListValue(values: string[]) {
   return values.length > 0 ? values.join(", ") : <span className="opacity-50">none</span>;
+}
+
+// T-026AH/A: surface the organisations the campaign has already produced
+// so the operator can jump straight to their detail pages instead of
+// hunting through the unrelated cross-campaign /organizations listing.
+// "Accepted" here means the candidate is past triage and lives as an
+// organisation — i.e. accepted, queued_for_enrichment, or enriched.
+function AcceptedOrganisationsCard({ view }: { view: CampaignDiscoveryViewModel }) {
+  const rows = [
+    ...view.candidatesByStatus.enriched,
+    ...view.candidatesByStatus.queued_for_enrichment,
+    ...view.candidatesByStatus.accepted
+  ].filter((c) => c.matchedOrganizationId !== null);
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <Card>
+      <div className="flex items-center gap-3 mb-4">
+        <BlockTitle title="Organisations" className="text-left" />
+        <Badge tone="accent">{rows.length}</Badge>
+      </div>
+      <p className="text-sm font-light opacity-70 mb-4">
+        Candidates this campaign has accepted. Open one to review research, approve contacts, and generate
+        drafts.
+      </p>
+      <ul className="space-y-2">
+        {rows.map((c) => {
+          const display = c.matchedOrganizationName ?? c.proposedName;
+          const subtitle = [
+            c.matchedOrganizationDomain ?? c.domain ?? "no domain",
+            c.countryCode ?? null,
+            c.region ?? null
+          ].filter(Boolean).join(" · ");
+          const statusTone =
+            c.status === "enriched"
+              ? "accent"
+              : c.status === "queued_for_enrichment"
+              ? "primary"
+              : "default";
+          const statusLabel =
+            c.status === "enriched"
+              ? "research ready"
+              : c.status === "queued_for_enrichment"
+              ? "enriching"
+              : "accepted";
+          return (
+            <li key={c.id}>
+              <Link
+                href={`/organizations/${c.matchedOrganizationId}`}
+                className="flex items-center justify-between gap-4 border border-white/10 rounded-xl px-4 py-3 hover:bg-white/[0.04] hover:no-underline transition-colors"
+              >
+                <div className="min-w-0">
+                  <div className="font-medium">{display}</div>
+                  <div className="text-xs opacity-60 mt-0.5">{subtitle}</div>
+                </div>
+                <Badge tone={statusTone}>{statusLabel}</Badge>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
 }
 
 function formatMultilineValue(values: string[]) {

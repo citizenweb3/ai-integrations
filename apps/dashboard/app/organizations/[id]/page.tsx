@@ -10,6 +10,22 @@ import { notFound } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
+import { Badge } from "@/components/ui";
+
+// T-026AH/B: split the org detail page into tabs (research / contacts /
+// threads / timeline) so the operator sees one section at a time
+// instead of scrolling past six unrelated cards. The page is still a
+// server component; the active tab is read from `?tab=` so navigation
+// is a plain Next link click (no client state).
+type OrgTab = "research" | "contacts" | "threads" | "timeline";
+const ORG_TAB_KEYS: OrgTab[] = ["research", "contacts", "threads", "timeline"];
+
+function resolveOrgTab(raw: string | null): OrgTab {
+  if (raw === "research" || raw === "contacts" || raw === "threads" || raw === "timeline") {
+    return raw;
+  }
+  return "research";
+}
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +55,8 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
   const confirmExistingOrganizationId = singleQueryParam(query.confirmExistingOrganizationId);
   const confirmCandidateOrganizationId = singleQueryParam(query.confirmCandidateOrganizationId);
   const confirmEmail = singleQueryParam(query.confirmEmail);
+  const activeTab = resolveOrgTab(singleQueryParam(query.tab));
+  const pendingContactCandidates = org.pendingContactCandidates.length;
 
   return (
     <>
@@ -69,8 +87,6 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
           <StatCard label="Replies" value={org.stats.inboundReplies} />
           <StatCard label="Open items" value={org.stats.openWorkItems} accent={org.stats.openWorkItems > 0} />
         </div>
-
-        <SnapshotPanel snapshot={org.latestSnapshot} orgName={org.name} orgId={org.id} orgDomain={org.domain} />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
@@ -132,6 +148,27 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
           </Card>
         </div>
 
+        <OrgTabsNav
+          activeTab={activeTab}
+          orgId={org.id}
+          counts={{
+            contacts: org.contacts.length,
+            pendingContactCandidates,
+            threads: org.threads.length,
+            timelineEntries: org.timeline.length
+          }}
+        />
+
+        {activeTab === "research" ? (
+          <SnapshotPanel
+            snapshot={org.latestSnapshot}
+            orgName={org.name}
+            orgId={org.id}
+            orgDomain={org.domain}
+          />
+        ) : null}
+
+        {activeTab === "threads" ? (
         <Card>
           <BlockTitle title="Threads" className="mb-4 text-left" />
           {org.threads.length === 0 ? (
@@ -151,7 +188,10 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
             </ul>
           )}
         </Card>
+        ) : null}
 
+        {activeTab === "contacts" ? (
+        <>
         <Card>
           <BlockTitle title="Contacts" className="mb-4 text-left" />
           {org.contacts.length === 0 ? (
@@ -344,7 +384,10 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
             </ul>
           )}
         </Card>
+        </>
+        ) : null}
 
+        {activeTab === "timeline" ? (
         <Card>
           <BlockTitle title="Timeline" className="mb-4 text-left" />
           {org.timeline.length === 0 ? (
@@ -368,10 +411,73 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
             </ul>
           )}
         </Card>
+        ) : null}
       </section>
     </>
   );
 }
+
+// T-026AH/B: tab bar for the org detail page. Renders as Next links so
+// switching tabs is a normal navigation, which re-runs the server
+// component and re-fetches the org detail in one round trip. Active
+// state is passed in by the page; the page derives it from `?tab=`.
+function OrgTabsNav({
+  activeTab,
+  orgId,
+  counts
+}: {
+  activeTab: OrgTab;
+  orgId: string;
+  counts: {
+    contacts: number;
+    pendingContactCandidates: number;
+    threads: number;
+    timelineEntries: number;
+  };
+}) {
+  const items: Array<{ key: OrgTab; label: string; badge?: number; highlight?: boolean }> = [
+    { key: "research", label: "Research" },
+    {
+      key: "contacts",
+      label: "Contacts",
+      badge: counts.contacts + counts.pendingContactCandidates,
+      highlight: counts.pendingContactCandidates > 0
+    },
+    { key: "threads", label: "Threads", badge: counts.threads },
+    { key: "timeline", label: "Timeline", badge: counts.timelineEntries }
+  ];
+  return (
+    <nav className="flex flex-wrap gap-2 border-b border-white/10 pb-2">
+      {items.map((item) => {
+        const isActive = item.key === activeTab;
+        const href =
+          item.key === "research"
+            ? `/organizations/${orgId}`
+            : `/organizations/${orgId}?tab=${item.key}`;
+        return (
+          <Link
+            key={item.key}
+            href={href}
+            className={
+              "inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors hover:no-underline " +
+              (isActive
+                ? "bg-white/10 text-white font-semibold"
+                : "text-white/70 hover:bg-white/5")
+            }
+          >
+            {item.label}
+            {typeof item.badge === "number" && item.badge > 0 ? (
+              <Badge tone={item.highlight ? "warning" : "default"}>{item.badge}</Badge>
+            ) : null}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+// Suppress unused-import warning if a future cleanup removes ORG_TAB_KEYS.
+void ORG_TAB_KEYS;
 
 function StatCard({ label, value, accent = false }: { label: string; value: number; accent?: boolean }) {
   return (

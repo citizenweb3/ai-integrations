@@ -19423,6 +19423,11 @@ export type OrganizationListItem = {
   contactCount: number;
   threadCount: number;
   openWorkItemCount: number;
+  // T-026AH/C: number of research_contact_candidates still waiting on
+  // operator approval. Surfaced on the /organizations listing so the
+  // operator can spot orgs where discovery has produced something to
+  // triage without opening each card.
+  pendingContactCandidateCount: number;
   latestSnapshotVersion: number | null;
   latestSnapshotStatus: string | null;
   updatedAt: Date;
@@ -19440,6 +19445,7 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
       coalesce(c.cnt, 0)::int as contact_count,
       coalesce(t.cnt, 0)::int as thread_count,
       coalesce(w.cnt, 0)::int as open_work_item_count,
+      coalesce(pcc.cnt, 0)::int as pending_contact_candidate_count,
       s.snapshot_version as latest_snapshot_version,
       s.status as latest_snapshot_status
     from organizations o
@@ -19458,6 +19464,16 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
          or (status = 'snoozed' and available_at <= now())
       group by organization_id
     ) w on w.organization_id = o.id
+    left join (
+      -- T-026AH/C: pending contact-candidate rollup. Counts only
+      -- candidates still awaiting operator triage (status='pending';
+      -- converted means already approved into a contact, rejected
+      -- means closed).
+      select organization_id, count(*) as cnt
+      from research_contact_candidates
+      where status = 'pending'
+      group by organization_id
+    ) pcc on pcc.organization_id = o.id
     left join lateral (
       select snapshot_version, status
       from research_snapshots
@@ -19478,6 +19494,7 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
     contact_count: number;
     thread_count: number;
     open_work_item_count: number;
+    pending_contact_candidate_count: number;
     latest_snapshot_version: number | null;
     latest_snapshot_status: string | null;
   }>).map((r) => ({
@@ -19488,6 +19505,7 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
     contactCount: r.contact_count,
     threadCount: r.thread_count,
     openWorkItemCount: r.open_work_item_count,
+    pendingContactCandidateCount: r.pending_contact_candidate_count,
     latestSnapshotVersion: r.latest_snapshot_version,
     latestSnapshotStatus: r.latest_snapshot_status,
     updatedAt: r.updated_at instanceof Date ? r.updated_at : new Date(r.updated_at)
