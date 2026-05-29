@@ -4,6 +4,7 @@ import ScrollToTop from '@/components/scroll-to-top';
 import BeforeAfter from '@/components/before-after';
 import AgentsFirstClient from '@/components/agents-first-client';
 import AiWorkforce from '@/components/ai-workforce';
+import OurOpenSourceExamples from '@/components/our-open-source-examples';
 import AgentsService from '@/components/agents-service';
 import ComparisonTable from '@/components/comparison-table';
 import AutomationCases from '@/components/automation-cases';
@@ -23,6 +24,7 @@ export default function Page() {
         <AutomationCases />
         <BeforeAfter />
         <AiWorkforce />
+        <OurOpenSourceExamples />
         <Pricing />
       </main>
       <SiteFooter />
