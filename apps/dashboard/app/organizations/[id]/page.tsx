@@ -248,43 +248,54 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
             ready to approve straight away; the rest need an email supplied manually or a rejection.
           </p>
           {(() => {
-            const withEmail = org.pendingContactCandidates.filter((c) => c.email !== null && c.email !== "");
-            const withoutEmail = org.pendingContactCandidates.filter((c) => c.email === null || c.email === "");
             if (org.pendingContactCandidates.length === 0) {
               return <p className="text-sm font-light opacity-60">No pending candidates.</p>;
             }
+            const hasEmail = (c: PendingCandidate): boolean =>
+              c.email !== null && c.email !== "";
+            const isGeneric = (c: PendingCandidate): boolean => c.source === "generic_inbox";
+            const specificWithEmail = org.pendingContactCandidates.filter(
+              (c) => hasEmail(c) && !isGeneric(c)
+            );
+            const generic = org.pendingContactCandidates.filter(isGeneric);
+            const noEmail = org.pendingContactCandidates.filter(
+              (c) => !hasEmail(c) && !isGeneric(c)
+            );
+            const confirms = {
+              confirmCandidateId,
+              confirmCandidateOrganizationId,
+              confirmContactId,
+              confirmExistingOrganizationId,
+              confirmEmail
+            };
             return (
               <div className="space-y-8">
                 <PendingCandidateGroup
-                  title="Addressable"
-                  subtitle="Candidate carries a discovered email. Approve to convert into a contact and unlock drafting."
+                  title="Addressable specific people"
+                  subtitle="Specific person with a verbatim email found on a public source. Approve to convert into a contact and unlock drafting."
                   tone="accent"
-                  candidates={withEmail}
+                  candidates={specificWithEmail}
                   org={org}
-                  confirms={{
-                    confirmCandidateId,
-                    confirmCandidateOrganizationId,
-                    confirmContactId,
-                    confirmExistingOrganizationId,
-                    confirmEmail
-                  }}
+                  confirms={confirms}
+                />
+                <PendingCandidateGroup
+                  title="Generic company inbox"
+                  subtitle="Company-wide inbox (info@, sales@, partners@, …) surfaced verbatim from the org's public page. Approve to use it as a fallback addressable contact when no specific person is available."
+                  tone="accent"
+                  candidates={generic}
+                  org={org}
+                  confirms={confirms}
                 />
                 <PendingCandidateGroup
                   title="No email"
                   subtitle={
-                    "Agent could not find an email on the public source. Supply one manually before Approve, " +
+                    "Specific person but the agent could not find an email on the public source. Supply one manually before Approve, " +
                     "reject (Low confidence / Private PII fit), or leave pending — they do not progress on their own."
                   }
                   tone="warning"
-                  candidates={withoutEmail}
+                  candidates={noEmail}
                   org={org}
-                  confirms={{
-                    confirmCandidateId,
-                    confirmCandidateOrganizationId,
-                    confirmContactId,
-                    confirmExistingOrganizationId,
-                    confirmEmail
-                  }}
+                  confirms={confirms}
                 />
               </div>
             );

@@ -10238,19 +10238,17 @@ async function routeContactCandidatesIntoOrg(
 function buildDefaultContactDiscoveryPrompt(input: {
   organizationName: string;
   domain: string | null;
+  // T-026AI: the field is accepted for backwards compatibility (existing
+  // jobs in flight, scripts that send the old shape), but the prompt no
+  // longer gates anything on it. The agent always searches for one
+  // generic company inbox alongside specific people.
   allowGenericInboxFallback?: boolean;
 }): string {
+  void input.allowGenericInboxFallback;
   const safeName = sanitizePromptInsertion(input.organizationName, 200);
   const safeDomain = input.domain ? sanitizePromptInsertion(input.domain, 253) : null;
   const head = safeDomain ? `${safeName} (${safeDomain})` : safeName;
-  // T-026V: when the campaign opted in, attach a campaign-context block with
-  // exactly the line the agent instruction reads to unlock the generic-inbox
-  // fallback. Anything else than this exact phrase leaves the default
-  // conservative behaviour in place.
-  const contextBlock = input.allowGenericInboxFallback
-    ? "\n\n<campaign_context>\nGeneric inbox fallback: allowed\n</campaign_context>"
-    : "";
-  return `Find public contact candidates for ${head} — people the operator could plausibly reach out to (founders, heads of partnerships / sales / BD, relevant product leads). Cite a primary source URL for each. Return only contact candidates; do not produce company facts or questions.${contextBlock}`;
+  return `Find public contact candidates for ${head} — people the operator could plausibly reach out to (founders, heads of partnerships / sales / BD, relevant product leads), AND one company-wide inbox if any appears verbatim on a public page. Cite a primary source URL for each. Return only contact candidates; do not produce company facts or questions.`;
 }
 
 export type ContactDiscoveryRouterResult = {

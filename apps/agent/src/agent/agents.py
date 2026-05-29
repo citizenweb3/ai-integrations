@@ -639,21 +639,18 @@ NEVER emit Vertex grounding redirect URLs
 `https://www.google.com/search?...`, `https://www.google.com/url?...`) —
 the worker drops them.
 
-Generic-inbox fallback (CONDITIONAL — only when the campaign context block
-contains the line `Generic inbox fallback: allowed`):
+Generic company inbox (ALWAYS — include independently of any specific
+people you found):
 
-  Purpose: the operator must end the run with at least one ADDRESSABLE
-  candidate — i.e. one whose `email` is non-null — whenever such an address
-  exists publicly. Without that, the whole pipeline cannot send.
+  In addition to the specific people above, ALWAYS search for and include
+  ONE generic company-wide email address whenever such an address appears
+  verbatim on a primary public page. This is the operator's fallback
+  addressable contact and must surface alongside specific people, not in
+  place of them — many orgs publish both a partnerships@ inbox and a
+  named contact, and the operator wants to see both.
 
-  Trigger (include the fallback when ANY of these is true):
-    a) You returned ZERO specific people; or
-    b) You returned specific people, but NONE of them carry a non-null
-       `email` (which is the common case for company team pages that
-       expose photos + titles but no email addresses).
-
-  When the trigger fires, ADD exactly ONE additional candidate IN ADDITION
-  to whatever specific people you already returned:
+  When such an address exists, ADD exactly ONE additional candidate IN
+  ADDITION to whatever specific people you already returned:
       `source`        = `generic_inbox`
       `confidence`    = `low`
       `fullName`      = the role description, NOT a person's name
@@ -693,14 +690,12 @@ contains the line `Generic inbox fallback: allowed`):
                         candidate — never guess from the company name or
                         domain alone.
 
-  Hard rule: never include the generic_inbox candidate when at least one
-  specific person was already returned with a non-null `email`. In that
-  case the operator already has a directly addressable contact and the
-  generic inbox is redundant.
+  Cap of 8 entries still applies: count the generic_inbox candidate
+  against that cap.
 
-  When the campaign context does NOT contain the `Generic inbox fallback:
-  allowed` line, treat generic inboxes as forbidden — skip them entirely,
-  same as press / careers / support inboxes.
+  If no generic inbox is publicly listed, simply omit the generic
+  candidate. The cap-at-8 / verbatim-source rules are absolute and
+  override the "always include" instruction — never fabricate.
 """
 
 _STAGE_TOOLS: dict[str, list[BaseTool]] = {

@@ -258,24 +258,11 @@ export default function NewCampaignPage() {
               />
             </Field>
 
-            <label className="md:col-span-2 flex items-start gap-3 p-3 rounded-lg bg-[#1A1A1B] border border-white/10 cursor-pointer">
-              <input
-                type="checkbox"
-                name="allowGenericInboxFallback"
-                className="mt-1 accent-[var(--accent)]"
-              />
-              <span className="flex flex-col gap-1">
-                <span className="text-sm font-medium">Allow generic-inbox fallback</span>
-                <span className="text-xs font-light opacity-65 leading-snug">
-                  When no addressable person can be found, the contact-discovery agent may surface ONE generic outreach
-                  inbox — role-style local parts (<code className="font-mono">partners@</code>, <code className="font-mono">bd@</code>, <code className="font-mono">sales@</code>, <code className="font-mono">info@</code>, <code className="font-mono">hello@</code>, <code className="font-mono">contact@</code>, <code className="font-mono">team@</code>) or the company's own name
-                  (<code className="font-mono">acme@</code>, <code className="font-mono">datarobot@</code>) on either the company's own domain OR a public mail provider
-                  (<code className="font-mono">gmail.com</code>, <code className="font-mono">outlook.com</code>, <code className="font-mono">protonmail.com</code>, etc.). The agent must read the address verbatim from a
-                  primary public page (about / contact / footer); never guesses. Confidence is always low; an addressable
-                  specific person beats the fallback when both exist.
-                </span>
-              </span>
-            </label>
+            {/* T-026AI: the "Allow generic-inbox fallback" checkbox is gone.
+               The contact-discovery agent now always searches for one
+               company-wide inbox (info@ / sales@ / partners@ / …) verbatim
+               from a public page and surfaces it alongside specific
+               people, so there is nothing to opt into. */}
 
             <Button type="submit" className="md:col-span-2">
               Create campaign
