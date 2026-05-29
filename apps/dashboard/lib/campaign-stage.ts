@@ -46,12 +46,31 @@ export function deriveCampaignStage(view: CampaignDiscoveryView): CampaignStageS
   const status = view.campaign.status;
 
   if (status === "drafting_scope") {
+    // T-026AJ/B: split the drafting_scope rendering by whether the
+    // validator has actually run yet. Right after start_campaign the
+    // campaign is INSERTed with status=drafting_scope and the
+    // expansion job runs the validation ~100ms-2s later. Without this
+    // split the operator sees "Scope incomplete" the whole time.
+    if (view.scopeValidation.state === "pending") {
+      return {
+        key: "drafting_scope",
+        label: "Validating scope",
+        tone: "primary",
+        description:
+          "Campaign was just submitted. The validator runs in the background and flips the campaign to active when the scope is valid. Refresh in a moment.",
+        nextAction: null
+      };
+    }
+    const missing = view.scopeValidation.missingFields;
+    const description =
+      missing.length === 0
+        ? "The scope validator caught missing or invalid required fields. Fix them in the form below and save — discovery starts automatically once the scope is valid."
+        : `Missing required scope fields: ${missing.join(", ")}. Fix them in the form below and save — discovery starts automatically once the scope is valid.`;
     return {
       key: "drafting_scope",
       label: "Scope incomplete",
       tone: "warning",
-      description:
-        "The scope validator caught missing or invalid required fields. Fix them and save — discovery starts automatically once the scope is valid.",
+      description,
       nextAction: {
         title: "Complete scope",
         hint: "Fix the highlighted fields and save. Discovery is auto-enqueued on a clean save.",

@@ -20568,6 +20568,17 @@ export type CampaignDiscoveryView = {
     contactDiscoveryInFlight: number;
     draftingInFlight: number;
   };
+  // T-026AJ/A: separate "validation has not run yet" from "validator
+  // reported missing fields" so the stage strip stops flashing
+  // "Scope incomplete" during the ~100ms-2s window between
+  // start_campaign INSERT (drafting_scope) and the expansion job
+  // flipping the status to active. `missingFields` is populated only
+  // when state === 'incomplete' (parsed from the open
+  // campaign_scope_incomplete work_item's summary).
+  scopeValidation: {
+    state: "pending" | "incomplete" | "ready";
+    missingFields: string[];
+  };
 };
 
 export type CampaignReviewQueueRow = {
@@ -20809,6 +20820,42 @@ export async function getCampaignDiscoveryView(
     drafting: number;
   }>)[0] ?? { discovery: 0, research: 0, contact_discovery: 0, drafting: 0 };
 
+  // T-026AJ/A: derive scope-validation feedback. The signal is the
+  // pairing of the campaign's status with the existence of (a) a
+  // terminal expansion job and (b) an open campaign_scope_incomplete
+  // work_item. The work_item's `summary` field encodes the missing
+  // fields as a comma-separated suffix ("Missing required scope
+  // fields: offer_summary, desired_cta").
+  let scopeState: "pending" | "incomplete" | "ready";
+  let scopeMissingFields: string[] = [];
+  if (campaign.status !== "drafting_scope") {
+    scopeState = "ready";
+  } else {
+    const incompleteRows = await db.execute(sql`
+      select summary
+      from work_items
+      where dedupe_key = ${`campaign_scope_incomplete:${campaignId}`}
+        and status = 'open'
+      limit 1
+    `);
+    const incompleteRow = (incompleteRows as unknown as Array<{ summary: string | null }>)[0];
+    if (incompleteRow) {
+      scopeState = "incomplete";
+      const summary = incompleteRow.summary ?? "";
+      const prefix = "Missing required scope fields:";
+      const idx = summary.indexOf(prefix);
+      if (idx !== -1) {
+        scopeMissingFields = summary
+          .slice(idx + prefix.length)
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+      }
+    } else {
+      scopeState = "pending";
+    }
+  }
+
   return {
     campaign: {
       id: campaign.id,
@@ -20849,6 +20896,10 @@ export async function getCampaignDiscoveryView(
       researchInFlight: Number(activity.research),
       contactDiscoveryInFlight: Number(activity.contact_discovery),
       draftingInFlight: Number(activity.drafting)
+    },
+    scopeValidation: {
+      state: scopeState,
+      missingFields: scopeMissingFields
     }
   };
 }

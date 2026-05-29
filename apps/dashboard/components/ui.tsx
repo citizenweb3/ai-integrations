@@ -158,9 +158,17 @@ export const Field: FC<
 > = ({ label, hint, required, className, children }) => {
   return (
     <label className={twMerge("flex flex-col gap-2", className)}>
-      <span className="text-xs font-semibold tracking-[0.15em] uppercase opacity-70">
-        {label}
-        {required ? <span className="text-[var(--accent)] ml-1">*</span> : null}
+      <span className="flex items-center gap-2 text-xs font-semibold tracking-[0.15em] uppercase opacity-70">
+        <span>{label}</span>
+        {required ? (
+          // T-026AJ/C: subtle accent `*` was easy to miss; an explicit
+          // "Required" pill in accent border + accent text reads at a
+          // glance and matches the badge language used elsewhere on the
+          // page (Badge primitive).
+          <span className="inline-flex items-center rounded-full border border-[var(--accent)]/40 px-2 py-0.5 text-[10px] tracking-[0.18em] text-[var(--accent)]">
+            Required
+          </span>
+        ) : null}
       </span>
       {children}
       {hint ? <span className="text-xs font-light opacity-55 leading-snug">{hint}</span> : null}
