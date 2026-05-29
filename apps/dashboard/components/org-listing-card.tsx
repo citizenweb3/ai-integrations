@@ -33,13 +33,13 @@ export function OrgListingCard({
             </div>
           </div>
           {org.latestSnapshotVersion ? (
-            <SnapshotBadge
-              version={org.latestSnapshotVersion}
-              status={org.latestSnapshotStatus ?? "draft"}
-            />
+            <SnapshotBadge version={org.latestSnapshotVersion} />
           ) : (
-            <span className="text-xs px-2 py-1 rounded-full border border-white/15 opacity-60">
-              no snapshot
+            <span
+              className="text-xs px-2 py-1 rounded-full border border-white/15 opacity-60"
+              title="The research-snapshot job has not finished yet. Drafts cannot use this org until it does."
+            >
+              no research yet
             </span>
           )}
         </div>
@@ -58,16 +58,26 @@ export function OrgListingCard({
           </div>
         ) : null}
 
-        <div className="grid grid-cols-4 gap-4 mt-6">
-          <Stat label="Contacts" value={org.contactCount} />
+        <div className="grid grid-cols-2 gap-x-4 gap-y-5 mt-6">
           <Stat
-            label="Pending review"
+            label="Approved contacts"
+            hint="People you have approved as addressable. Drafts can use them as the recipient."
+            value={org.contactCount}
+          />
+          <Stat
+            label="Pending contacts"
+            hint="People the agent found. Waiting on your Approve or Reject before drafts can use them."
             value={org.pendingContactCandidateCount}
             highlight={org.pendingContactCandidateCount > 0}
           />
-          <Stat label="Threads" value={org.threadCount} />
+          <Stat
+            label="Threads"
+            hint="Email conversations with this organisation. Increases when you start sending."
+            value={org.threadCount}
+          />
           <Stat
             label="Open items"
+            hint="Tasks the system has flagged for you on this org (scope issues, draft reviews, …)."
             value={org.openWorkItemCount}
             highlight={org.openWorkItemCount > 0}
           />
@@ -77,22 +87,35 @@ export function OrgListingCard({
   );
 }
 
-function SnapshotBadge({ version, status }: { version: number; status: string }) {
-  const tone = status === "approved"
-    ? "text-[var(--accent)] border-[var(--accent)]/40"
-    : "text-[hsl(var(--primary))] border-[hsl(var(--primary))]/40";
+function SnapshotBadge({ version }: { version: number }) {
   return (
-    <span className={`text-xs px-2 py-1 rounded-full border ${tone} whitespace-nowrap`}>
-      v{version} · {status}
+    <span
+      className="text-xs px-2 py-1 rounded-full border border-[hsl(var(--primary))]/40 text-[hsl(var(--primary))] whitespace-nowrap"
+      title={`Research snapshot version ${version}. The number bumps every time you refresh the snapshot from the org page.`}
+    >
+      research v{version}
     </span>
   );
 }
 
-function Stat({ label, value, highlight = false }: { label: string; value: number; highlight?: boolean }) {
+function Stat({
+  label,
+  hint,
+  value,
+  highlight = false
+}: {
+  label: string;
+  hint?: string;
+  value: number;
+  highlight?: boolean;
+}) {
   return (
     <div>
       <div className={`text-2xl font-bold ${highlight ? "text-[var(--accent)]" : ""}`}>{value}</div>
       <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-1">{label}</div>
+      {hint ? (
+        <div className="text-[11px] font-light opacity-50 leading-snug mt-1">{hint}</div>
+      ) : null}
     </div>
   );
 }
