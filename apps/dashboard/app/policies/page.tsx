@@ -32,10 +32,26 @@ export default async function PoliciesPage() {
 
       <PageBody>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <MetricCard label="Active suppressions" value={view.suppressions.active.length} />
-          <MetricCard label="Inactive suppressions" value={view.suppressions.inactive.length} />
-          <MetricCard label="Active policy states" value={view.policyStates.active.length} />
-          <MetricCard label="Resolved policy states" value={view.policyStates.resolved.length} />
+          <MetricCard
+            label="Active suppressions"
+            value={view.suppressions.active.length}
+            hint="Email addresses or domains the system will refuse to send to right now (bounce, complaint, manual block, …)."
+          />
+          <MetricCard
+            label="Inactive suppressions"
+            value={view.suppressions.inactive.length}
+            hint="Suppressions you have cleared. Kept as audit trail; the address is sendable again."
+          />
+          <MetricCard
+            label="Active policy states"
+            value={view.policyStates.active.length}
+            hint="Open policy issues the system has flagged (compliance, send-rate guard, contact-frequency, …) waiting on operator action."
+          />
+          <MetricCard
+            label="Resolved policy states"
+            value={view.policyStates.resolved.length}
+            hint="Closed policy issues. Kept for audit; no operator action required."
+          />
         </div>
 
         <Card>

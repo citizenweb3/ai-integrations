@@ -78,37 +78,51 @@ export default async function OperationsPage() {
             label="Workers"
             value={counters.workers.length}
             sub={`${counters.workers.filter((w) => w.healthy).length} healthy / ${counters.workers.filter((w) => !w.healthy).length} stale`}
+            hint="Worker processes registered for this deployment. Healthy = heartbeat within window; stale = waiting on stale-lease cron to recover."
           />
           <MetricCardWithSub
             label="Jobs queued"
             value={queuedJobs}
             sub={`leased ${leasedJobs} / running ${runningJobs} / total ${totalJobs}`}
+            hint="Pending agent jobs waiting on a worker. Leased = picked up, running = executing, total = end-to-end backlog."
           />
           <MetricCardWithSub
             label="Stale leases"
             value={counters.jobs.staleLeasedCount}
             sub="recovered on next worker tick"
             danger={counters.jobs.staleLeasedCount > 0}
+            hint="Jobs whose worker lease expired without completing. The recovery cron returns them to the queue every minute."
           />
           <MetricCardWithSub
             label="Dead-lettered"
             value={deadLetteredJobs}
             sub={`${failedJobs} transient failures`}
             danger={deadLetteredJobs > 0}
+            hint="Jobs that exhausted retries and stopped. Look at Incident response or the jobs table to triage what blew up."
           />
           <MetricCardWithSub
             label="Webhook backlog"
             value={counters.webhooks.backlogCount}
             sub="unprocessed"
             warning={counters.webhooks.backlogCount > 0}
+            hint="Inbound webhook events from Resend / Telegram waiting to be processed. Should be ~0 in steady state."
           />
           <MetricCardWithSub
             label="Open ambiguity"
             value={counters.workItemsOpen.sendAmbiguityReview + counters.workItemsOpen.threadMatchAmbiguous}
             sub={`send ${counters.workItemsOpen.sendAmbiguityReview} / thread ${counters.workItemsOpen.threadMatchAmbiguous}`}
+            hint="Work items where the system could not pick a single action automatically (send target / thread match). Operator review required."
           />
-          <MetricCard label="Policy blockers" value={counters.workItemsOpen.policyBlocker} />
-          <MetricCard label="Unmatched inbound" value={counters.workItemsOpen.unmatchedInbound} />
+          <MetricCard
+            label="Policy blockers"
+            value={counters.workItemsOpen.policyBlocker}
+            hint="Active policy state items blocking sends or scopes. Open Policies to resolve them."
+          />
+          <MetricCard
+            label="Unmatched inbound"
+            value={counters.workItemsOpen.unmatchedInbound}
+            hint="Inbound emails the matcher could not tie to a known thread. Operator attaches them manually from the work-item detail page."
+          />
         </div>
 
         <Card>
@@ -246,13 +260,15 @@ function MetricCardWithSub({
   value,
   sub,
   danger = false,
-  warning = false
+  warning = false,
+  hint
 }: {
   label: string;
   value: number;
   sub: string;
   danger?: boolean;
   warning?: boolean;
+  hint?: string;
 }) {
   const valueClass = danger ? "text-red-400" : warning ? "text-yellow-400" : "";
   return (
@@ -260,6 +276,9 @@ function MetricCardWithSub({
       <div className={`text-3xl font-bold ${valueClass}`}>{value}</div>
       <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-2">{label}</div>
       <div className="text-xs opacity-50 mt-2 font-light">{sub}</div>
+      {hint ? (
+        <div className="text-[11px] font-light opacity-50 leading-snug mt-2">{hint}</div>
+      ) : null}
     </div>
   );
 }

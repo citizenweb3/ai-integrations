@@ -157,17 +157,52 @@ export default async function InboxPage({ searchParams }: Props) {
               {error}
             </div>
           ) : null}
+          <p className="text-xs font-light opacity-60 mb-4 max-w-2xl">
+            Saved views are reusable filters. Fill any subset of the fields — empty means "no
+            restriction on that axis". The view stores the filter; opening it later replays the
+            query against the live work-item queue.
+          </p>
           <form action="/api/inbox-views" method="post" className="grid gap-3 lg:grid-cols-6">
             <input type="hidden" name="operatorId" value={DEFAULT_INBOX_OPERATOR_ID} />
-            <input className={inputClass} name="name" placeholder="View name" />
-            <input className={inputClass} name="types" placeholder="types, comma-separated" />
-            <input className={inputClass} name="statuses" placeholder="statuses" />
-            <input className={inputClass} name="priorityMin" placeholder="min priority" />
-            <input className={inputClass} name="fromEmail" placeholder="from email contains" />
+            <input
+              className={inputClass}
+              name="name"
+              placeholder="View name"
+              title="What you'll see this view labelled as in the Views row."
+            />
+            <input
+              className={inputClass}
+              name="types"
+              placeholder="types, comma-separated"
+              title="Work-item type filter (e.g. draft_review, scope_incomplete, inbound_classification). Comma-separated; empty matches all."
+            />
+            <input
+              className={inputClass}
+              name="statuses"
+              placeholder="statuses"
+              title="Work-item status filter (open, blocked, snoozed, resolved). Comma-separated; empty matches all."
+            />
+            <input
+              className={inputClass}
+              name="priorityMin"
+              placeholder="min priority"
+              title="Lowest priority (0–100). Items below this number are hidden. Empty = no minimum."
+            />
+            <input
+              className={inputClass}
+              name="fromEmail"
+              placeholder="from email contains"
+              title="Substring match on the inbound sender's email (for reply-classification items). Empty matches all."
+            />
             <Button type="submit" name="action" value="create" tone="primary">
               Create view
             </Button>
-            <input className={`${inputClass} lg:col-span-6`} name="campaignIds" placeholder="campaign ids, comma-separated" />
+            <input
+              className={`${inputClass} lg:col-span-6`}
+              name="campaignIds"
+              placeholder="campaign ids, comma-separated"
+              title="Restrict to specific campaigns. Empty matches all."
+            />
           </form>
 
           {view.savedViews.length === 0 ? (

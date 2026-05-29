@@ -40,8 +40,16 @@ export default async function ThreadDetailPage({ params }: Props) {
 
       <PageBody>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <MetricCard label="Status" value={thread.status} />
-          <MetricCard label="Campaign" value={thread.campaignId ?? "—"} />
+          <MetricCard
+            label="Status"
+            value={thread.status}
+            hint="Where this conversation sits in the operator workflow (open / awaiting reply / closed / manual hold)."
+          />
+          <MetricCard
+            label="Campaign"
+            value={thread.campaignId ?? "—"}
+            hint="Campaign that produced the first outreach in this thread."
+          />
           <div className="rounded-2xl bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
             <div className="text-base font-medium break-all">
               {thread.organizationId ? (
