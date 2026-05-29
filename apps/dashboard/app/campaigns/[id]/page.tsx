@@ -380,6 +380,12 @@ function AcceptedOrganisationsCard({ view }: { view: CampaignDiscoveryViewModel 
       <div className="flex items-center gap-3 mb-4">
         <BlockTitle title="Organisations" className="text-left" />
         <Badge tone="accent">{rows.length}</Badge>
+        <Link
+          href={`/campaigns/${view.campaign.id}/organizations`}
+          className="ml-auto text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)] hover:opacity-80 transition-opacity"
+        >
+          View all →
+        </Link>
       </div>
       <p className="text-sm font-light opacity-70 mb-4">
         Candidates this campaign has accepted. Open one to review research, approve contacts, and generate

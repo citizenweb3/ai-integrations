@@ -1,16 +1,25 @@
-import { listOrganizationsForDashboard } from "@bizdev/db";
+import { listCampaignsWithOrgRollup } from "@bizdev/db";
 import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
+import { Badge } from "@/components/ui";
+
+// T-026AO/C: /organizations is now a hub. Each card is a campaign with
+// the rolled-up org and pending-triage counts; the operator drills
+// into /campaigns/[id]/organizations to see the actual org list. This
+// stops the cross-campaign mix that confused operators when more than
+// one campaign was active.
 
 export const dynamic = "force-dynamic";
 
-export default async function OrganizationsIndexPage() {
-  const orgs = await listOrganizationsForDashboard();
+export default async function OrganizationsHubPage() {
+  const rows = await listCampaignsWithOrgRollup();
+  const populated = rows.filter((row) => row.orgCount > 0);
 
   return (
     <>
-      <ConsoleHero currentNav="organizations"
+      <ConsoleHero
+        currentNav="organizations"
         eyebrow={
           <>
             <Link href="/" className="text-[hsl(var(--primary))]">
@@ -19,73 +28,69 @@ export default async function OrganizationsIndexPage() {
             / Organizations
           </>
         }
-        title="Organizations"
-        subtitle={`${orgs.length} tracked organisation${orgs.length === 1 ? "" : "s"}. Pick one to inspect its research snapshot, contacts, threads, and active work items.`}
+        title="Organisations"
+        subtitle="Organisations are grouped by their source campaign. Pick a campaign card to see the orgs it produced — research snapshots, contacts, and threads live inside each one."
       />
 
-      <section className="max-w-[80vw] mx-auto px-4 pb-24">
-        {orgs.length === 0 ? (
+      <section className="max-w-[80vw] mx-auto px-4 pb-24 space-y-6">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <div className="text-xs font-semibold tracking-[0.2em] uppercase opacity-60 mb-2">
+            How this page works
+          </div>
+          <p className="text-sm font-light opacity-90 max-w-3xl">
+            This page lists every campaign that has at least one accepted candidate. Each card shows
+            the number of organisations attached to that campaign and how many of them still have
+            pending contact-triage work. Click into a campaign to open its organisations list — the
+            individual org pages (research snapshot, contacts, threads, drafts) sit one level below
+            that.
+          </p>
+        </div>
+
+        {populated.length === 0 ? (
           <Card>
             <p className="font-light opacity-80">
-              No organisations yet. Run a campaign — research_snapshot inserts orgs as it goes.
+              No campaigns have produced organisations yet. Create a campaign on{" "}
+              <Link href="/campaigns" className="text-[hsl(var(--primary))]">
+                /campaigns
+              </Link>{" "}
+              and accept a discovery candidate — the campaign will show up here as soon as
+              research_snapshot runs.
             </p>
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {orgs.map((org) => (
+            {populated.map((row) => (
               <Link
-                key={org.id}
-                href={`/organizations/${org.id}`}
+                key={row.id}
+                href={`/campaigns/${row.id}/organizations`}
                 className="block hover:no-underline"
               >
                 <Card className="h-full hover:bg-white/10 transition-colors">
                   <div className="flex items-start justify-between gap-4 mb-4">
                     <div className="min-w-0">
-                      <h3 className="text-xl font-bold tracking-[0.02em] truncate">{org.name}</h3>
-                      <div className="text-sm font-light opacity-70 mt-1 truncate">
-                        {org.domain ?? "no domain"}
-                        {org.countryCode ? ` · ${org.countryCode}` : ""}
+                      <h3 className="text-xl font-bold tracking-[0.02em] truncate">
+                        {row.name}
+                      </h3>
+                      <div className="text-xs uppercase tracking-[0.18em] opacity-60 mt-1">
+                        Campaign
                       </div>
                     </div>
-                    {org.latestSnapshotVersion ? (
-                      <SnapshotBadge
-                        version={org.latestSnapshotVersion}
-                        status={org.latestSnapshotStatus ?? "draft"}
-                      />
-                    ) : (
-                      <span className="text-xs px-2 py-1 rounded-full border border-white/15 opacity-60">
-                        no snapshot
-                      </span>
-                    )}
+                    <Badge tone={row.status === "active" ? "accent" : "default"}>
+                      {row.status}
+                    </Badge>
                   </div>
 
-                  {org.campaigns.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5 mb-3">
-                      {org.campaigns.map((c) => (
-                        <span
-                          key={c.id}
-                          className="text-[10px] tracking-[0.12em] uppercase border border-[hsl(var(--primary))]/40 text-[hsl(var(--primary))] px-2 py-0.5 rounded-full"
-                          title={`Source campaign: ${c.name}`}
-                        >
-                          {c.name}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <div className="grid grid-cols-4 gap-4 mt-6">
-                    <Stat label="Contacts" value={org.contactCount} />
+                  <div className="grid grid-cols-2 gap-4 mt-6">
+                    <Stat label="Organisations" value={row.orgCount} />
                     <Stat
                       label="Pending review"
-                      value={org.pendingContactCandidateCount}
-                      highlight={org.pendingContactCandidateCount > 0}
+                      value={row.pendingContactCandidateCount}
+                      highlight={row.pendingContactCandidateCount > 0}
                     />
-                    <Stat label="Threads" value={org.threadCount} />
-                    <Stat
-                      label="Open items"
-                      value={org.openWorkItemCount}
-                      highlight={org.openWorkItemCount > 0}
-                    />
+                  </div>
+
+                  <div className="mt-5 text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)]">
+                    View organisations →
                   </div>
                 </Card>
               </Link>
@@ -94,15 +99,6 @@ export default async function OrganizationsIndexPage() {
         )}
       </section>
     </>
-  );
-}
-
-function SnapshotBadge({ version, status }: { version: number; status: string }) {
-  const tone = status === "approved" ? "text-[var(--accent)] border-[var(--accent)]/40" : "text-[hsl(var(--primary))] border-[hsl(var(--primary))]/40";
-  return (
-    <span className={`text-xs px-2 py-1 rounded-full border ${tone} whitespace-nowrap`}>
-      v{version} · {status}
-    </span>
   );
 }
 

@@ -19453,8 +19453,25 @@ export type OrganizationListItem = {
   updatedAt: Date;
 };
 
-export async function listOrganizationsForDashboard(limit = 200): Promise<OrganizationListItem[]> {
+export async function listOrganizationsForDashboard(
+  optsOrLimit?: number | { limit?: number; campaignId?: string }
+): Promise<OrganizationListItem[]> {
   const db = getDb();
+  // T-026AO/A: accept either the legacy bare-number `limit` arg or a
+  // typed options bag with an optional `campaignId` filter. The
+  // per-campaign organisations subpage uses the filter; the hub and
+  // any external callers keep the existing signature.
+  const opts =
+    typeof optsOrLimit === "number" || typeof optsOrLimit === "undefined"
+      ? { limit: optsOrLimit ?? 200, campaignId: undefined as string | undefined }
+      : { limit: optsOrLimit.limit ?? 200, campaignId: optsOrLimit.campaignId };
+  const campaignFilter = opts.campaignId
+    ? sql`where exists (
+        select 1 from discovery_candidates dc
+        where dc.matched_organization_id = o.id
+          and dc.campaign_id = ${opts.campaignId}::uuid
+      )`
+    : sql``;
   const rows = await db.execute(sql`
     select
       o.id,
@@ -19515,8 +19532,9 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
       order by snapshot_version desc
       limit 1
     ) s on true
+    ${campaignFilter}
     order by o.updated_at desc
-    limit ${limit}
+    limit ${opts.limit}
   `);
 
   return (rows as unknown as Array<{
@@ -19549,6 +19567,69 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
     latestSnapshotVersion: r.latest_snapshot_version,
     latestSnapshotStatus: r.latest_snapshot_status,
     updatedAt: r.updated_at instanceof Date ? r.updated_at : new Date(r.updated_at)
+  }));
+}
+
+// T-026AO/A: hub rollup for /organizations. Aggregates per campaign so
+// the listing page can render a hub card per campaign with the totals
+// the operator cares about: how many orgs the campaign produced and
+// how many of them still have pending contact triage work.
+export type CampaignOrgRollupRow = {
+  id: string;
+  name: string;
+  status: string;
+  orgCount: number;
+  pendingContactCandidateCount: number;
+  lastOrgUpdatedAt: Date | null;
+};
+
+export async function listCampaignsWithOrgRollup(): Promise<CampaignOrgRollupRow[]> {
+  const db = getDb();
+  const rows = await db.execute(sql`
+    with campaign_orgs as (
+      select dc.campaign_id, dc.matched_organization_id as org_id
+      from discovery_candidates dc
+      where dc.matched_organization_id is not null
+      group by dc.campaign_id, dc.matched_organization_id
+    )
+    select
+      c.id,
+      c.name,
+      c.status,
+      count(co.org_id)::int as org_count,
+      coalesce(sum(pcc_per_org.cnt), 0)::int as pending_contact_candidate_count,
+      max(o.updated_at) as last_org_updated_at
+    from campaigns c
+    left join campaign_orgs co on co.campaign_id = c.id
+    left join organizations o on o.id = co.org_id
+    left join (
+      select organization_id, count(*) as cnt
+      from research_contact_candidates
+      where status = 'pending'
+      group by organization_id
+    ) pcc_per_org on pcc_per_org.organization_id = co.org_id
+    group by c.id, c.name, c.status
+    order by org_count desc, c.name asc
+  `);
+  return (rows as unknown as Array<{
+    id: string;
+    name: string;
+    status: string;
+    org_count: number;
+    pending_contact_candidate_count: number;
+    last_org_updated_at: Date | string | null;
+  }>).map((r) => ({
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    orgCount: Number(r.org_count),
+    pendingContactCandidateCount: Number(r.pending_contact_candidate_count),
+    lastOrgUpdatedAt:
+      r.last_org_updated_at === null
+        ? null
+        : r.last_org_updated_at instanceof Date
+        ? r.last_org_updated_at
+        : new Date(r.last_org_updated_at)
   }));
 }
 
