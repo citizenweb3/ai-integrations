@@ -161,7 +161,7 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
-    command: ["yarn", "db:migrate"]
+    command: ["node", "packages/db/dist/migrate.js"]
     environment:
       DATABASE_URL: postgres://bizdev:bizdev@postgres:5432/bizdev
     depends_on:
