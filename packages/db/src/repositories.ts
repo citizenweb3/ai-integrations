@@ -19443,6 +19443,11 @@ export type OrganizationListItem = {
   // operator can spot orgs where discovery has produced something to
   // triage without opening each card.
   pendingContactCandidateCount: number;
+  // T-026AN: source campaigns for this org so /organizations rows show
+  // which campaign each org came from. An org can be linked to more
+  // than one campaign when the same domain is accepted from different
+  // discovery candidates; we surface every name.
+  campaigns: Array<{ id: string; name: string }>;
   latestSnapshotVersion: number | null;
   latestSnapshotStatus: string | null;
   updatedAt: Date;
@@ -19461,6 +19466,7 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
       coalesce(t.cnt, 0)::int as thread_count,
       coalesce(w.cnt, 0)::int as open_work_item_count,
       coalesce(pcc.cnt, 0)::int as pending_contact_candidate_count,
+      coalesce(cam.campaigns_json, '[]'::jsonb) as campaigns_json,
       s.snapshot_version as latest_snapshot_version,
       s.status as latest_snapshot_status
     from organizations o
@@ -19489,6 +19495,19 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
       where status = 'pending'
       group by organization_id
     ) pcc on pcc.organization_id = o.id
+    left join (
+      -- T-026AN: source campaigns aggregated from discovery_candidates.
+      -- An org can have more than one source when the same domain is
+      -- accepted in different campaigns; we surface them all so the
+      -- listing card answers "which campaign did this org come from"
+      -- at a glance.
+      select dc.matched_organization_id as organization_id,
+             jsonb_agg(distinct jsonb_build_object('id', c.id::text, 'name', c.name)) as campaigns_json
+      from discovery_candidates dc
+      join campaigns c on c.id = dc.campaign_id
+      where dc.matched_organization_id is not null
+      group by dc.matched_organization_id
+    ) cam on cam.organization_id = o.id
     left join lateral (
       select snapshot_version, status
       from research_snapshots
@@ -19510,6 +19529,7 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
     thread_count: number;
     open_work_item_count: number;
     pending_contact_candidate_count: number;
+    campaigns_json: Array<{ id: string; name: string }> | string | null;
     latest_snapshot_version: number | null;
     latest_snapshot_status: string | null;
   }>).map((r) => ({
@@ -19521,6 +19541,11 @@ export async function listOrganizationsForDashboard(limit = 200): Promise<Organi
     threadCount: r.thread_count,
     openWorkItemCount: r.open_work_item_count,
     pendingContactCandidateCount: r.pending_contact_candidate_count,
+    campaigns: Array.isArray(r.campaigns_json)
+      ? r.campaigns_json
+      : typeof r.campaigns_json === "string"
+      ? (JSON.parse(r.campaigns_json) as Array<{ id: string; name: string }>)
+      : [],
     latestSnapshotVersion: r.latest_snapshot_version,
     latestSnapshotStatus: r.latest_snapshot_status,
     updatedAt: r.updated_at instanceof Date ? r.updated_at : new Date(r.updated_at)

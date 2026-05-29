@@ -59,6 +59,20 @@ export default async function OrganizationsIndexPage() {
                     )}
                   </div>
 
+                  {org.campaigns.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      {org.campaigns.map((c) => (
+                        <span
+                          key={c.id}
+                          className="text-[10px] tracking-[0.12em] uppercase border border-[hsl(var(--primary))]/40 text-[hsl(var(--primary))] px-2 py-0.5 rounded-full"
+                          title={`Source campaign: ${c.name}`}
+                        >
+                          {c.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
                   <div className="grid grid-cols-4 gap-4 mt-6">
                     <Stat label="Contacts" value={org.contactCount} />
                     <Stat
