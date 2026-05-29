@@ -23,6 +23,7 @@ import {
 } from "@/components/ui";
 import { deriveCampaignStage, type CampaignStageSnapshot } from "@/lib/campaign-stage";
 import { DismissableBanner } from "@/components/dismissable-banner";
+import { formatRelativeTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -335,14 +336,34 @@ export default async function CampaignDetailPage({
                 Recent runs
               </div>
               <ul className="space-y-1.5">
-                {view.recentDiscoveryRuns.map((r) => (
-                  <li key={r.jobId} className="flex justify-between items-center text-xs opacity-80">
-                    <span>{r.createdAt.toISOString()}</span>
-                    <Badge tone={r.jobStatus === "succeeded" ? "accent" : r.jobStatus === "failed" ? "danger" : "primary"}>
-                      {r.jobStatus}
-                    </Badge>
-                  </li>
-                ))}
+                {view.recentDiscoveryRuns.map((r) => {
+                  const tone =
+                    r.jobStatus === "succeeded"
+                      ? "accent"
+                      : r.jobStatus === "failed" || r.jobStatus === "dead_lettered"
+                      ? "danger"
+                      : "primary";
+                  // For succeeded runs render an outcome summary; for non-terminal
+                  // runs render the bare job status so the operator can tell the
+                  // job is still in flight without parsing the badge.
+                  const outcome =
+                    r.jobStatus === "succeeded"
+                      ? r.candidatesProduced === null
+                        ? "completed"
+                        : r.candidatesProduced === 0
+                        ? "found 0 organisations"
+                        : `found ${r.candidatesProduced} organisation${r.candidatesProduced === 1 ? "" : "s"}`
+                      : r.jobStatus;
+                  return (
+                    <li key={r.jobId} className="flex justify-between items-center text-xs opacity-80">
+                      <span>
+                        <span className="font-semibold">{formatRelativeTime(r.createdAt)}</span>{" "}
+                        <span className="opacity-70">· {outcome}</span>
+                      </span>
+                      <Badge tone={tone}>{r.jobStatus}</Badge>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ) : null}

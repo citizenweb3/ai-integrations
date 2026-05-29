@@ -20536,6 +20536,10 @@ export type CampaignDiscoveryView = {
     createdAt: Date;
     updatedAt: Date;
     correlationId: string | null;
+    // T-026AD/E: count of discovery_candidates created by the agent run
+    // attached to this job. null when no agent_run is linked yet (job was
+    // still queued or failed before producing output).
+    candidatesProduced: number | null;
   }>;
   // T-026AD/B: count of in-flight jobs scoped to this campaign, broken out
   // by pipeline stage so the detail page can render a "background activity"
@@ -20698,22 +20702,50 @@ export async function getCampaignDiscoveryView(
     });
   }
 
-  const runRows = await db
-    .select({
-      jobId: jobs.id,
-      jobStatus: jobs.status,
-      createdAt: jobs.createdAt,
-      updatedAt: jobs.updatedAt,
-      correlationId: jobs.correlationId
-    })
-    .from(jobs)
-    .where(and(
-      eq(jobs.jobType, "job.run_campaign_discovery"),
-      eq(jobs.targetEntityType, "campaign"),
-      eq(jobs.targetEntityId, campaignId)
-    ))
-    .orderBy(desc(jobs.createdAt))
-    .limit(10);
+  // T-026AD/E: join through agent_runs → discovery_candidates so the
+  // recent-runs list can show "found N orgs" alongside the timestamp, not
+  // just a bare status badge. agent_run_id is null on queued / failed jobs;
+  // candidatesProduced stays null in that case so the UI can suppress the
+  // count gracefully.
+  const runRowsRaw = await db.execute(sql`
+    select
+      j.id            as job_id,
+      j.status        as job_status,
+      j.created_at    as created_at,
+      j.updated_at    as updated_at,
+      j.correlation_id as correlation_id,
+      (
+        select count(*)::int
+        from discovery_candidates dc
+        join agent_runs ar on ar.id = dc.agent_run_id
+        where ar.job_id = j.id
+      ) as candidates_produced
+    from jobs j
+    where j.job_type = 'job.run_campaign_discovery'
+      and j.target_entity_type = 'campaign'
+      and j.target_entity_id = ${campaignId}::uuid
+    order by j.created_at desc
+    limit 10
+  `);
+
+  const runRows = (runRowsRaw as unknown as Array<{
+    job_id: string;
+    job_status: string;
+    created_at: Date | string;
+    updated_at: Date | string;
+    correlation_id: string | null;
+    candidates_produced: number | null;
+  }>).map((row) => ({
+    jobId: row.job_id,
+    jobStatus: row.job_status,
+    createdAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
+    updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at),
+    correlationId: row.correlation_id,
+    candidatesProduced:
+      row.candidates_produced === null || row.candidates_produced === undefined
+        ? null
+        : Number(row.candidates_produced)
+  }));
 
   const progress = await getCampaignProgress(campaignId);
 
@@ -20793,7 +20825,8 @@ export async function getCampaignDiscoveryView(
       jobStatus: r.jobStatus,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
-      correlationId: r.correlationId
+      correlationId: r.correlationId,
+      candidatesProduced: r.candidatesProduced
     })),
     liveActivity: {
       discoveryRunning: Number(activity.discovery),
