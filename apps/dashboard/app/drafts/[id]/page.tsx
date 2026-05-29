@@ -175,17 +175,24 @@ export default async function DraftDetailPage({ params }: Props) {
           ) : (
             <div className="space-y-1">
               <InfoRow
-                label="Score"
+                label="Quality score"
                 value={
                   <Badge tone={bandTone(draft.qualityScoreBand)}>
-                    {draft.qualityScore}/100 · {draft.qualityScoreBand}
+                    <span
+                      title="Agent-assigned quality score (0–100). Bands: 0–39 weak, 40–69 okay, 70+ strong. Drives the Readiness verdict below."
+                    >
+                      {draft.qualityScore}/100 · {draft.qualityScoreBand}
+                    </span>
                   </Badge>
                 }
               />
               <InfoRow
-                label="Readiness"
+                label="Send readiness"
                 value={
-                  <span className={`font-semibold ${readinessColor(draft.autosendReadiness)}`}>
+                  <span
+                    className={`font-semibold ${readinessColor(draft.autosendReadiness)}`}
+                    title="Verdict on whether the draft can be auto-sent without human review. `ready` = clean signal, `needs_review` = operator decision required, `blocked` = a guard tripped, do not send."
+                  >
                     {draft.autosendReadiness ?? "—"}
                   </span>
                 }
@@ -721,8 +728,11 @@ export default async function DraftDetailPage({ params }: Props) {
                       </div>
                     ) : null}
                     {v.editSeverity ? (
-                      <div className="text-xs opacity-70">
-                        edit_severity:{" "}
+                      <div
+                        className="text-xs opacity-70"
+                        title="How significantly this version differs from the previous one. `minor` = wording polish, `major` = structural rewrite, `inverted` = the intent changed."
+                      >
+                        edit severity:{" "}
                         <code className={`font-mono ${severityClass(v.editSeverity)}`}>{v.editSeverity}</code>
                         {v.editSeveritySignals.length > 0 ? (
                           <span className="ml-2">
