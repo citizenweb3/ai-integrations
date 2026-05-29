@@ -84,16 +84,21 @@ class RAGClient:
         when the endpoint was actually live.
         """
         try:
-            async with self._session.get(
-                f"{self._base_url}/api/rag/search",
-                params={"q": "test", "limit": "1"},
-                headers={"x-rag-api-token": self._token},
-                timeout=self._timeout,
-            ) as resp:
-                ok = resp.status == 200
-                if ok:
-                    self._consecutive_failures = 0
-                    self._circuit_open_until = 0
-                return ok
-        except Exception:
+            # Fresh session per call — avoids stale TCP connections from the
+            # long-lived self._session after days of uptime.
+            async with aiohttp.ClientSession(timeout=self._timeout) as session:
+                async with session.get(
+                    f"{self._base_url}/api/rag/search",
+                    params={"q": "test", "limit": "1"},
+                    headers={"x-rag-api-token": self._token},
+                ) as resp:
+                    ok = resp.status == 200
+                    if ok:
+                        self._consecutive_failures = 0
+                        self._circuit_open_until = 0
+                    else:
+                        log.warning("rag_health_check_http_error status=%s", resp.status)
+                    return ok
+        except Exception as e:
+            log.warning("rag_health_check_failed: %s: %s", type(e).__name__, e)
             return False
