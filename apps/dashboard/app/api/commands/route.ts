@@ -101,7 +101,14 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           jobId: result.job.id
         });
       }
-      return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
+      // The form lives at /campaigns/new, so the referer-derived redirect
+      // would land the operator back on an empty new-campaign form with no
+      // confirmation. Send them to the detail page of the campaign they just
+      // created instead.
+      const target = safeRedirectUrl(request);
+      target.pathname = `/campaigns/${result.campaign.id}`;
+      target.search = "";
+      return NextResponse.redirect(target, { status: 303 });
     }
 
     case "update_campaign_scope": {
