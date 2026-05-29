@@ -112,8 +112,8 @@ export function deriveCampaignStage(view: CampaignDiscoveryView): CampaignStageS
       description: `${label} waiting for accept/reject. Enrichment only starts on accepted ones.`,
       nextAction: {
         title: `Review ${label}`,
-        hint: "Jump to the candidate list and accept the orgs you want to enrich.",
-        href: "#candidate-triage"
+        hint: "Open the candidate triage page and accept the orgs you want to enrich.",
+        href: `/campaigns/${view.campaign.id}/candidates`
       }
     };
   }

@@ -107,17 +107,33 @@ export const PageBody: FC<PropsWithChildren<{ className?: string }>> = ({ childr
   return <section className={twMerge("max-w-[80vw] mx-auto px-4 pb-24 space-y-8", className)}>{children}</section>;
 };
 
-export const MetricCard: FC<{ label: string; value: number | string; accent?: boolean }> = ({
-  label,
-  value,
-  accent = false
-}) => {
-  return (
-    <div className="rounded-2xl bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
+export const MetricCard: FC<{
+  label: string;
+  value: number | string;
+  accent?: boolean;
+  // T-026AG/C: when set, the whole card renders as a clickable Link so
+  // the operator can use the metric tile as a primary navigation
+  // affordance (e.g. "Pending review" jumps to the candidate triage page).
+  href?: string;
+}> = ({ label, value, accent = false, href }) => {
+  const content = (
+    <>
       <div className={`text-3xl font-bold ${accent ? "text-[var(--accent)]" : ""}`}>{value}</div>
       <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-2">{label}</div>
-    </div>
+    </>
   );
+  const baseClass = "block rounded-2xl bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]";
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={`${baseClass} transition-colors hover:bg-white/10 hover:no-underline`}
+      >
+        {content}
+      </Link>
+    );
+  }
+  return <div className={baseClass}>{content}</div>;
 };
 
 export const InfoRow: FC<{ label: string; value: ReactNode; className?: string }> = ({ label, value, className }) => {
