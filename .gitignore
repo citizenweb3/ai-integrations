@@ -14,3 +14,9 @@ sa.json
 
 # Agent task diaries (local, never committed)
 .tasks/
+
+# Playwright MCP scratch snapshots (local debugging only)
+.playwright-mcp/
+
+# Local screenshot scratch (audit / ux-verify / stage-*-verify etc.)
+*.png
