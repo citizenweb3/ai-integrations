@@ -100,9 +100,21 @@ function CandidateRow({ candidate }: { candidate: DiscoveryCandidateView }) {
             {candidate.domain ?? "no domain"}
             {candidate.countryCode ? ` · ${candidate.countryCode}` : ""}
             {candidate.region ? ` · ${candidate.region}` : ""}
-            {candidate.confidence ? ` · ${candidate.confidence} confidence` : ""}
+            {candidate.confidence ? (
+              <span title="How sure the discovery agent is that this org matches the campaign brief.">
+                {" · "}{candidate.confidence} confidence
+              </span>
+            ) : null}
             {" · "}
-            {candidate.dedupeResult} dedupe
+            <span
+              title={
+                candidate.dedupeResult === "none"
+                  ? "Dedupe check: no existing organisation in the DB matched this candidate."
+                  : "Dedupe check: an existing organisation matched this candidate. Check the matched org before accepting."
+              }
+            >
+              {candidate.dedupeResult === "none" ? "no duplicate" : `dedupe: ${candidate.dedupeResult}`}
+            </span>
           </div>
         </div>
       </div>
