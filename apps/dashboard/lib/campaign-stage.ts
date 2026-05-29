@@ -147,7 +147,7 @@ export function deriveCampaignStage(view: CampaignDiscoveryView): CampaignStageS
       nextAction: {
         title: "View organisations",
         hint: "Open the accepted organisations to follow research progress and approve contacts.",
-        href: "/organizations"
+        href: `/campaigns/${view.campaign.id}/organizations`
       }
     };
   }
