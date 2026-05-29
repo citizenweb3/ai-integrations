@@ -42,7 +42,7 @@ export default async function ThreadDetailPage({ params }: Props) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard label="Status" value={thread.status} />
           <MetricCard label="Campaign" value={thread.campaignId ?? "—"} />
-          <div className="rounded-2xl bg-linear-to-t from-[#7C7C81]/25 to-[#1A1A1B]/25 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
+          <div className="rounded-2xl bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
             <div className="text-base font-medium break-all">
               {thread.organizationId ? (
                 <Link href={`/organizations/${thread.organizationId}`} className="hover:text-[var(--accent)]">
@@ -54,7 +54,7 @@ export default async function ThreadDetailPage({ params }: Props) {
             </div>
             <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-2">Organization</div>
           </div>
-          <div className="rounded-2xl bg-linear-to-t from-[#7C7C81]/25 to-[#1A1A1B]/25 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
+          <div className="rounded-2xl bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
             <div className="text-base font-medium break-all">{thread.providerThreadKey ?? "—"}</div>
             <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-2">Provider key</div>
           </div>

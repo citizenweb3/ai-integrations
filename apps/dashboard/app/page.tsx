@@ -168,7 +168,7 @@ export default async function DashboardHome() {
               {workItems.map((item) => (
                 <li
                   key={item.id}
-                  className="rounded-2xl border border-white/10 bg-linear-to-t from-[#7C7C81]/15 to-[#1A1A1B]/25 p-5"
+                  className="rounded-2xl border border-white/10 bg-white/[0.04] p-5"
                 >
                   <div className="flex justify-between items-start gap-4 mb-3">
                     <div className="min-w-0">

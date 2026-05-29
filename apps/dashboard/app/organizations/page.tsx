@@ -38,7 +38,7 @@ export default async function OrganizationsIndexPage() {
                 href={`/organizations/${org.id}`}
                 className="block hover:no-underline"
               >
-                <Card className="h-full hover:from-[#7C7C81]/35 transition-colors">
+                <Card className="h-full hover:bg-white/10 transition-colors">
                   <div className="flex items-start justify-between gap-4 mb-4">
                     <div className="min-w-0">
                       <h3 className="text-xl font-bold tracking-[0.02em] truncate">{org.name}</h3>

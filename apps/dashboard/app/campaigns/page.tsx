@@ -41,7 +41,7 @@ export default async function CampaignsIndexPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {items.map((c) => (
               <Link key={c.id} href={`/campaigns/${c.id}`} className="block hover:no-underline">
-                <Card className="h-full hover:from-[#7C7C81]/35 transition-colors">
+                <Card className="h-full hover:bg-white/10 transition-colors">
                   <div className="flex items-start justify-between gap-4 mb-3">
                     <div className="min-w-0">
                       <h3 className="text-xl font-bold tracking-[0.02em] truncate">{c.name}</h3>

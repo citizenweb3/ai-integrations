@@ -128,7 +128,7 @@ export default async function DraftDetailPage({ params }: Props) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard label="Status" value={draft.status} />
           <MetricCard label="Version" value={`v${draft.version}`} accent />
-          <div className="rounded-2xl bg-linear-to-t from-[#7C7C81]/25 to-[#1A1A1B]/25 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
+          <div className="rounded-2xl bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
             <div className="text-xs uppercase tracking-[0.2em] opacity-60 mb-2">Contact</div>
             {draft.contact ? (
               <>
@@ -147,7 +147,7 @@ export default async function DraftDetailPage({ params }: Props) {
               <p className="text-sm font-light opacity-60">No contact linked.</p>
             )}
           </div>
-          <div className="rounded-2xl bg-linear-to-t from-[#7C7C81]/25 to-[#1A1A1B]/25 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
+          <div className="rounded-2xl bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
             <div className="text-xs uppercase tracking-[0.2em] opacity-60 mb-2">Thread</div>
             {draft.thread ? (
               <Link
