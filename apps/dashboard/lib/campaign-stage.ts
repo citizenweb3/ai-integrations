@@ -48,13 +48,13 @@ export function deriveCampaignStage(view: CampaignDiscoveryView): CampaignStageS
   if (status === "drafting_scope") {
     return {
       key: "drafting_scope",
-      label: "Scope drafting",
+      label: "Scope incomplete",
       tone: "warning",
       description:
-        "Operator is still filling in the campaign brief. Discovery will not run until the scope is saved.",
+        "The scope validator caught missing or invalid required fields. Fix them and save — discovery starts automatically once the scope is valid.",
       nextAction: {
-        title: "Finish scope",
-        hint: "Save the campaign scope to unlock discovery.",
+        title: "Complete scope",
+        hint: "Fix the highlighted fields and save. Discovery is auto-enqueued on a clean save.",
         href: "#scope-form"
       }
     };
@@ -80,13 +80,24 @@ export function deriveCampaignStage(view: CampaignDiscoveryView): CampaignStageS
   if (totals === 0 && view.recentDiscoveryRuns.length === 0) {
     return {
       key: "awaiting_discovery",
-      label: "Awaiting discovery",
+      label: "Discovery starting",
       tone: "primary",
       description:
-        "The scope is saved but no discovery run has happened yet. Run discovery to surface candidate organisations.",
+        "The scope is saved. The first discovery pass was auto-enqueued and should appear in Recent runs within seconds — refresh the page.",
+      nextAction: null
+    };
+  }
+
+  if (totals === 0 && view.recentDiscoveryRuns.length > 0) {
+    return {
+      key: "awaiting_discovery",
+      label: "Discovery finished — no candidates",
+      tone: "warning",
+      description:
+        "Discovery ran but produced 0 candidates. Tighten or widen the segments / regions, or re-run discovery to try again.",
       nextAction: {
-        title: "Run discovery",
-        hint: "Enqueues the discovery agent against the saved scope.",
+        title: "Re-run discovery",
+        hint: "Re-queues the discovery agent against the current scope (subject to the campaign cooldown).",
         href: "#run-discovery"
       }
     };

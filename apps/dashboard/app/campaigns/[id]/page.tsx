@@ -288,7 +288,12 @@ export default async function CampaignDetailPage({
         {isDraftingScope ? <CampaignScopeForm campaign={view.campaign} /> : null}
 
         <Card id="run-discovery">
-          <BlockTitle title="Run discovery" className="mb-4 text-left" />
+          <BlockTitle title="Re-run discovery" className="mb-2 text-left" />
+          <p className="text-sm font-light opacity-80 mb-4">
+            The first discovery pass ran automatically when this campaign was created. Use this card to ask the
+            discovery agent for more candidates — for example after you reject the ones you do not want, or after the
+            cooldown has elapsed.
+          </p>
           {!isActiveCampaign ? (
             <p className="text-sm font-light opacity-70">
               Discovery can run after the campaign scope is complete and the campaign is active.
@@ -311,7 +316,7 @@ export default async function CampaignDetailPage({
                 cap on a live campaign requires a direct schema update; ask an engineer.
               </p>
               <Button type="button" tone="muted" className="opacity-60 cursor-not-allowed">
-                Run discovery (cap reached)
+                Re-run discovery (cap reached)
               </Button>
             </div>
           ) : (
@@ -319,13 +324,13 @@ export default async function CampaignDetailPage({
               <p className="text-sm font-light opacity-90 mb-4">
                 Discovery has{" "}
                 <strong>{remainingDiscoveryCapacity}</strong> of {view.campaign.maxOrganizationsToDiscover} slot
-                {remainingDiscoveryCapacity === 1 ? "" : "s"} free. Running discovery enqueues the discovery agent
-                against the saved scope.
+                {remainingDiscoveryCapacity === 1 ? "" : "s"} free. Re-running asks the agent for another batch (subject
+                to the {view.campaign.cooldownBetweenDiscoverySeconds}s cooldown).
               </p>
               <form action="/api/commands" method="post" className="space-y-3">
                 <input type="hidden" name="commandType" value="run_campaign_discovery" />
                 <input type="hidden" name="campaignId" value={view.campaign.id} />
-                <Button type="submit">Run discovery</Button>
+                <Button type="submit">Re-run discovery</Button>
               </form>
             </>
           )}
@@ -494,7 +499,12 @@ function StageStrip({ stage }: { stage: CampaignStageSnapshot }) {
 function CampaignScopeForm({ campaign }: { campaign: CampaignDiscoveryViewModel["campaign"] }) {
   return (
     <Card id="scope-form">
-      <BlockTitle title="Edit scope" className="mb-4 text-left" />
+      <BlockTitle title="Complete scope" className="mb-2 text-left" />
+      <p className="text-sm font-light opacity-80 mb-4">
+        This campaign is in <code>drafting_scope</code>: the validator caught missing or invalid required fields when
+        the campaign was first submitted. Fix the form below and Save — discovery will start automatically as soon
+        as validation passes.
+      </p>
       <form action="/api/commands" method="post" className="space-y-5">
         <input type="hidden" name="commandType" value="update_campaign_scope" />
         <input type="hidden" name="campaignId" value={campaign.id} />
