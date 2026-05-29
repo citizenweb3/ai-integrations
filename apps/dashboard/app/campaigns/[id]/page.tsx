@@ -121,22 +121,26 @@ export default async function CampaignDetailPage({
             label="Total candidates"
             value={totals}
             href={`/campaigns/${view.campaign.id}/candidates`}
+            hint="Everything discovery has produced for this campaign — in every state."
           />
           <MetricCard
             label="Pending review"
             value={pending}
             accent={pending > 0}
             href={`/campaigns/${view.campaign.id}/candidates`}
+            hint="Candidates waiting on you to accept or reject before anything else happens."
           />
           <MetricCard
             label="Researching"
             value={view.candidatesByStatus.queued_for_enrichment.length}
             href={`/campaigns/${view.campaign.id}/organizations`}
+            hint="Accepted orgs whose research-snapshot agent is still running."
           />
           <MetricCard
             label="Research ready"
             value={view.candidatesByStatus.enriched.length}
             href={`/campaigns/${view.campaign.id}/organizations`}
+            hint="Research snapshot finished. Waiting on contact approvals or drafts."
           />
           <MetricCard
             label="Closed"
@@ -146,15 +150,37 @@ export default async function CampaignDetailPage({
               view.candidatesByStatus.rejected_by_policy.length
             }
             href={`/campaigns/${view.campaign.id}/candidates`}
+            hint="Rejected, duplicate, or insufficient-fit candidates. They no longer count toward the discovery cap."
           />
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <MetricCard label="Contacts accepted" value={view.progress.contactsAccepted} />
-          <MetricCard label="Drafts generated" value={view.progress.draftsGenerated} />
-          <MetricCard label="Drafts approved" value={view.progress.draftsApproved} />
-          <MetricCard label="Sent" value={view.progress.sent} />
-          <MetricCard label="Replies" value={view.progress.replied} accent={view.progress.replied > 0} />
+          <MetricCard
+            label="Contacts accepted"
+            value={view.progress.contactsAccepted}
+            hint="People you have approved into addressable contacts across all orgs in this campaign."
+          />
+          <MetricCard
+            label="Drafts generated"
+            value={view.progress.draftsGenerated}
+            hint="Cold drafts the agent has produced. Each one needs your review before send."
+          />
+          <MetricCard
+            label="Drafts approved"
+            value={view.progress.draftsApproved}
+            hint="Drafts you have signed off for sending. They sit in the send queue until the worker dispatches them."
+          />
+          <MetricCard
+            label="Sent"
+            value={view.progress.sent}
+            hint="Messages dispatched through Resend. Awaiting delivery webhook + reply."
+          />
+          <MetricCard
+            label="Replies"
+            value={view.progress.replied}
+            accent={view.progress.replied > 0}
+            hint="Inbound replies attached to threads in this campaign."
+          />
         </div>
 
         <Card>
@@ -517,8 +543,8 @@ function BackgroundActivityStrip({
         </div>
       </div>
       <p className="text-xs font-light opacity-60 mt-3">
-        Agent jobs are running on the worker pool. The page does not auto-refresh — reload to see
-        the latest state.
+        Agent jobs are running on the worker pool. The page auto-refreshes every 5 seconds while
+        anything is in flight — leave it open and the counters will update on their own.
       </p>
     </div>
   );

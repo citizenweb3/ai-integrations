@@ -115,11 +115,17 @@ export const MetricCard: FC<{
   // the operator can use the metric tile as a primary navigation
   // affordance (e.g. "Pending review" jumps to the candidate triage page).
   href?: string;
-}> = ({ label, value, accent = false, href }) => {
+  // T-026AS/A: plain-language one-liner shown under the label so the
+  // operator does not have to guess what each metric represents.
+  hint?: string;
+}> = ({ label, value, accent = false, href, hint }) => {
   const content = (
     <>
       <div className={`text-3xl font-bold ${accent ? "text-[var(--accent)]" : ""}`}>{value}</div>
       <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-2">{label}</div>
+      {hint ? (
+        <div className="text-[11px] font-light opacity-50 leading-snug mt-1">{hint}</div>
+      ) : null}
     </>
   );
   const baseClass = "block rounded-2xl bg-white/5 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.35)]";
