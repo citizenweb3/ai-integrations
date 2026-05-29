@@ -6,15 +6,15 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "import": "./src/index.ts"
+      "import": "./dist/index.js"
     },
     "./schema": {
       "types": "./src/schema.ts",
-      "import": "./src/schema.ts"
+      "import": "./dist/schema.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:migrate": "node --import tsx src/migrate.ts",
     "db:reset": "node --import tsx src/reset.ts"
