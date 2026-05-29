@@ -62,11 +62,16 @@ const REJECTION_REASON_LABELS: Record<DiscoveryRejectionReasonCode, string> = {
 };
 
 export default async function CampaignDetailPage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  const query = await searchParams;
+  const errorRaw = query["error"];
+  const errorMessage = typeof errorRaw === "string" ? errorRaw : Array.isArray(errorRaw) ? errorRaw[0] : null;
   const view = await getCampaignDiscoveryView(id);
   if (!view) {
     notFound();
@@ -115,6 +120,18 @@ export default async function CampaignDetailPage({
       />
 
       <PageBody>
+        {errorMessage ? (
+          <div className="rounded-2xl border border-red-500/40 bg-red-500/5 p-5">
+            <div className="text-xs font-semibold tracking-[0.2em] uppercase text-red-400 mb-2">
+              Last action failed
+            </div>
+            <p className="text-sm font-light opacity-90 break-words">{errorMessage}</p>
+            <p className="text-xs font-light opacity-60 mt-3">
+              Code + message returned by the command handler. Adjust scope or capacity and retry.
+            </p>
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard label="Total candidates" value={totals} />
           <MetricCard label="Pending review" value={pending} accent={pending > 0} />
@@ -248,10 +265,35 @@ export default async function CampaignDetailPage({
 
         <Card>
           <BlockTitle title="Run discovery" className="mb-4 text-left" />
-          {isActiveCampaign ? (
+          {!isActiveCampaign ? (
+            <p className="text-sm font-light opacity-70">
+              Discovery can run after the campaign scope is complete and the campaign is active.
+            </p>
+          ) : remainingDiscoveryCapacity <= 0 ? (
+            <div className="space-y-3">
+              <p className="text-sm font-light opacity-90">
+                Discovery cap reached: {activeDiscoveryCount} of {view.campaign.maxOrganizationsToDiscover} candidate
+                slots are filled. Each non-terminal candidate (proposed, needs review, accepted, queued, enriched)
+                counts against the cap.
+              </p>
+              <p className="text-xs font-light opacity-60">
+                To find more organisations:{" "}
+                <strong>reject</strong> candidates you do not want, or wait for accepted ones to be closed out by the
+                operator. The campaign cap (<code>max_organizations_to_discover</code>) was set when the scope was
+                drafted; raising it on a live campaign requires a direct schema update.
+              </p>
+              <Button type="button" tone="muted" className="opacity-60 cursor-not-allowed">
+                Run discovery (cap reached)
+              </Button>
+            </div>
+          ) : (
             <>
               <p className="text-sm font-light opacity-70 mb-4">
                 Enqueue <code>job.run_campaign_discovery</code> using the persisted campaign scope.
+                {" "}
+                <span className="opacity-70">
+                  Remaining capacity: {remainingDiscoveryCapacity} / {view.campaign.maxOrganizationsToDiscover}.
+                </span>
               </p>
               <form action="/api/commands" method="post" className="space-y-3">
                 <input type="hidden" name="commandType" value="run_campaign_discovery" />
@@ -259,10 +301,6 @@ export default async function CampaignDetailPage({
                 <Button type="submit">Run discovery</Button>
               </form>
             </>
-          ) : (
-            <p className="text-sm font-light opacity-70">
-              Discovery can run after the campaign scope is complete and the campaign is active.
-            </p>
           )}
 
           {view.recentDiscoveryRuns.length > 0 ? (
