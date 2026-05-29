@@ -161,7 +161,7 @@ class Listener:
                         attempts=filter_result.attempts,
                     )
                     log.info(
-                        "[%s] Llama reactive decision=%s attempts=%d latency_ms=%d reason=%s",
+                        "[%s] Router reactive decision=%s attempts=%d latency_ms=%d reason=%s",
                         group_name,
                         filter_result.decision,
                         filter_result.attempts,

@@ -11,6 +11,7 @@ import asyncio
 from time import monotonic
 from typing import Literal
 
+from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 from google.auth import exceptions as _gauth
 
 ErrorClass = Literal["auth", "transient", "config", "unknown"]
@@ -29,6 +30,14 @@ def classify_error(exc: BaseException) -> ErrorClass:
     """
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
         return "transient"
+
+    # ADK raises this when RunConfig.max_llm_calls is exceeded. Re-running
+    # the same prompt won't help — the structural cap (L2 in
+    # .tasks/2026-05-28-aida-tool-retry-loop.md) is by design. Classify as
+    # config so the pipeline records it as a deploy-side problem instead of
+    # counting it toward LLM degradation.
+    if isinstance(exc, LlmCallsLimitExceededError):
+        return "config"
 
     # ADC / token-refresh failures are raised before any HTTP response, so they
     # carry no .code/.status. They are auth problems a human must fix.

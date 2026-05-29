@@ -31,7 +31,7 @@ class CleanupManager:
         await self.db.redact_old_audit_logs(self.redaction_days)
         log.info("Audit logs older than %d days redacted", self.redaction_days)
         deleted = await self.db.cleanup_old_filter_logs(self.redaction_days)
-        log.info("Deleted %d Llama filter logs older than %d days", deleted, self.redaction_days)
+        log.info("Deleted %d Router filter logs older than %d days", deleted, self.redaction_days)
 
     async def run_6h(self):
         """Called every 6 hours: recalculate contact relevance scores."""

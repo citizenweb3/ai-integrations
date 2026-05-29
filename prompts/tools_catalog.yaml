@@ -1,0 +1,97 @@
+# Aida tool catalog — semantic base.
+# Schema for `query_validatorinfo` is auto-overlaid from information_schema
+# at agent startup; only the static parts live here. See
+# src/ai/tool_catalog.py for the loader/renderer.
+
+tools:
+  query_validatorinfo:
+    summary: >
+      Read-only SELECT against the ValidatorInfo on-chain Postgres.
+      Use for grounded numeric/state facts about validators, chains,
+      proposals, APR, commission, jailed status, uptime, delegators.
+      Schema is fixed and small — guessed columns or tables WILL fail.
+    when_to_use:
+      - "validator commission rate (`rate`), jailed status, uptime, delegators_amount"
+      - "chain APR (latest from `aprs`), proposals (status, voting window)"
+      - "node-level votes via `node_votes`; historical validator counts via `chain_validators_history`"
+      - "consensus / slot metrics (`nodes_consensus_data` — attestations, missed slots)"
+      - "before mentioning CW3 cashback for a chain — confirm CW3 validates it via `validators` + `nodes`"
+    not_for:
+      - "voting power as a single column — it does not exist; use `tokens` on `nodes` or `chain_validators_history`"
+      - "delegations history per address — not in this DB"
+      - "opinions, sentiment, podcast quotes — use search_rag instead"
+    tables_overlay_target: true
+    patterns:
+      - name: "Latest APR for a chain"
+        sql: |
+          SELECT a.value FROM aprs a
+          JOIN chains c ON c.id = a.chain_id
+          WHERE c.name = '<chain>'
+          ORDER BY a.created_at DESC LIMIT 1
+      - name: "Active validators count on a chain"
+        sql: |
+          SELECT COUNT(*) FROM nodes n
+          JOIN chains c ON c.id = n.chain_id
+          WHERE c.name = '<chain>' AND n.jailed = false
+      - name: "Active proposals on a chain"
+        sql: |
+          SELECT p.title, p.status FROM proposals p
+          JOIN chains c ON c.id = p.chain_id
+          WHERE c.name = '<chain>'
+            AND p.status = 'PROPOSAL_STATUS_VOTING_PERIOD'
+      - name: "CW3 validates a chain (cashback eligibility check, identity first)"
+        sql: |
+          SELECT c.name FROM validators v
+          JOIN nodes n ON n.validator_id = v.id
+          JOIN chains c ON c.id = n.chain_id
+          WHERE v.identity = 'FA230088439F5B88'
+            AND c.name = '<chain>' AND n.jailed = false
+      - name: "CW3 validates a chain (moniker fallback when identity returns nothing)"
+        sql: |
+          SELECT c.name FROM validators v
+          JOIN nodes n ON n.validator_id = v.id
+          JOIN chains c ON c.id = n.chain_id
+          WHERE v.moniker ILIKE '%Citizen Web3%'
+            AND c.name = '<chain>' AND n.jailed = false
+    notes:
+      - "`nodes.rate` is a DECIMAL string. 0.050000 = 5%. Convert before reporting."
+      - "Error responses carry `retry: false` — when set, do NOT re-issue another guess. Switch tool or skip."
+
+  search_rag:
+    summary: >
+      Vector search over CitizenWeb3 podcast transcripts (188+ episodes).
+      Use for opinions, historical context, "what did X say" questions,
+      and grounded podcast quotes. URLs returned belong in `dm_text`
+      only, never in `text`.
+    when_to_use:
+      - "ground a thesis with an attributed quote"
+      - "answer 'what did <speaker> say about <topic>'"
+      - "find an episode URL when the user explicitly asked for a podcast (recommend mode)"
+    not_for:
+      - "current on-chain numbers — those go to query_validatorinfo"
+      - "recent news / events after the latest indexed episode — use web_research"
+    tables_overlay_target: false
+    returns:
+      - "quote (verbatim from the transcript)"
+      - "speakerName (use verbatim)"
+      - "speakerRole (HOST | GUEST | empty)"
+      - "episodeTitle"
+      - "episodeUrl (only for dm_text — never in text)"
+    rendering_rules:
+      - "Default = cite mode: never name 'CW3 podcast' / 'CitizenWeb3 podcast'. Phrase as 'I listened to a podcast with <speaker>...'"
+      - "HOST role in cite mode: add explicit 'из Citizen Web3' speaker affiliation. The podcast brand itself stays unnamed."
+      - "Recommend mode (user asked for the resource): full 'CitizenWeb3 podcast' naming; URL via dm_text."
+      - "When unsure: cite. Recommend is upgrade-on-request, not default."
+
+  web_research:
+    summary: >
+      Web search for recent news, post-snapshot state, governance updates
+      that haven't reached ValidatorInfo or the podcast index yet.
+    when_to_use:
+      - "events more recent than the latest podcast episode"
+      - "governance outcome after voting closed"
+      - "news on a chain that isn't in ValidatorInfo"
+    not_for:
+      - "data already available via query_validatorinfo (chain numbers)"
+      - "opinions attributable to a podcast guest (use search_rag instead)"
+    tables_overlay_target: false

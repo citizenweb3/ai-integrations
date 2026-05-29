@@ -154,7 +154,7 @@ strategy:
   # "approval" — every message goes through approval bot, human approves
   # "auto"     — agent sends on its own, human gets notifications only (NOT IMPLEMENTED YET)
   mode: "approval"
-  respond_enabled: true                  # enable claude-powered responses on keyword match
+  respond_enabled: true                  # enable router-powered responses on keyword match
 
 limits:
   messages_per_group_per_day: 10         # max responses per group per day
@@ -179,12 +179,12 @@ gemini:
   router_enabled: true
   model_router:       "gemini-2.5-flash-lite"   # binary relevance prefilter (cheap, high-volume)
   model_reactive:     "gemini-3.5-flash"        # keyword-match draft
-  model_reply:        "gemini-3.1-pro-preview"  # conversation continuation (quality-critical)
+  model_reply:        "gemini-3.5-flash"        # conversation continuation — same tier as reactive/verification (proven no 429)
   model_verification: "gemini-3.5-flash"        # grounded verification (+ tools, mode=ANY)
   effort_reactive:     "low"
   effort_reply:        "high"
   effort_verification: "high"
-  timeout_seconds: 120                          # per-call ADK run timeout
+  timeout_seconds: 300                          # per-call ADK run timeout — generous so slow tool chains + thinking don't crash
   max_concurrent: 3                             # max parallel responder runs
   degraded_pause_minutes: 15                    # pause after 3 consecutive failures
   # router (genai) tuning
@@ -208,7 +208,7 @@ database:
   audit_redaction_days: 90               # redact audit log payload after this many days
 
 rag:
-  timeout_seconds: 10                    # http timeout for RAG API requests
+  timeout_seconds: 90                    # http timeout for RAG API requests — generous for cold-start + transient network
   max_retries: 2                         # retry count on failure
   circuit_breaker_threshold: 5           # consecutive failures before circuit opens
   circuit_breaker_cooldown_seconds: 300  # seconds before circuit breaker resets

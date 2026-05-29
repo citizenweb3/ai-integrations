@@ -71,13 +71,17 @@ def test_exposes_model_names_for_pipeline():
     assert resp._model == resp._model_reactive
 
 
-def test_verification_agent_forces_tool_call():
+def test_no_role_forces_tool_call():
+    """All roles use AUTO function-calling. `mode="ANY"` on verification was
+    removed after smoke run #3 — see .tasks/2026-05-28-aida-tool-retry-loop.md.
+    `ANY` required a function call on every response, so the model could
+    not emit final JSON once data was gathered and looped on dummy SQL.
+    The pipeline's Phase-2 hard gate (`if not tool_calls2: skip`) is the
+    sole enforcer of ≥1 tool call in verification."""
     resp = Responder(_CFG)
-    vcfg = resp._agents["verification"].generate_content_config
-    assert vcfg.tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.ANY
-    # reactive / reply must NOT force a tool call
-    assert resp._agents["reactive"].generate_content_config.tool_config is None
-    assert resp._agents["reply"].generate_content_config.tool_config is None
+    for role in ("reactive", "reply", "verification"):
+        cfg = resp._agents[role].generate_content_config
+        assert cfg.tool_config is None, f"role={role} must not pin tool_config"
 
 
 async def test_generate_returns_parsed_and_tool_calls():

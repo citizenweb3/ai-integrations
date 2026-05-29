@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+secrets/
 
 # Telegram session
 data/
@@ -31,3 +32,6 @@ node_modules/
 # GitNexus (auto-generated)
 .gitnexus/
 AGENTS.md
+
+# Agent task diaries (local, never committed)
+.tasks/

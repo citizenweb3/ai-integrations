@@ -16,6 +16,7 @@ import uuid
 from time import monotonic
 
 from google.adk.runners import InMemoryRunner
+from google.adk.agents.run_config import RunConfig
 from google.genai import types
 
 from src.ai.agents import build_agent
@@ -49,6 +50,62 @@ def alert_for_error(error: str | None) -> tuple[bool, str]:
     return False, ""
 
 
+def _summarize_event(event) -> str:
+    """One-line summary of an ADK event for the smoke debug log.
+
+    Captures the parts of an ADK Event we actually care about during a
+    retry-loop investigation: which agent emitted it, whether it carries
+    text / function_call / function_response, the function name and a
+    short preview of args / response. Robust against missing attributes
+    because ADK Event shape varies between framework versions."""
+    bits = []
+    author = getattr(event, "author", None)
+    if author:
+        bits.append(f"author={author}")
+    bits.append(f"final={event.is_final_response()}")
+    content = getattr(event, "content", None)
+    parts = getattr(content, "parts", None) or []
+    text_chunks: list[str] = []
+    function_calls: list[str] = []
+    function_responses: list[str] = []
+    for p in parts:
+        text = getattr(p, "text", None)
+        if text:
+            text_chunks.append(text)
+        fc = getattr(p, "function_call", None)
+        if fc is not None:
+            name = getattr(fc, "name", "?")
+            args = getattr(fc, "args", None)
+            try:
+                args_preview = json.dumps(args, default=str)[:200] if args else ""
+            except Exception:  # noqa: BLE001
+                args_preview = str(args)[:200]
+            function_calls.append(f"{name}({args_preview})")
+        fr = getattr(p, "function_response", None)
+        if fr is not None:
+            name = getattr(fr, "name", "?")
+            resp = getattr(fr, "response", None)
+            try:
+                resp_preview = json.dumps(resp, default=str)[:200] if resp else ""
+            except Exception:  # noqa: BLE001
+                resp_preview = str(resp)[:200]
+            function_responses.append(f"{name}=>{resp_preview}")
+    if function_calls:
+        bits.append("calls=[" + " | ".join(function_calls) + "]")
+    if function_responses:
+        bits.append("responses=[" + " | ".join(function_responses) + "]")
+    if text_chunks:
+        joined = "".join(text_chunks)
+        bits.append(f"text_preview={joined[:240]!r}")
+    actions = getattr(event, "actions", None)
+    if actions is not None:
+        # Stash any non-default action flags so we see e.g. escalation
+        action_repr = repr(actions)
+        if action_repr and action_repr != "EventActions()":
+            bits.append(f"actions={action_repr[:120]}")
+    return " ".join(bits) if bits else "empty"
+
+
 def _extract_json(raw: str) -> dict | None:
     try:
         return json.loads(raw)
@@ -65,7 +122,11 @@ def _extract_json(raw: str) -> dict | None:
 
 
 class Responder:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, catalog_section: str | None = None):
+        """`catalog_section` is the rendered `## 12. Tool Catalog` markdown,
+        produced by `src.ai.tool_catalog.build_catalog_section` at startup.
+        If omitted the agent runs with the static persona only — useful for
+        unit tests and degraded-mode startup when the DB is unreachable."""
         # Vertex-only fail-fast: require project/location, reject GOOGLE_API_KEY,
         # force GOOGLE_GENAI_USE_VERTEXAI before any agent/runner is built.
         assert_vertex_env()
@@ -82,6 +143,9 @@ class Responder:
         )
 
         instruction = load_instruction()
+        if catalog_section:
+            instruction = instruction.rstrip() + "\n\n" + catalog_section.lstrip()
+        self._instruction = instruction
         self._roles = {
             "reactive": (gem["model_reactive"], gem.get("effort_reactive", "low")),
             "reply": (gem["model_reply"], gem.get("effort_reply", "high")),
@@ -96,23 +160,30 @@ class Responder:
             role: build_agent(
                 role,
                 model=model,
-                instruction=instruction,
+                instruction=self._instruction,
                 generate_content_config=self._gen_config(role, effort),
             )
             for role, (model, effort) in self._roles.items()
         }
 
     def _gen_config(self, role: str, effort: str) -> types.GenerateContentConfig:
-        """Per-role generation config. Verification forces ≥1 tool call (mode=ANY)
-        as belt-and-suspenders for the pipeline's Phase-2 hard gate."""
-        tool_config = None
-        if role == "verification":
-            tool_config = types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(mode="ANY")
-            )
+        """Per-role generation config.
+
+        AUTO function-calling for every role — including verification.
+        Previously verification used `mode="ANY"` to force ≥1 tool call as
+        a belt-and-suspenders for the pipeline's Phase-2 hard gate. That
+        was harmful: `ANY` requires a function call in EVERY response,
+        so once the model has gathered all the data it needs it cannot
+        emit the final JSON answer and instead loops on dummy queries
+        (observed: 5+ repeats of `SELECT name FROM chains LIMIT 1` in
+        smoke run #3). The pipeline already rejects responses that
+        carry zero tool calls — see
+        .tasks/2026-05-28-aida-tool-retry-loop.md.
+
+        Tool-retry cap lives in `_stream_events` via
+        `RunConfig.max_llm_calls`, not here."""
         return types.GenerateContentConfig(
             thinking_config=thinking_config(effort),
-            tool_config=tool_config,
         )
 
     async def generate(
@@ -169,15 +240,36 @@ class Responder:
 
     async def _stream_events(self, agent, prompt: str):
         """Run `agent` for one user turn, yielding ADK events. Isolated seam so the
-        parse / tool_calls / health logic above is unit-testable without Vertex."""
+        parse / tool_calls / health logic above is unit-testable without Vertex.
+
+        `RunConfig.max_llm_calls=50` is the structural cap on Aida's
+        per-turn budget (L2 defense — see
+        .tasks/2026-05-28-aida-tool-retry-loop.md). Default in ADK is 500.
+
+        Sizing rationale: L1 (tool catalog in prompt) + L3 (schema-aware
+        tool error responses with `retry: false`) + L4 (verification
+        prompt hard rule) already prevent the schema-retry loop at the
+        prompt level. 50 is loose enough not to throttle legitimate
+        thinking + 2-3 tool rounds + sub-agent web_research (its calls
+        share this invocation-wide budget, adk-python #1167), tight
+        enough to catch a true cycling regression — normal verification
+        runs in ≤ ~8 calls, so 50 leaves clear telemetry headroom.
+
+        When the cap is reached ADK raises LlmCallsLimitExceededError,
+        which `health.classify_error` flags as `config` (not transient)
+        so the pipeline records it cleanly and skips."""
         runner = InMemoryRunner(agent=agent, app_name=_APP_NAME)
         session_id = str(uuid.uuid4())
         await runner.session_service.create_session(
             app_name=_APP_NAME, user_id=_USER_ID, session_id=session_id
         )
         content = types.Content(role="user", parts=[types.Part(text=prompt)])
+        run_config = RunConfig(max_llm_calls=50)
         async for event in runner.run_async(
-            user_id=_USER_ID, session_id=session_id, new_message=content
+            user_id=_USER_ID,
+            session_id=session_id,
+            new_message=content,
+            run_config=run_config,
         ):
             yield event
 
@@ -189,12 +281,19 @@ class Responder:
         async with self._semaphore:
             async def _drain():
                 nonlocal final_text
+                event_idx = 0
                 async for event in self._stream_events(agent, prompt):
                     events.append(event)
+                    event_idx += 1
+                    # Per-event introspection so the smoke logs show
+                    # exactly what the model + ADK loop are doing.
+                    summary = _summarize_event(event)
+                    log.info("adk_event role=%s idx=%d %s", role, event_idx, summary)
                     if event.is_final_response() and event.content and event.content.parts:
                         joined = "".join(p.text or "" for p in event.content.parts)
                         if joined:
                             final_text = joined
+                log.info("adk_drain_done role=%s total_events=%d", role, event_idx)
 
             try:
                 await asyncio.wait_for(_drain(), timeout=self._timeout)

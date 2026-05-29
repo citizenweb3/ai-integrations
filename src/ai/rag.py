@@ -75,13 +75,20 @@ class RAGClient:
         return None
 
     async def health_check(self) -> bool:
-        """Quick check if RAG API is reachable."""
+        """Quick check if RAG API is reachable.
+
+        Uses the same timeout as regular search calls (config
+        `rag.timeout_seconds`). A 5s hardcoded cap turned out to be
+        too tight for cold-start Next.js compile of the RAG route,
+        producing a misleading "degraded" log on every startup even
+        when the endpoint was actually live.
+        """
         try:
             async with self._session.get(
                 f"{self._base_url}/api/rag/search",
                 params={"q": "test", "limit": "1"},
                 headers={"x-rag-api-token": self._token},
-                timeout=aiohttp.ClientTimeout(total=5),
+                timeout=self._timeout,
             ) as resp:
                 ok = resp.status == 200
                 if ok:

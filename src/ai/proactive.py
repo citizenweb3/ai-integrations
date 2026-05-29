@@ -233,7 +233,7 @@ class ProactiveScanner:
                     attempts=filter_result.attempts,
                 )
                 log.info(
-                    "[%s] Llama proactive decision=%s attempts=%d latency_ms=%d reason=%s",
+                    "[%s] Router proactive decision=%s attempts=%d latency_ms=%d reason=%s",
                     group_name,
                     filter_result.decision,
                     filter_result.attempts,

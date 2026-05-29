@@ -1,5 +1,6 @@
 import asyncio
 
+from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 from google.genai import errors as gerrors
 
 from src.ai.health import LLMHealth, classify_error
@@ -69,3 +70,11 @@ def test_classify_credential_errors_as_auth():
     from google.auth import exceptions as gauth
     assert classify_error(gauth.DefaultCredentialsError("no ADC")) == "auth"
     assert classify_error(gauth.RefreshError("token expired")) == "auth"
+
+
+def test_classify_llm_calls_limit_exceeded_as_config():
+    # ADK raises LlmCallsLimitExceededError when RunConfig.max_llm_calls is hit.
+    # Re-running the same prompt won't help (the model loop is structurally
+    # bounded by design), so this is a config/design failure, not transient.
+    err = LlmCallsLimitExceededError("Max number of llm calls limit of 5 exceeded")
+    assert classify_error(err) == "config"

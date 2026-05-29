@@ -19,6 +19,7 @@ from src.ai.rag import RAGClient
 from src.ai.llm_router import LLMRouter
 from src.storage.validatorinfo import ValidatorInfoAdapter
 from src.ai.responder import Responder
+from src.ai.tool_catalog import build_catalog_section
 from src.core.rate_limiter import RateLimiter
 from src.telegram.sender import Sender
 from src.storage.contacts import ContactManager
@@ -33,6 +34,12 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+# Verbose ADK / GenAI logging for the smoke debug session — see
+# .tasks/2026-05-28-aida-tool-retry-loop.md (T11). Turn back to INFO
+# once the verification loop is understood.
+logging.getLogger("google.adk").setLevel(logging.DEBUG)
+logging.getLogger("google_adk").setLevel(logging.DEBUG)
+logging.getLogger("google_genai").setLevel(logging.DEBUG)
 log = logging.getLogger("agent")
 
 
@@ -78,7 +85,18 @@ async def main():
     log.info("ValidatorInfo DB: %s", "connected" if vi_ok else "unavailable (degraded)")
 
     # 5. Core services
-    responder = Responder(config)
+    # Build tool catalog markdown (L1: hand-written semantics + live schema
+    # overlay). Degraded mode (DB unreachable) → catalog renders the schema
+    # block as "unavailable"; the agent keeps running.
+    try:
+        catalog_section = await build_catalog_section(
+            dsn=config["validatorinfo"].get("database_url"),
+        )
+        log.info("Tool catalog built (%d chars)", len(catalog_section))
+    except Exception as e:
+        log.warning("Tool catalog build failed: %s — running without catalog", e)
+        catalog_section = None
+    responder = Responder(config, catalog_section=catalog_section)
     sender = Sender(client, config)
     rate_limiter = RateLimiter(db, config)
     contacts = ContactManager(db)
@@ -132,7 +150,30 @@ async def main():
     async def _heartbeat():
         Path("data/.heartbeat").touch()
 
+    async def _tg_heartbeat():
+        """Check connections and send status to admin every 3 hours."""
+        rag_status = await rag.health_check()
+        vi_status = await vi.health_check()
+        current_stats = await db.stats()
+        lines = [
+            f"💓 Heartbeat — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            f"RAG API: {'✅' if rag_status else '❌ unavailable'}",
+            f"ValidatorInfo DB: {'✅' if vi_status else '❌ unavailable'}",
+            f"Groups: {current_stats.get('groups', '?')} | Messages: {current_stats.get('messages', '?')}",
+            f"Responses: {current_stats.get('responses_total', '?')} total / {current_stats.get('responses_sent_today', '?')} today / {current_stats.get('responses_pending', '?')} pending",
+        ]
+        level = "INFO" if (rag_status and vi_status) else "WARNING"
+        await approval.alert(level, "\n".join(lines))
+        log.info("tg_heartbeat sent (rag=%s vi=%s)", rag_status, vi_status)
+
+    # Send heartbeat immediately on startup
+    try:
+        await _tg_heartbeat()
+    except Exception as e:
+        log.error("startup heartbeat error: %s", e)
+
     cron_tasks.append(asyncio.create_task(_loop("heartbeat", _heartbeat, 30)))
+    cron_tasks.append(asyncio.create_task(_loop("tg_heartbeat", _tg_heartbeat, 10800)))  # every 3h
     cron_tasks.append(asyncio.create_task(_loop("proactive", proactive.run_cycle, config["proactive"]["interval_minutes"] * 60)))
     cron_tasks.append(asyncio.create_task(_loop("queue_retry", approval.process_queue, 30)))
     cron_tasks.append(asyncio.create_task(_loop("cleanup_hourly", cleanup.run_hourly, 3600)))

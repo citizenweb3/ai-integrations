@@ -132,7 +132,7 @@ class ApprovalBot:
     @staticmethod
     def _format_filter_log_line(filter_log: dict) -> str:
         line = (
-            f"Llama: {filter_log.get('decision')}, "
+            f"Router: {filter_log.get('decision')}, "
             f"{filter_log.get('latency_ms') or 0}ms, "
             f"attempts={filter_log.get('attempts') or 0}"
         )
