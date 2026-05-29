@@ -107,11 +107,12 @@ export default async function CampaignDetailPage({
 
         <AutoRefreshWhenActive
           active={
+            view.scopeValidation.state === "pending" ||
             view.liveActivity.discoveryRunning +
               view.liveActivity.researchInFlight +
               view.liveActivity.contactDiscoveryInFlight +
               view.liveActivity.draftingInFlight >
-            0
+              0
           }
         />
 
