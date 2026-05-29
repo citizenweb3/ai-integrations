@@ -80,7 +80,7 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
 
       <section className="max-w-[80vw] mx-auto px-4 pb-24 space-y-8">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <StatCard label="Contacts" value={org.stats.contacts} />
+          <StatCard label="Approved contacts" value={org.stats.contacts} />
           <StatCard label="Threads" value={org.stats.threads} />
           <StatCard label="Outreach" value={org.stats.outreachRecords} />
           <StatCard label="Sent" value={org.stats.sentOutbound} />
@@ -193,9 +193,12 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
         {activeTab === "contacts" ? (
         <>
         <Card>
-          <BlockTitle title="Contacts" className="mb-4 text-left" />
+          <BlockTitle title="Approved contacts" className="mb-4 text-left" />
           {org.contacts.length === 0 ? (
-            <p className="text-sm font-light opacity-60">No contacts.</p>
+            <p className="text-sm font-light opacity-60">
+              No approved contacts yet. Approve a candidate from the queue below to add one — once
+              approved, the contact becomes addressable for drafts.
+            </p>
           ) : (
             <ul className="space-y-2">
               {org.contacts.map((c) => (
