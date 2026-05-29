@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package.json yarn.lock tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY scripts ./scripts
 
 RUN yarn install --frozen-lockfile
 
