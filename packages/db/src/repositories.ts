@@ -19443,6 +19443,11 @@ export type OrganizationListItem = {
   // operator can spot orgs where discovery has produced something to
   // triage without opening each card.
   pendingContactCandidateCount: number;
+  // T-026AR: number of addressable emails (approved contacts +
+  // pending candidates with a non-null email). Drives the
+  // listing sort so the operator sees orgs with at least one
+  // sendable address at the top of the page.
+  addressableEmailCount: number;
   // T-026AN: source campaigns for this org so /organizations rows show
   // which campaign each org came from. An org can be linked to more
   // than one campaign when the same domain is accepted from different
@@ -19483,6 +19488,7 @@ export async function listOrganizationsForDashboard(
       coalesce(t.cnt, 0)::int as thread_count,
       coalesce(w.cnt, 0)::int as open_work_item_count,
       coalesce(pcc.cnt, 0)::int as pending_contact_candidate_count,
+      coalesce(ae.cnt, 0)::int as addressable_email_count,
       coalesce(cam.campaigns_json, '[]'::jsonb) as campaigns_json,
       s.snapshot_version as latest_snapshot_version,
       s.status as latest_snapshot_status
@@ -19513,6 +19519,25 @@ export async function listOrganizationsForDashboard(
       group by organization_id
     ) pcc on pcc.organization_id = o.id
     left join (
+      -- T-026AR: number of addressable emails on this org. Sums
+      -- approved contacts (always have email) + pending candidates
+      -- whose email field is non-null (specific person with email
+      -- found verbatim, or a generic_inbox surfaced by the agent).
+      -- Drives the listing sort.
+      select organization_id, sum(cnt)::int as cnt
+      from (
+        select organization_id, count(*) as cnt
+        from contacts
+        group by organization_id
+        union all
+        select organization_id, count(*) as cnt
+        from research_contact_candidates
+        where status = 'pending' and email is not null
+        group by organization_id
+      ) per_org
+      group by organization_id
+    ) ae on ae.organization_id = o.id
+    left join (
       -- T-026AN: source campaigns aggregated from discovery_candidates.
       -- An org can have more than one source when the same domain is
       -- accepted in different campaigns; we surface them all so the
@@ -19533,7 +19558,12 @@ export async function listOrganizationsForDashboard(
       limit 1
     ) s on true
     ${campaignFilter}
-    order by o.updated_at desc
+    order by
+      -- T-026AR: orgs with at least one addressable email surface
+      -- at the top; ties break by addressable count then recency.
+      (coalesce(ae.cnt, 0) > 0) desc,
+      coalesce(ae.cnt, 0) desc,
+      o.updated_at desc
     limit ${opts.limit}
   `);
 
@@ -19547,6 +19577,7 @@ export async function listOrganizationsForDashboard(
     thread_count: number;
     open_work_item_count: number;
     pending_contact_candidate_count: number;
+    addressable_email_count: number;
     campaigns_json: Array<{ id: string; name: string }> | string | null;
     latest_snapshot_version: number | null;
     latest_snapshot_status: string | null;
@@ -19559,6 +19590,7 @@ export async function listOrganizationsForDashboard(
     threadCount: r.thread_count,
     openWorkItemCount: r.open_work_item_count,
     pendingContactCandidateCount: r.pending_contact_candidate_count,
+    addressableEmailCount: r.addressable_email_count,
     campaigns: Array.isArray(r.campaigns_json)
       ? r.campaigns_json
       : typeof r.campaigns_json === "string"

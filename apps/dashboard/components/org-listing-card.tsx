@@ -32,16 +32,26 @@ export function OrgListingCard({
               {org.countryCode ? ` · ${org.countryCode}` : ""}
             </div>
           </div>
-          {org.latestSnapshotVersion ? (
-            <SnapshotBadge version={org.latestSnapshotVersion} />
-          ) : (
-            <span
-              className="text-xs px-2 py-1 rounded-full border border-white/15 opacity-60"
-              title="The research-snapshot job has not finished yet. Drafts cannot use this org until it does."
-            >
-              no research yet
-            </span>
-          )}
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            {org.latestSnapshotVersion ? (
+              <SnapshotBadge version={org.latestSnapshotVersion} />
+            ) : (
+              <span
+                className="text-xs px-2 py-1 rounded-full border border-white/15 opacity-60"
+                title="The research-snapshot job has not finished yet. Drafts cannot use this org until it does."
+              >
+                no research yet
+              </span>
+            )}
+            {org.addressableEmailCount > 0 ? (
+              <span
+                className="text-[10px] tracking-[0.18em] uppercase border border-[var(--accent)]/40 text-[var(--accent)] px-2 py-0.5 rounded-full whitespace-nowrap"
+                title={`${org.addressableEmailCount} email address${org.addressableEmailCount === 1 ? "" : "es"} ready to use (approved contacts + pending candidates with email).`}
+              >
+                Addressable
+              </span>
+            ) : null}
+          </div>
         </div>
 
         {showCampaignTags && org.campaigns.length > 0 ? (
