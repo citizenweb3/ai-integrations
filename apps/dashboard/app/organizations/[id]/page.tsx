@@ -80,12 +80,37 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
 
       <section className="max-w-[80vw] mx-auto px-4 pb-24 space-y-8">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <StatCard label="Approved contacts" value={org.stats.contacts} />
-          <StatCard label="Threads" value={org.stats.threads} />
-          <StatCard label="Outreach" value={org.stats.outreachRecords} />
-          <StatCard label="Sent" value={org.stats.sentOutbound} />
-          <StatCard label="Replies" value={org.stats.inboundReplies} />
-          <StatCard label="Open items" value={org.stats.openWorkItems} accent={org.stats.openWorkItems > 0} />
+          <StatCard
+            label="Approved contacts"
+            value={org.stats.contacts}
+            hint="People you've approved as addressable. Drafts can target them directly."
+          />
+          <StatCard
+            label="Threads"
+            value={org.stats.threads}
+            hint="Email conversations with this org. Increases when sends + replies land."
+          />
+          <StatCard
+            label="Outreach"
+            value={org.stats.outreachRecords}
+            hint="Outreach attempts (drafts × send attempts). Counts every dispatch attempt, not unique recipients."
+          />
+          <StatCard
+            label="Sent"
+            value={org.stats.sentOutbound}
+            hint="Messages Resend confirmed it sent on your behalf."
+          />
+          <StatCard
+            label="Replies"
+            value={org.stats.inboundReplies}
+            hint="Inbound replies (any reply class) attached to a thread for this org."
+          />
+          <StatCard
+            label="Open items"
+            value={org.stats.openWorkItems}
+            accent={org.stats.openWorkItems > 0}
+            hint="Action items the system has flagged for you on this org (scope, drafts, replies needing attention)."
+          />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -594,11 +619,24 @@ function OrgTabsNav({
 // Suppress unused-import warning if a future cleanup removes ORG_TAB_KEYS.
 void ORG_TAB_KEYS;
 
-function StatCard({ label, value, accent = false }: { label: string; value: number; accent?: boolean }) {
+function StatCard({
+  label,
+  value,
+  accent = false,
+  hint
+}: {
+  label: string;
+  value: number;
+  accent?: boolean;
+  hint?: string;
+}) {
   return (
     <Card className="min-h-0 p-6">
       <div className={`text-3xl font-bold ${accent ? "text-[var(--accent)]" : ""}`}>{value}</div>
       <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-2">{label}</div>
+      {hint ? (
+        <div className="text-[11px] font-light opacity-50 leading-snug mt-2">{hint}</div>
+      ) : null}
     </Card>
   );
 }
@@ -621,12 +659,19 @@ function SnapshotPanel({
           <BlockTitle title="Research snapshot" className="mb-1 text-left" />
           {snapshot ? (
             <p className="text-sm opacity-70 font-light">
-              v{snapshot.version} · {snapshot.status} ·{" "}
-              {new Date(snapshot.createdAt).toISOString().slice(0, 19).replace("T", " ")} ·{" "}
-              {snapshot.facts.length} fact{snapshot.facts.length === 1 ? "" : "s"}
+              <span title="Snapshot version. Bumps every time the snapshot is refreshed.">
+                research v{snapshot.version}
+              </span>{" · "}
+              {new Date(snapshot.createdAt).toISOString().slice(0, 19).replace("T", " ")}{" · "}
+              <span title="Number of distinct facts the agent extracted into this snapshot.">
+                {snapshot.facts.length} fact{snapshot.facts.length === 1 ? "" : "s"}
+              </span>
             </p>
           ) : (
-            <p className="text-sm opacity-70 font-light">No snapshot yet for this organisation.</p>
+            <p className="text-sm opacity-70 font-light">
+              No research snapshot yet for this organisation. Drafts cannot use it until the
+              snapshot job lands.
+            </p>
           )}
         </div>
         <form action="/api/commands" method="post" className="flex gap-2 items-start">
@@ -707,12 +752,19 @@ function SnapshotPanel({
 
 function ConfidenceBadge({ value, safe, status }: { value: number; safe: boolean; status: string }) {
   const tone = value >= 80 ? "text-[var(--accent)] border-[var(--accent)]/40" : value >= 50 ? "text-[hsl(var(--primary))] border-[hsl(var(--primary))]/40" : "text-white/60 border-white/20";
+  const tier = value >= 80 ? "high" : value >= 50 ? "medium" : "low";
   return (
     <div className="flex flex-col items-end gap-1 shrink-0">
-      <span className={`text-xs px-2 py-0.5 rounded-full border ${tone} whitespace-nowrap`}>
-        conf {value}
+      <span
+        className={`text-xs px-2 py-0.5 rounded-full border ${tone} whitespace-nowrap`}
+        title={`Agent confidence in this fact: ${tier} (${value} / 100). High ≥ 80, medium ≥ 50, low otherwise.`}
+      >
+        {tier} confidence
       </span>
-      <span className="text-[10px] opacity-60 uppercase tracking-wider">
+      <span
+        className="text-[10px] opacity-60 uppercase tracking-wider"
+        title="Draft = needs operator review. Approved = signed off. `safe` = the agent marked this fact as safe to paraphrase verbatim in a cold email."
+      >
         {status}
         {safe ? " · safe" : ""}
       </span>
