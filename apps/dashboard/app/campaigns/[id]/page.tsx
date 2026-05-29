@@ -13,6 +13,7 @@ import {
 } from "@/components/ui";
 import { deriveCampaignStage, type CampaignStageSnapshot } from "@/lib/campaign-stage";
 import { DismissableBanner } from "@/components/dismissable-banner";
+import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
 import { formatRelativeTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -103,6 +104,16 @@ export default async function CampaignDetailPage({
         <StageStrip stage={stage} />
 
         <BackgroundActivityStrip activity={view.liveActivity} />
+
+        <AutoRefreshWhenActive
+          active={
+            view.liveActivity.discoveryRunning +
+              view.liveActivity.researchInFlight +
+              view.liveActivity.contactDiscoveryInFlight +
+              view.liveActivity.draftingInFlight >
+            0
+          }
+        />
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard
