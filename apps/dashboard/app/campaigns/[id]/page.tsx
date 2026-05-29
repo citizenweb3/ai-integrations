@@ -22,6 +22,7 @@ import {
   textareaClass
 } from "@/components/ui";
 import { deriveCampaignStage, type CampaignStageSnapshot } from "@/lib/campaign-stage";
+import { DismissableBanner } from "@/components/dismissable-banner";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,8 @@ export default async function CampaignDetailPage({
   const query = await searchParams;
   const errorRaw = query["error"];
   const errorMessage = typeof errorRaw === "string" ? errorRaw : Array.isArray(errorRaw) ? errorRaw[0] : null;
+  const noticeRaw = query["notice"];
+  const noticeMessage = typeof noticeRaw === "string" ? noticeRaw : Array.isArray(noticeRaw) ? noticeRaw[0] : null;
   const view = await getCampaignDiscoveryView(id);
   if (!view) {
     notFound();
@@ -130,15 +133,22 @@ export default async function CampaignDetailPage({
 
       <PageBody>
         {errorMessage ? (
-          <div className="rounded-2xl border border-red-500/40 bg-red-500/5 p-5">
-            <div className="text-xs font-semibold tracking-[0.2em] uppercase text-red-400 mb-2">
-              Last action failed
-            </div>
-            <p className="text-sm font-light opacity-90 break-words">{errorMessage}</p>
-            <p className="text-xs font-light opacity-60 mt-3">
-              Code + message returned by the command handler. Adjust scope or capacity and retry.
-            </p>
-          </div>
+          <DismissableBanner
+            tone="error"
+            queryKey="error"
+            eyebrow="Last action failed"
+            message={errorMessage}
+            hint="Code + message returned by the command handler. Adjust scope or capacity and retry."
+          />
+        ) : null}
+
+        {noticeMessage ? (
+          <DismissableBanner
+            tone="notice"
+            queryKey="notice"
+            eyebrow="Action confirmed"
+            message={noticeMessage}
+          />
         ) : null}
 
         <StageStrip stage={stage} />

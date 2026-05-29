@@ -104,10 +104,11 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
       // The form lives at /campaigns/new, so the referer-derived redirect
       // would land the operator back on an empty new-campaign form with no
       // confirmation. Send them to the detail page of the campaign they just
-      // created instead.
+      // created instead, with a confirmation notice (T-026AD/D).
       const target = safeRedirectUrl(request);
       target.pathname = `/campaigns/${result.campaign.id}`;
       target.search = "";
+      target.searchParams.set("notice", "Campaign created. The scope is saved and discovery is ready to run.");
       return NextResponse.redirect(target, { status: 303 });
     }
 
@@ -696,7 +697,9 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           deduplicated: result.deduplicated
         });
       }
-      return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
+      const target = safeRedirectUrl(request);
+      target.searchParams.set("notice", "Discovery queued. Refresh in a moment to see new candidates.");
+      return NextResponse.redirect(target, { status: 303 });
     }
 
     case "accept_discovery_candidate": {
@@ -723,7 +726,14 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           deduplicated: result.deduplicated
         });
       }
-      return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
+      const target = safeRedirectUrl(request);
+      target.searchParams.set(
+        "notice",
+        result.organizationCreated
+          ? "Candidate accepted. Research snapshot job has been queued."
+          : "Candidate accepted (organisation already existed)."
+      );
+      return NextResponse.redirect(target, { status: 303 });
     }
 
     case "reject_discovery_candidate": {
@@ -747,7 +757,9 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           deduplicated: result.deduplicated
         });
       }
-      return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
+      const target = safeRedirectUrl(request);
+      target.searchParams.set("notice", "Candidate rejected. Discovery slot freed.");
+      return NextResponse.redirect(target, { status: 303 });
     }
   }
   } catch (err) {
