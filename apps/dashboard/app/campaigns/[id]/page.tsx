@@ -1,7 +1,6 @@
 import { getCampaignDiscoveryView } from "@bizdev/db";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import type { ReactNode } from "react";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
@@ -10,9 +9,7 @@ import {
   Button,
   InfoRow,
   MetricCard,
-  PageBody,
-  inputClass,
-  textareaClass
+  PageBody
 } from "@/components/ui";
 import { deriveCampaignStage, type CampaignStageSnapshot } from "@/lib/campaign-stage";
 import { DismissableBanner } from "@/components/dismissable-banner";
@@ -247,7 +244,7 @@ export default async function CampaignDetailPage({
           <InfoRow label="Last update" value={view.campaign.updatedAt.toISOString()} />
         </Card>
 
-        {isDraftingScope ? <CampaignScopeForm campaign={view.campaign} /> : null}
+        <ScopeIncompleteCallout view={view} />
 
         <Card id="run-discovery">
           <BlockTitle title="Re-run discovery" className="mb-2 text-left" />
@@ -416,8 +413,47 @@ function AcceptedOrganisationsCard({ view }: { view: CampaignDiscoveryViewModel 
   );
 }
 
-function formatMultilineValue(values: string[]) {
-  return values.join("\n");
+// T-026AK/B: render only when the validator has actually rejected the
+// scope (state === 'incomplete'). During the validation-pending race
+// window the StageStrip already informs the operator that the
+// background job is running; an extra "Fix scope" card here would just
+// look broken.
+function ScopeIncompleteCallout({ view }: { view: CampaignDiscoveryViewModel }) {
+  if (view.scopeValidation.state !== "incomplete") {
+    return null;
+  }
+  const missing = view.scopeValidation.missingFields;
+  return (
+    <div className="rounded-2xl border border-yellow-500/40 bg-yellow-500/5 p-5">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="space-y-3">
+          <div className="text-xs font-semibold tracking-[0.2em] uppercase text-yellow-400">
+            Scope incomplete
+          </div>
+          <p className="text-sm font-light opacity-90 max-w-2xl">
+            The validator rejected the campaign brief. The campaign sits in <code>drafting_scope</code>
+            until the missing fields are filled in. Discovery does not run from this state.
+          </p>
+          {missing.length > 0 ? (
+            <p className="text-xs font-light opacity-80">
+              Missing: {missing.map((f, i) => (
+                <span key={f}>
+                  {i > 0 ? ", " : ""}
+                  <code className="font-mono">{f}</code>
+                </span>
+              ))}
+            </p>
+          ) : null}
+        </div>
+        <Link
+          href={`/campaigns/${view.campaign.id}/scope`}
+          className="shrink-0 px-5 py-2 rounded-[10px] text-sm font-semibold tracking-wide bg-[var(--accent)] text-black hover:opacity-90 transition-colors"
+        >
+          Open scope editor →
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 // T-026AD/B: shows in-flight job counts for the four pipeline stages so the
@@ -508,177 +544,6 @@ function StageStrip({ stage }: { stage: CampaignStageSnapshot }) {
         ) : null}
       </div>
     </Card>
-  );
-}
-
-function CampaignScopeForm({ campaign }: { campaign: CampaignDiscoveryViewModel["campaign"] }) {
-  return (
-    <Card id="scope-form">
-      <BlockTitle title="Complete scope" className="mb-2 text-left" />
-      <p className="text-sm font-light opacity-80 mb-4">
-        This campaign is in <code>drafting_scope</code>: the validator caught missing or invalid required fields when
-        the campaign was first submitted. Fix the form below and Save — discovery will start automatically as soon
-        as validation passes.
-      </p>
-      <form action="/api/commands" method="post" className="space-y-5">
-        <input type="hidden" name="commandType" value="update_campaign_scope" />
-        <input type="hidden" name="campaignId" value={campaign.id} />
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ScopeLabel label="Name">
-            <input className={inputClass} name="name" defaultValue={campaign.name} required />
-          </ScopeLabel>
-          <ScopeLabel label="Objective">
-            <input className={inputClass} name="objective" defaultValue={campaign.objective} required />
-          </ScopeLabel>
-        </div>
-
-        <ScopeLabel label="Offer summary">
-          <textarea
-            className={textareaClass}
-            name="offerSummary"
-            defaultValue={campaign.offerSummary ?? ""}
-            required
-          />
-        </ScopeLabel>
-
-        <ScopeLabel label="Desired CTA">
-          <textarea
-            className={textareaClass}
-            name="desiredCta"
-            defaultValue={campaign.desiredCta ?? ""}
-            required
-          />
-        </ScopeLabel>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ScopeLabel label="Target segments">
-            <textarea
-              className={textareaClass}
-              name="targetSegments"
-              defaultValue={formatMultilineValue(campaign.targetSegments)}
-              required
-            />
-          </ScopeLabel>
-          <ScopeLabel label="Forbidden claims">
-            <textarea
-              className={textareaClass}
-              name="forbiddenClaims"
-              defaultValue={formatMultilineValue(campaign.forbiddenClaims)}
-            />
-          </ScopeLabel>
-        </div>
-
-        <ScopeLabel label="Operator notes">
-          <textarea
-            className={textareaClass}
-            name="operatorNotes"
-            defaultValue={campaign.operatorNotes ?? ""}
-          />
-        </ScopeLabel>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <ScopeLabel label="Source hints">
-            <textarea
-              className={textareaClass}
-              name="discoverySourceHints"
-              defaultValue={formatMultilineValue(campaign.discoverySourceHints)}
-            />
-          </ScopeLabel>
-          <ScopeLabel label="Exclusions">
-            <textarea
-              className={textareaClass}
-              name="discoveryExclusions"
-              defaultValue={formatMultilineValue(campaign.discoveryExclusions)}
-            />
-          </ScopeLabel>
-          <ScopeLabel label="Allowed regions">
-            <textarea
-              className={textareaClass}
-              name="allowedRegions"
-              defaultValue={formatMultilineValue(campaign.allowedRegions)}
-            />
-          </ScopeLabel>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ScopeLabel label="Sender identity ID">
-            <input className={inputClass} name="senderIdentityId" defaultValue={campaign.senderIdentityId ?? ""} />
-          </ScopeLabel>
-          <ScopeLabel label="Policy profile ID">
-            <input className={inputClass} name="policyProfileId" defaultValue={campaign.policyProfileId ?? ""} />
-          </ScopeLabel>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <ScopeLabel label="Org cap">
-            <input
-              className={inputClass}
-              type="number"
-              min={1}
-              name="maxOrganizationsToDiscover"
-              defaultValue={campaign.maxOrganizationsToDiscover}
-            />
-          </ScopeLabel>
-          <ScopeLabel label="Enrich cap">
-            <input
-              className={inputClass}
-              type="number"
-              min={1}
-              name="maxConcurrentEnrichments"
-              defaultValue={campaign.maxConcurrentEnrichments}
-            />
-          </ScopeLabel>
-          <ScopeLabel label="Draft cap">
-            <input
-              className={inputClass}
-              type="number"
-              min={1}
-              name="maxConcurrentDrafts"
-              defaultValue={campaign.maxConcurrentDrafts}
-            />
-          </ScopeLabel>
-          <ScopeLabel label="Review cap">
-            <input
-              className={inputClass}
-              type="number"
-              min={1}
-              name="maxOpenDraftReviews"
-              defaultValue={campaign.maxOpenDraftReviews}
-            />
-          </ScopeLabel>
-        </div>
-
-        <ScopeLabel label="Discovery cooldown seconds" className="max-w-xs">
-          <input
-            className={inputClass}
-            type="number"
-            min={0}
-            name="cooldownBetweenDiscoverySeconds"
-            defaultValue={campaign.cooldownBetweenDiscoverySeconds}
-          />
-        </ScopeLabel>
-
-        <Button type="submit">Save scope</Button>
-      </form>
-    </Card>
-  );
-}
-
-function ScopeLabel({
-  label,
-  className = "",
-  children
-}: {
-  label: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <label className={`block space-y-2 ${className}`}>
-      <span className="block text-xs uppercase tracking-[0.18em] opacity-70">{label}</span>
-      {children}
-    </label>
   );
 }
 

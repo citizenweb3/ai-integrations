@@ -72,9 +72,9 @@ export function deriveCampaignStage(view: CampaignDiscoveryView): CampaignStageS
       tone: "warning",
       description,
       nextAction: {
-        title: "Complete scope",
-        hint: "Fix the highlighted fields and save. Discovery is auto-enqueued on a clean save.",
-        href: "#scope-form"
+        title: "Open scope editor",
+        hint: "Opens the dedicated scope editor. Discovery is auto-enqueued on a clean save.",
+        href: `/campaigns/${view.campaign.id}/scope`
       }
     };
   }
