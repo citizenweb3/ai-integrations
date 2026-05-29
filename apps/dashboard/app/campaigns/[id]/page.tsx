@@ -116,7 +116,7 @@ export default async function CampaignDetailPage({
           }
         />
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <MetricCard
             label="Total candidates"
             value={totals}
@@ -129,12 +129,14 @@ export default async function CampaignDetailPage({
             href={`/campaigns/${view.campaign.id}/candidates`}
           />
           <MetricCard
-            label="Enriching / enriched"
-            value={
-              view.candidatesByStatus.queued_for_enrichment.length +
-              view.candidatesByStatus.enriched.length
-            }
-            href={`/campaigns/${view.campaign.id}/candidates`}
+            label="Researching"
+            value={view.candidatesByStatus.queued_for_enrichment.length}
+            href={`/campaigns/${view.campaign.id}/organizations`}
+          />
+          <MetricCard
+            label="Research ready"
+            value={view.candidatesByStatus.enriched.length}
+            href={`/campaigns/${view.campaign.id}/organizations`}
           />
           <MetricCard
             label="Closed"
