@@ -285,15 +285,19 @@ export default async function CampaignDetailPage({
           ) : remainingDiscoveryCapacity <= 0 ? (
             <div className="space-y-3">
               <p className="text-sm font-light opacity-90">
-                Discovery cap reached: {activeDiscoveryCount} of {view.campaign.maxOrganizationsToDiscover} candidate
-                slots are filled. Each non-terminal candidate (proposed, needs review, accepted, queued, enriched)
-                counts against the cap.
+                Discovery is full at {activeDiscoveryCount} of {view.campaign.maxOrganizationsToDiscover} organisations.
+                The discovery agent will not surface more candidates until you free a slot.
+              </p>
+              <p className="text-sm font-light opacity-80">
+                <strong>How to free slots:</strong> reject candidates you do not want from the Proposed / Needs review
+                lists below. Each rejection opens one slot. Accepted candidates also count against the cap until they
+                are closed out (rejected_by_policy, insufficient_fit, or duplicate).
               </p>
               <p className="text-xs font-light opacity-60">
-                To find more organisations:{" "}
-                <strong>reject</strong> candidates you do not want, or wait for accepted ones to be closed out by the
-                operator. The campaign cap (<code>max_organizations_to_discover</code>) was set when the scope was
-                drafted; raising it on a live campaign requires a direct schema update.
+                <strong>Why can&apos;t I just raise the cap?</strong> The cap (<code>max_organizations_to_discover</code>)
+                is a scope field, and scope fields are only editable while the campaign is in <code>drafting_scope</code>.
+                This is by design — it keeps the agent&apos;s output budget predictable per active campaign. Raising the
+                cap on a live campaign requires a direct schema update; ask an engineer.
               </p>
               <Button type="button" tone="muted" className="opacity-60 cursor-not-allowed">
                 Run discovery (cap reached)
@@ -301,12 +305,11 @@ export default async function CampaignDetailPage({
             </div>
           ) : (
             <>
-              <p className="text-sm font-light opacity-70 mb-4">
-                Enqueue <code>job.run_campaign_discovery</code> using the persisted campaign scope.
-                {" "}
-                <span className="opacity-70">
-                  Remaining capacity: {remainingDiscoveryCapacity} / {view.campaign.maxOrganizationsToDiscover}.
-                </span>
+              <p className="text-sm font-light opacity-90 mb-4">
+                Discovery has{" "}
+                <strong>{remainingDiscoveryCapacity}</strong> of {view.campaign.maxOrganizationsToDiscover} slot
+                {remainingDiscoveryCapacity === 1 ? "" : "s"} free. Running discovery enqueues the discovery agent
+                against the saved scope.
               </p>
               <form action="/api/commands" method="post" className="space-y-3">
                 <input type="hidden" name="commandType" value="run_campaign_discovery" />
