@@ -80,10 +80,15 @@ export default async function OrganizationsHubPage() {
                     </Badge>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 mt-6">
-                    <Stat label="Organisations" value={row.orgCount} />
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-5 mt-6">
                     <Stat
-                      label="Pending review"
+                      label="Organisations"
+                      hint="Distinct organisations accepted from this campaign's discovery list."
+                      value={row.orgCount}
+                    />
+                    <Stat
+                      label="Pending contacts"
+                      hint="People the agent surfaced across this campaign's orgs that still need your Approve or Reject."
                       value={row.pendingContactCandidateCount}
                       highlight={row.pendingContactCandidateCount > 0}
                     />
@@ -102,11 +107,24 @@ export default async function OrganizationsHubPage() {
   );
 }
 
-function Stat({ label, value, highlight = false }: { label: string; value: number; highlight?: boolean }) {
+function Stat({
+  label,
+  hint,
+  value,
+  highlight = false
+}: {
+  label: string;
+  hint?: string;
+  value: number;
+  highlight?: boolean;
+}) {
   return (
     <div>
       <div className={`text-2xl font-bold ${highlight ? "text-[var(--accent)]" : ""}`}>{value}</div>
       <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-1">{label}</div>
+      {hint ? (
+        <div className="text-[11px] font-light opacity-50 leading-snug mt-1">{hint}</div>
+      ) : null}
     </div>
   );
 }
