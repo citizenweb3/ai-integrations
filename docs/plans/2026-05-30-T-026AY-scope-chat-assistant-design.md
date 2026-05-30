@@ -264,3 +264,49 @@ values and the numeric caps are the defaults.
 Each stage is its own commit. The implementation plan
 (`superpowers:writing-plans`) will turn this design into the per-stage
 ticket list.
+
+## Outcome (2026-05-30)
+
+Shipped in five atomic commits:
+
+- T1 — `apps/agent/src/agent/assist.py` + `POST /assist/scope` + model
+  policy entry. Smoke-tested via direct Vertex call.
+- T2 — `apps/dashboard/app/api/campaign-assistant/route.ts` — thin
+  Node-runtime proxy with up-front validation, Bearer passthrough, and
+  distinct 500 / 502 / 503 error mappings.
+- T3+T4 — combined commit for `?mode=form|chat` tab on
+  `/campaigns/new` plus the `ScopeChat` client component owning the
+  conversation in `useState`. Combined because a tab without a chat
+  panel is not a useful atomic unit.
+- T5 — `ScopePreview` client component rendering the structured scope
+  with "AI-suggested" pills + Create (hidden form to /api/commands) +
+  Back-to-chat. No inline edit — corrections happen via the chat.
+- T6 — end-to-end verification driven by the operator in their own
+  browser session against the running dev server. The full happy path
+  (5-turn chat → ready → Apply → campaign page) succeeded; the created
+  campaign row carried the inferred `discoverySourceHints` as expected.
+
+Two design-time refinements that came out of implementation:
+
+1. The model defaults to `gemini-3.5-flash` (the project default), not
+   `gemini-2.5-pro` as the brainstorm originally proposed. The flash
+   model is what the existing stages use; a chat turn doesn't need the
+   pro tier and the latency win is more valuable than the marginal
+   reasoning gain.
+2. A server-side `_scrub_caps` guard always forces
+   `maxOrganizationsToDiscover` and `cooldownBetweenDiscoverySeconds`
+   back to their schema defaults regardless of what the LLM returned.
+   The system prompt instructs the model not to set those — but the
+   first smoke test showed Gemini quietly setting them to 1000 /
+   86400 anyway. Trusting structured-output models on fields you do
+   not want them to set requires belt-and-suspenders.
+
+Future work (deferred, not scoped here):
+
+- Inline edit in the preview, if the chat-correction loop turns out
+  to be slow enough that operators want a direct keyboard path.
+- Persisting the chat session (DB-backed) if operators report wanting
+  to resume from another device or browser tab.
+- A scope-diff preview when the operator clicks "Back to chat" and
+  produces a revised ready turn, so the second-pass scope can be
+  compared against the first.
