@@ -96,18 +96,39 @@ export function deriveCampaignStage(view: CampaignDiscoveryView): CampaignStageS
   const draftsAwaitingReview = view.progress.draftsGenerated - view.progress.draftsApproved;
   const sendsInFlight = view.progress.draftsApproved - view.progress.sent;
 
-  if (totals === 0 && view.recentDiscoveryRuns.length === 0) {
+  // T-026AV: stage strip must distinguish "discovery still running" from
+  // "discovery succeeded with 0 candidates". The old check used
+  // `recentDiscoveryRuns.length > 0` which fired even on a queued /
+  // leased / running discovery row and made the page lie about an
+  // in-flight job.
+  const discoveryStillRunning = view.liveActivity.discoveryRunning > 0;
+  const hasSucceededDiscoveryRun = view.recentDiscoveryRuns.some(
+    (r) => r.jobStatus === "succeeded"
+  );
+
+  if (totals === 0 && discoveryStillRunning) {
+    return {
+      key: "awaiting_discovery",
+      label: "Discovery running",
+      tone: "primary",
+      description:
+        "The discovery agent is searching. Candidates appear here the moment the agent finishes — the page auto-refreshes while the job is in flight.",
+      nextAction: null
+    };
+  }
+
+  if (totals === 0 && !hasSucceededDiscoveryRun) {
     return {
       key: "awaiting_discovery",
       label: "Discovery starting",
       tone: "primary",
       description:
-        "The scope is saved. The first discovery pass was auto-enqueued and should appear in Recent runs within seconds — refresh the page.",
+        "The scope is saved. The first discovery pass was auto-enqueued and should appear in Recent runs within seconds — the page refreshes itself while the job runs.",
       nextAction: null
     };
   }
 
-  if (totals === 0 && view.recentDiscoveryRuns.length > 0) {
+  if (totals === 0 && hasSucceededDiscoveryRun) {
     return {
       key: "awaiting_discovery",
       label: "Discovery finished — no candidates",
