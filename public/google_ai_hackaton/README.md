@@ -1,3 +1,3 @@
 - [Architecture](https://github.com/citizenweb3/ai-integrations/blob/main/public/google_ai_hackaton/architecture.md)
 - [Design](https://github.com/citizenweb3/ai-integrations/blob/main/public/google_ai_hackaton/design.md)
-- [Slides]()
+- [Slides](https://gamma.app/docs/Four-production-agents-One-Vertex-AI-backbone-Zero-hallucinations-fe0vnk6vv07kzvb)
