@@ -307,9 +307,16 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
 
         <Card>
           <BlockTitle title="Pending contact candidates" className="mb-4 text-left" />
-          <p className="text-sm font-light opacity-70 mb-4">
-            Operator review queue from research_snapshot stage. Candidates with a discovered email are
-            ready to approve straight away; the rest need an email supplied manually or a rejection.
+          <p className="text-sm font-light opacity-70 mb-2">
+            Operator review queue from research_snapshot stage. The agent surfaces candidates with
+            and without an email; the queue below holds the ones that need your decision.
+          </p>
+          <p className="text-xs font-light opacity-60 mb-4 border-l-2 border-[var(--accent)]/40 pl-3">
+            <strong className="text-[var(--accent)]">Heads up:</strong> candidates the agent
+            surfaced with a verbatim email are auto-approved into the Approved contacts list above
+            the moment contact discovery completes — you do not need to click Approve for them. The
+            queue below holds only the ones that still need a decision: a manual email entry, a
+            rejection, or a cross-org email reattach.
           </p>
           {(() => {
             if (org.pendingContactCandidates.length === 0) {

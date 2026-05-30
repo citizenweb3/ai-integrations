@@ -10229,6 +10229,40 @@ async function routeContactCandidatesIntoOrg(
       continue;
     }
 
+    // T-026AU/A: when the agent has already produced a verbatim email,
+    // skip the operator-approval step and create the contact directly.
+    // The candidate row still lands in research_contact_candidates so
+    // the audit trail stays intact, but with status='converted' +
+    // converted_contact_id set so the operator never sees it in the
+    // pending queue. Cross-org email collisions fall through to the
+    // pending path (operator handles via the existing reattach-confirm
+    // flow).
+    let autoApprovedContactId: string | null = null;
+    if (candidate.email && isWellFormedEmail(candidate.email)) {
+      const [existingContact] = await tx
+        .select({ id: contacts.id, organizationId: contacts.organizationId })
+        .from(contacts)
+        .where(sql`lower(${contacts.email}) = ${candidate.email}`)
+        .limit(1);
+      if (existingContact && existingContact.organizationId === input.organizationId) {
+        autoApprovedContactId = existingContact.id;
+      } else if (!existingContact) {
+        const [newContact] = await tx
+          .insert(contacts)
+          .values({
+            organizationId: input.organizationId,
+            email: candidate.email,
+            fullName: candidate.fullName,
+            roleTitle: candidate.role ?? null
+          })
+          .onConflictDoNothing()
+          .returning({ id: contacts.id });
+        autoApprovedContactId = newContact?.id ?? null;
+      }
+      // else: cross-org email collision — leave autoApprovedContactId
+      // null so the candidate falls through to pending.
+    }
+
     const inserts = await tx
       .insert(researchContactCandidates)
       .values({
@@ -10243,13 +10277,22 @@ async function routeContactCandidatesIntoOrg(
         notes: candidate.notes,
         agentRunId: input.agentRunId,
         lastSeenAt: new Date(),
-        status: "pending"
+        status: autoApprovedContactId ? "converted" : "pending",
+        ...(autoApprovedContactId ? { convertedContactId: autoApprovedContactId } : {})
       })
       .onConflictDoNothing()
       .returning({ id: researchContactCandidates.id });
     if (inserts.length > 0) inserted += 1;
   }
   return { inserted, updated };
+}
+
+// T-026AU/A: minimal email shape check. The agent should only emit
+// addresses that appeared verbatim on a public page, but a lightweight
+// guard keeps a typo'd address from bypassing the operator's approval
+// loop by accident.
+function isWellFormedEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function buildDefaultContactDiscoveryPrompt(input: {
