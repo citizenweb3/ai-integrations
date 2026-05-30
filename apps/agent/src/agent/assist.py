@@ -12,6 +12,8 @@ with an `inferred[]` list explaining each optional field it filled in.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 from typing import Literal
 
@@ -20,6 +22,12 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from .model_policy import resolve_model
+
+logger = logging.getLogger(__name__)
+# Every turn logs at INFO the inbound messages and the parsed AssistTurn
+# so operators can replay a failing chat from `docker logs agent` without
+# having to wire structured tracing first.
+logging.basicConfig(level=logging.INFO)
 
 _STAGE = "campaign_scope_assist"
 _TEMPERATURE = 0.4
@@ -47,9 +55,16 @@ report in `inferred[]` with a one-line reason for each:
 Rules:
 1. Ask EXACTLY ONE question per turn. Keep it under two sentences.
 2. Do NOT batch multiple unrelated questions into one turn.
-3. Once the five required fields are unambiguous from the
-   conversation so far, emit type="ready" with the full scope and
-   STOP asking questions.
+3. Before emitting type="ready", verify that EACH of the five
+   required fields was supplied by the operator in a clearly
+   identifiable user message. It is NOT enough that you could infer
+   the field from a side remark in their first goal statement — if
+   the operator did not explicitly answer a question about that
+   field (or volunteer it as a clear, self-contained value), ASK for
+   it before emitting ready. Inferring required fields silently is
+   the most common failure mode and the operator will reject it.
+   Only emit type="ready" once each required field has a direct
+   user-supplied source.
 4. For optional fields, only populate them when you can justify the
    choice from what the operator told you. List every populated
    optional field in `inferred[]`.
@@ -80,6 +95,17 @@ Rules:
        value in hand. The operator has already seen the full scope
        once — they expect to be asked, not have the same scope handed
        back unchanged.
+     - If the user's correction-mode message raises MULTIPLE pending
+       issues at once (e.g. "почему не спросил про регион и про
+       количество?" — two questions; or "поменяй CTA и сегменты" —
+       two fields), you MUST resolve all of them before emitting a
+       new ready turn. Either ask one focused question that addresses
+       the most pressing pending issue AND mention in the question
+       text that you will follow up on the rest, or ask the pending
+       issues sequentially across multiple turns. Never emit
+       type="ready" while a user-raised pending issue is still
+       unanswered — the operator will see the missing follow-up and
+       treat the ready as broken.
 """
 
 
@@ -159,6 +185,12 @@ async def run_scope_assistant(messages: list[ChatMessage]) -> AssistTurn:
     if not messages or messages[-1].role != "user":
         raise ValueError("conversation must end with a user message")
 
+    logger.info(
+        "scope_assist.request count=%d last=%s",
+        len(messages),
+        json.dumps(messages[-1].model_dump(), ensure_ascii=False)[:200],
+    )
+
     client = _get_client()
     contents = _to_genai_contents(messages)
     config = types.GenerateContentConfig(
@@ -180,7 +212,15 @@ async def run_scope_assistant(messages: list[ChatMessage]) -> AssistTurn:
         # happens with some SDK versions; coerce explicitly so the FastAPI
         # layer always sees an AssistTurn.
         parsed = AssistTurn.model_validate(parsed)
-    return _scrub_caps(parsed)
+    result = _scrub_caps(parsed)
+    logger.info(
+        "scope_assist.response type=%s question=%s ready=%s inferred=%d",
+        result.type,
+        (result.question or "")[:160],
+        bool(result.scope),
+        len(result.inferred),
+    )
+    return result
 
 
 def _scrub_caps(turn: AssistTurn) -> AssistTurn:
