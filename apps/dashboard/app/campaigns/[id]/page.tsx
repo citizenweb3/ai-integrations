@@ -321,6 +321,20 @@ export default async function CampaignDetailPage({
                 Re-run discovery (cap reached)
               </span>
             </div>
+          ) : view.liveActivity.discoveryRunning > 0 ? (
+            <div className="space-y-3">
+              <p className="text-sm font-light opacity-90">
+                Discovery is already running for this campaign. Wait for it to finish — the page
+                refreshes itself while the job is in flight. Re-run is disabled to avoid stacking a
+                second agent call on top of the first.
+              </p>
+              <span
+                aria-disabled="true"
+                className="inline-flex items-center rounded-lg border border-white/15 bg-white/[0.03] px-4 py-2.5 text-sm font-bold tracking-wide text-white/50 cursor-not-allowed"
+              >
+                Re-run discovery (already running)
+              </span>
+            </div>
           ) : (
             <>
               <p className="text-sm font-light opacity-90 mb-4">
