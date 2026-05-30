@@ -1,3 +1,3 @@
-- Architecture:
-- Design:
-- Slides:
+- [Architecture](https://github.com/citizenweb3/ai-integrations/blob/main/public/google_ai_hackaton/architecture.md)
+- [Design]()
+- [Slides]()
