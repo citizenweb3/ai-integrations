@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { textareaClass } from "@/components/ui";
+import ScopePreview from "./scope-preview";
 
 // Client-side multi-turn campaign-scope assistant. Each turn posts the full
 // chat history (state lives only here) to /api/campaign-assistant; the agent
@@ -124,20 +125,24 @@ export default function ScopeChat() {
           <ChatBubble key={idx} role={msg.role} content={msg.content} />
         ))}
         {busy ? <ChatBubble role="assistant" content="…" muted /> : null}
-        {finalTurn ? (
-          <div className="rounded-xl border border-[var(--accent)]/40 bg-[var(--accent)]/[0.06] p-4 text-sm">
-            <div className="text-xs uppercase tracking-[0.2em] opacity-70 mb-2">
-              Scope ready
-            </div>
-            <div className="font-mono text-[12px] whitespace-pre-wrap break-all opacity-80">
-              {JSON.stringify(finalTurn.scope, null, 2)}
-            </div>
-            <p className="text-xs font-light opacity-60 mt-3">
-              Preview + Create coming in the next step.
-            </p>
-          </div>
-        ) : null}
       </div>
+
+      {finalTurn && finalTurn.type === "ready" ? (
+        <ScopePreview
+          turn={finalTurn}
+          onBackToChat={() => {
+            setFinalTurn(null);
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                content:
+                  "What would you like to adjust? Tell me which field to change and what the new value should be.",
+              },
+            ]);
+          }}
+        />
+      ) : null}
 
       {error ? (
         <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
