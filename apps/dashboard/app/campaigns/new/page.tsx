@@ -4,8 +4,16 @@ import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 import { Button, Field, PageBody, inputClass, textareaClass } from "@/components/ui";
 import { DismissableBanner } from "@/components/dismissable-banner";
+import ScopeChat from "./scope-chat";
 
 export const dynamic = "force-dynamic";
+
+type Mode = "form" | "chat";
+
+function resolveMode(raw: string | string[] | undefined): Mode {
+  const value = typeof raw === "string" ? raw : Array.isArray(raw) ? raw[0] : null;
+  return value === "chat" ? "chat" : "form";
+}
 
 export default async function NewCampaignPage({
   searchParams
@@ -16,6 +24,7 @@ export default async function NewCampaignPage({
   const errorRaw = query["error"];
   const errorMessage =
     typeof errorRaw === "string" ? errorRaw : Array.isArray(errorRaw) ? errorRaw[0] : null;
+  const mode = resolveMode(query["mode"]);
   return (
     <>
       <ConsoleHero currentNav="campaigns"
@@ -32,10 +41,15 @@ export default async function NewCampaignPage({
           </>
         }
         title="New campaign"
-        subtitle="Fill the campaign brief. The server validates the scope synchronously — on Save you land on the campaign page and discovery starts running automatically."
+        subtitle={
+          mode === "chat"
+            ? "Chat with the assistant. It will ask one short question at a time, propose a campaign scope, and on Create take you to the campaign page with discovery already running."
+            : "Fill the campaign brief. The server validates the scope synchronously — on Save you land on the campaign page and discovery starts running automatically."
+        }
       />
 
       <PageBody>
+        <ModeTabs active={mode} />
         {errorMessage ? (
           <DismissableBanner
             tone="error"
@@ -46,6 +60,12 @@ export default async function NewCampaignPage({
           />
         ) : null}
 
+        {mode === "chat" ? (
+          <Card>
+            <BlockTitle title="Campaign scope · chat" className="mb-6 text-left" />
+            <ScopeChat />
+          </Card>
+        ) : (
         <Card>
           <BlockTitle title="Campaign scope" className="mb-6 text-left" />
           <form className="grid grid-cols-1 md:grid-cols-2 gap-5" action="/api/commands" method="post">
@@ -288,7 +308,27 @@ export default async function NewCampaignPage({
             </Button>
           </form>
         </Card>
+        )}
       </PageBody>
     </>
+  );
+}
+
+function ModeTabs({ active }: { active: Mode }) {
+  const tabClass = (mine: Mode) =>
+    `px-4 py-2 rounded-lg text-xs font-semibold uppercase tracking-[0.15em] transition-colors ${
+      active === mine
+        ? "bg-[var(--accent)] text-black"
+        : "bg-white/5 text-white/70 hover:bg-white/10"
+    }`;
+  return (
+    <div className="flex items-center gap-2">
+      <Link href="/campaigns/new?mode=form" className={`${tabClass("form")} hover:no-underline`}>
+        Form
+      </Link>
+      <Link href="/campaigns/new?mode=chat" className={`${tabClass("chat")} hover:no-underline`}>
+        Chat assistant
+      </Link>
+    </div>
   );
 }
