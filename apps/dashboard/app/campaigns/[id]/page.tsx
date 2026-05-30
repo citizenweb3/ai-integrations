@@ -14,6 +14,7 @@ import {
 import { deriveCampaignStage, type CampaignStageSnapshot } from "@/lib/campaign-stage";
 import { DismissableBanner } from "@/components/dismissable-banner";
 import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
+import { BackLink } from "@/components/back-link";
 import { formatRelativeTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -82,6 +83,12 @@ export default async function CampaignDetailPage({
       />
 
       <PageBody>
+        <div className="flex items-center gap-3 text-sm">
+          <BackLink fallbackHref="/campaigns" label="← Back" />
+          <span className="opacity-40">·</span>
+          <span className="opacity-60">Campaign detail</span>
+        </div>
+
         {errorMessage ? (
           <DismissableBanner
             tone="error"

@@ -16,6 +16,7 @@ import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
+import { BackLink } from "@/components/back-link";
 import { Badge, Button, InfoRow, MetricCard, PageBody, inputClass, textareaClass } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -125,6 +126,12 @@ export default async function DraftDetailPage({ params }: Props) {
       />
 
       <PageBody>
+        <div className="flex items-center gap-3 text-sm">
+          <BackLink fallbackHref="/drafts" label="← Back" />
+          <span className="opacity-40">·</span>
+          <span className="opacity-60">Draft detail</span>
+        </div>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard label="Status" value={draft.status} />
           <MetricCard label="Version" value={`v${draft.version}`} accent />

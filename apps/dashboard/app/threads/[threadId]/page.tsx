@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
+import { BackLink } from "@/components/back-link";
 import BlockTitle from "@/components/block-title";
 import { Badge, Button, InfoRow, MetricCard, PageBody, inputClass, textareaClass } from "@/components/ui";
 
@@ -39,6 +40,12 @@ export default async function ThreadDetailPage({ params }: Props) {
       />
 
       <PageBody>
+        <div className="flex items-center gap-3 text-sm">
+          <BackLink fallbackHref="/inbox" label="← Back" />
+          <span className="opacity-40">·</span>
+          <span className="opacity-60">Thread detail</span>
+        </div>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard
             label="Status"

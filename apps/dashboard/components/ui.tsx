@@ -104,7 +104,7 @@ export const SectionGrid: FC<PropsWithChildren<{ cols?: 2 | 3 | 4; className?: s
 };
 
 export const PageBody: FC<PropsWithChildren<{ className?: string }>> = ({ children, className }) => {
-  return <section className={twMerge("max-w-[80vw] mx-auto px-4 pb-24 space-y-8", className)}>{children}</section>;
+  return <section className={twMerge("max-w-[88vw] mx-auto px-4 pb-24 space-y-8", className)}>{children}</section>;
 };
 
 export const MetricCard: FC<{

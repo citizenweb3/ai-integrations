@@ -32,7 +32,7 @@ export default async function OrganizationsHubPage() {
         subtitle="Organisations are grouped by their source campaign. Pick a campaign card to see the orgs it produced — research snapshots, contacts, and threads live inside each one."
       />
 
-      <section className="max-w-[80vw] mx-auto px-4 pb-24 space-y-6">
+      <section className="max-w-[88vw] mx-auto px-4 pb-24 space-y-6">
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
           <div className="text-xs font-semibold tracking-[0.2em] uppercase opacity-60 mb-2">
             How this page works

@@ -11,6 +11,7 @@ import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 import { Badge } from "@/components/ui";
+import { BackLink } from "@/components/back-link";
 
 // T-026AH/B: split the org detail page into tabs (research / contacts /
 // threads / timeline) so the operator sees one section at a time
@@ -78,7 +79,13 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
         }
       />
 
-      <section className="max-w-[80vw] mx-auto px-4 pb-24 space-y-8">
+      <section className="max-w-[88vw] mx-auto px-4 pb-24 space-y-8">
+        <div className="flex items-center gap-3 text-sm">
+          <BackLink fallbackHref="/organizations" label="← Back" />
+          <span className="opacity-40">·</span>
+          <span className="opacity-60">Organisation detail</span>
+        </div>
+
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <StatCard
             label="Approved contacts"

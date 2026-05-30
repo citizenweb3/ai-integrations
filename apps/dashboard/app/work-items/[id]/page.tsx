@@ -9,6 +9,7 @@ import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 import { Badge, Button, InfoRow, MetricCard, PageBody, PillLink } from "@/components/ui";
+import { BackLink } from "@/components/back-link";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,12 @@ export default async function WorkItemDetailPage({ params }: Props) {
       />
 
       <PageBody>
+        <div className="flex items-center gap-3 text-sm">
+          <BackLink fallbackHref="/inbox" label="← Back" />
+          <span className="opacity-40">·</span>
+          <span className="opacity-60">Work item detail</span>
+        </div>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard label="Status" value={item.status} />
           <MetricCard label="Priority" value={priorityBand(item.priority)} accent />
