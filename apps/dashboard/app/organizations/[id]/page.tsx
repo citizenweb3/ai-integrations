@@ -130,16 +130,55 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
                 rows={4}
                 className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm font-light"
               />
-              <input
-                name="contactId"
-                placeholder="Contact ID (UUID, optional)"
-                className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm"
-              />
-              <input
-                name="campaignId"
-                placeholder="Campaign ID (UUID, optional)"
-                className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm"
-              />
+              <label className="block text-xs uppercase tracking-[0.18em] opacity-70 mt-2">
+                Contact
+              </label>
+              {org.contacts.length === 0 ? (
+                <p className="text-xs font-light opacity-60">
+                  No approved contacts yet. The draft will go out without a specific recipient
+                  attached — approve one from the Contacts tab to target a person.
+                </p>
+              ) : (
+                <select
+                  name="contactId"
+                  defaultValue={
+                    org.primaryContactId ?? (org.contacts.length === 1 ? org.contacts[0]!.id : "")
+                  }
+                  className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm"
+                >
+                  <option value="">No specific recipient (generic outreach)</option>
+                  {org.contacts.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.fullName ? `${c.fullName} · ` : ""}{c.email}
+                      {c.isPrimary ? " · primary" : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <label className="block text-xs uppercase tracking-[0.18em] opacity-70 mt-2">
+                Campaign
+              </label>
+              {org.sourceCampaigns.length === 0 ? (
+                <p className="text-xs font-light opacity-60">
+                  This org has no source campaign. The draft will be generated without the campaign
+                  brief feeding the agent.
+                </p>
+              ) : (
+                <select
+                  name="campaignId"
+                  defaultValue={org.sourceCampaigns.length === 1 ? org.sourceCampaigns[0]!.id : ""}
+                  className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm"
+                >
+                  {org.sourceCampaigns.length > 1 ? (
+                    <option value="">Pick one</option>
+                  ) : null}
+                  {org.sourceCampaigns.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button
                 type="submit"
                 className="w-full rounded-lg bg-[var(--accent)] text-black font-bold py-3 hover:opacity-90 transition-opacity"

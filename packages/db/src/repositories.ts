@@ -19671,6 +19671,10 @@ export type OrganizationDetail = {
   domain: string | null;
   countryCode: string | null;
   primaryContactId: string | null;
+  // T-026AT/A: source campaigns that produced this org. Powers the
+  // Generate AI draft form's campaign dropdown so the operator does
+  // not have to remember or look up the campaign UUID.
+  sourceCampaigns: Array<{ id: string; name: string }>;
   createdAt: Date;
   updatedAt: Date;
   stats: {
@@ -19891,12 +19895,28 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
     };
   }
 
+  // T-026AT/A: source campaigns for this org so the Generate AI draft
+  // form can offer a dropdown instead of asking the operator for a
+  // UUID. Same shape as the field added to the listing query by
+  // T-026AN; aggregated via discovery_candidates join.
+  const sourceCampaignRows = await db.execute(sql`
+    select distinct c.id, c.name
+    from discovery_candidates dc
+    join campaigns c on c.id = dc.campaign_id
+    where dc.matched_organization_id = ${id}::uuid
+    order by c.name asc
+  `);
+  const sourceCampaigns = (sourceCampaignRows as unknown as Array<{ id: string; name: string }>).map(
+    (r) => ({ id: r.id, name: r.name })
+  );
+
   return {
     id: row.id,
     name: row.name,
     domain: row.domain ?? null,
     countryCode: row.countryCode ?? null,
     primaryContactId: row.primaryContactId ?? null,
+    sourceCampaigns,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     stats: {
