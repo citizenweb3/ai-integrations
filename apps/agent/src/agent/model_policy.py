@@ -26,6 +26,7 @@ _STAGE_MODEL_ENV_KEYS: dict[str, tuple[str, ...]] = {
     "validate_claims": ("AGENT_VALIDATE_CLAIMS_MODEL", "AGENT_VALIDATE_MODEL"),
     "classify_reply": ("AGENT_CLASSIFY_REPLY_MODEL",),
     "campaign_discovery": ("AGENT_CAMPAIGN_DISCOVERY_MODEL",),
+    "campaign_scope_assist": ("AGENT_CAMPAIGN_SCOPE_ASSIST_MODEL",),
 }
 
 

@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .agents import stage_tool_allowlist, supported_stages
+from .assist import AssistRequest, AssistTurn, run_scope_assistant
 from .runner import stream_stage
 
 # Vertex AI is the only supported runtime: Gemini calls and embeddings both
@@ -90,6 +91,33 @@ async def run_stage(
             yield (json.dumps(event) + "\n").encode("utf-8")
 
     return StreamingResponse(generator(), media_type="application/x-ndjson")
+
+
+_ASSIST_MAX_MESSAGES = 40
+
+
+@app.post("/assist/scope", response_model=AssistTurn)
+async def assist_scope(
+    request: AssistRequest,
+    authorization: str | None = Header(default=None),
+) -> AssistTurn:
+    _authorize_agent_run(authorization)
+    if not request.messages:
+        raise HTTPException(status_code=400, detail="messages must not be empty")
+    if len(request.messages) > _ASSIST_MAX_MESSAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"conversation too long (>{_ASSIST_MAX_MESSAGES} messages)",
+        )
+    if request.messages[-1].role != "user":
+        raise HTTPException(
+            status_code=400,
+            detail="conversation must end with a user message",
+        )
+    try:
+        return await run_scope_assistant(request.messages)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _agent_run_secret() -> str | None:
