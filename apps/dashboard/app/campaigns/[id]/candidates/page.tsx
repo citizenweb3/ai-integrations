@@ -104,6 +104,14 @@ export default async function CampaignCandidatesPage({
           </span>
         </div>
 
+        <p className="text-xs font-light opacity-60 border-l-2 border-[var(--accent)]/40 pl-3 max-w-3xl">
+          <strong className="text-[var(--accent)]">Heads up:</strong> high- and medium-confidence
+          candidates with no dedupe match are auto-accepted the moment discovery finishes —
+          research starts on them automatically and you see them on the campaign's Organisations
+          page. The queue below holds only candidates that need your call: dedupe duplicates,
+          low-confidence agent self-flags, and policy-blocked ones.
+        </p>
+
         {totals === 0 ? (
           <p className="text-sm font-light opacity-70">
             Discovery has not produced any candidates yet. Once the first run completes (or finishes a re-run),

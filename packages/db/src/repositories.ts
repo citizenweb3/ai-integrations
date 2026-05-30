@@ -13215,16 +13215,42 @@ export async function routeCampaignDiscoveryOutcome(input: {
       // blocked). Only applies when there is no dedupe match — a strong
       // dedupe still wins (`duplicate`), and medium/weak land in
       // `needs_review` regardless of confidence so the operator decides.
-      const novelStatus: DiscoveryCandidateStatus =
-        proposal.confidence === "low" ? "insufficient_fit" : "proposed";
-      outcome = {
-        status: novelStatus,
-        matchedOrganizationId: null,
-        dedupeResult: "none",
-        rejectionReason: novelStatus === "insufficient_fit" ? "agent_low_confidence" : null,
-        ambiguousMatches: [],
-        reasonCode: dedupe.reasonCode
-      };
+      //
+      // T-026AW: high/medium confidence novel proposals are AUTO-ACCEPTED
+      // here. The router materialises the organisation row inline, points
+      // the candidate at it with `status='accepted'`, and queues the
+      // research_snapshot job. The operator never sees the candidate in
+      // the pending queue; they can still reject + tear it down later via
+      // the existing reject_discovery_candidate flow. Low-confidence
+      // candidates stay manual (the agent itself hedged on them).
+      if (proposal.confidence === "low") {
+        outcome = {
+          status: "insufficient_fit",
+          matchedOrganizationId: null,
+          dedupeResult: "none",
+          rejectionReason: "agent_low_confidence",
+          ambiguousMatches: [],
+          reasonCode: dedupe.reasonCode
+        };
+      } else {
+        const [autoOrg] = await db
+          .insert(organizations)
+          .values({
+            name: proposal.proposedName,
+            domain: proposal.domain,
+            countryCode: proposal.countryCode
+          })
+          .returning({ id: organizations.id });
+        const autoOrgId = autoOrg!.id;
+        outcome = {
+          status: "accepted",
+          matchedOrganizationId: autoOrgId,
+          dedupeResult: "none",
+          rejectionReason: null,
+          ambiguousMatches: [],
+          reasonCode: dedupe.reasonCode
+        };
+      }
     }
 
     // Policy gate (canonical §67): only meaningful when the proposal links
@@ -13392,6 +13418,10 @@ export async function routeCampaignDiscoveryOutcome(input: {
         });
         break;
       case "proposed":
+        // T-026AW: kept as fallback branch but unreachable today —
+        // novel non-low-confidence candidates flow through the
+        // `accepted` branch (auto-accept). Left for any future code
+        // path that wants to skip auto-accept.
         novel += 1;
         await appendEvent({
           eventType: "discovery_candidate_proposed",
@@ -13406,6 +13436,49 @@ export async function routeCampaignDiscoveryOutcome(input: {
             confidence: proposal.confidence
           }
         });
+        break;
+      case "accepted":
+        // T-026AW: discovery router materialised the org inline. Queue
+        // the research_snapshot job so the operator never has to click
+        // Accept manually for clean proposals. The job inserts under
+        // a per-org concurrency key so a same-org race (extremely
+        // unlikely on a fresh insert) deduplicates.
+        novel += 1;
+        if (outcome.matchedOrganizationId) {
+          const orgId = outcome.matchedOrganizationId;
+          const enrichmentPrompt = buildDefaultResearchSnapshotPrompt({
+            organizationName: proposal.proposedName,
+            domain: proposal.domain,
+            campaignName: null
+          });
+          await db
+            .insert(jobs)
+            .values({
+              jobType: "job.refresh_research_snapshot",
+              status: "queued",
+              workerPool: "background",
+              targetEntityType: "organization",
+              targetEntityId: orgId,
+              payloadJson: { organizationId: orgId, prompt: enrichmentPrompt },
+              concurrencyKey: `research_snapshot:${orgId}`,
+              correlationId: input.correlationId
+            })
+            .onConflictDoNothing();
+          await appendEvent({
+            eventType: "discovery_candidate_auto_accepted",
+            entityType: "discovery_candidate",
+            entityId: candidateId,
+            ...(input.jobId ? { jobId: input.jobId } : {}),
+            correlationId: input.correlationId,
+            payloadJson: {
+              campaignId: input.campaignId,
+              organizationId: orgId,
+              proposedName: proposal.proposedName,
+              domain: proposal.domain,
+              confidence: proposal.confidence
+            }
+          });
+        }
         break;
       default:
         break;
