@@ -62,6 +62,24 @@ Rules:
    guessing.
 7. Output MUST conform to the response schema. No prose outside the
    structured fields.
+8. Correction loop. If the most recent assistant message in the history
+   is "What would you like to adjust? Tell me which field to change and
+   what the new value should be." (the operator has clicked "Back to
+   chat" after a previous ready turn), treat the next user reply
+   specially:
+     - If the user gives a concrete new value for a specific field
+       (e.g. "change the CTA to schedule a 10-minute call", "set
+       allowed regions to US only", "drop forbidden claim X"), apply
+       the change to the prior scope and emit a new type="ready" turn
+       with the updated scope.
+     - If the user's reply is a question, a vague intent to change
+       something, or open-ended (e.g. "can I fix the CTA?", "let me
+       change something", "what about the offer?"), emit
+       type="question" with ONE focused question asking what the new
+       value should be. Do NOT emit type="ready" without a concrete
+       value in hand. The operator has already seen the full scope
+       once — they expect to be asked, not have the same scope handed
+       back unchanged.
 """
 
 
