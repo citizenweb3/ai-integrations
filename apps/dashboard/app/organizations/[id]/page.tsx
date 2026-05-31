@@ -333,84 +333,145 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
         {activeTab === "contacts" ? (
         <>
         <Card>
-          <BlockTitle title="Approved contacts" className="mb-4 text-left" />
+          <BlockTitle title="Approved contacts" className="mb-2 text-left" />
           {org.contacts.length === 0 ? (
             <p className="text-sm font-light opacity-60">
               No approved contacts yet. Approve a candidate from the queue below to add one — once
               approved, the contact becomes addressable for drafts.
             </p>
-          ) : (
-            <ul className="space-y-2">
-              {org.contacts.map((c) => (
-                <li key={c.id} className="flex flex-wrap justify-between items-start gap-4 border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium break-all">
-                      {c.email ?? (
-                        <span className="opacity-60 italic">no email yet</span>
-                      )}
-                      {c.isPrimary ? (
-                        <span className="ml-2 rounded-full border border-[var(--accent)]/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-[var(--accent)]">
-                          primary
-                        </span>
-                      ) : null}
-                      {c.email === null ? (
-                        <span
-                          className="ml-2 rounded-full border border-yellow-500/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-yellow-400"
-                          title="This contact has no email yet. Drafts and sends skip them until an address is added."
-                        >
-                          no email
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="opacity-60">
-                      {c.fullName ?? "—"}
-                      {c.roleTitle ? ` · ${c.roleTitle}` : ""}
-                    </div>
-                    {c.email === null ? (
-                      <form
-                        action="/api/commands"
-                        method="post"
-                        className="mt-2 flex flex-wrap gap-2"
-                      >
-                        <input type="hidden" name="commandType" value="set_contact_email" />
-                        <input type="hidden" name="contactId" value={c.id} />
-                        <input
-                          name="email"
-                          type="email"
-                          placeholder="enter email"
-                          className="flex-1 min-w-[180px] rounded-lg bg-[#1A1A1B] border border-white/10 p-1.5 text-xs"
-                        />
-                        <button
-                          type="submit"
-                          className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-bold text-black hover:opacity-90"
-                        >
-                          Add email
-                        </button>
-                      </form>
-                    ) : null}
+          ) : (() => {
+            const withEmail = org.contacts.filter((c) => c.email !== null);
+            const withoutEmail = org.contacts.filter((c) => c.email === null);
+            return (
+              <div className="space-y-6">
+                {/* SENDABLE GROUP — contacts that drafts can target as-is. */}
+                <section>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)]">
+                      Ready to receive ({withEmail.length})
+                    </span>
+                    <span className="flex-1 h-px bg-[var(--accent)]/20" />
                   </div>
-                  {c.isPrimary || c.email === null ? null : (
-                    <form action="/api/commands" method="post" className="shrink-0">
-                      <input type="hidden" name="commandType" value="set_primary_contact" />
-                      <input type="hidden" name="organizationId" value={org.id} />
-                      <input type="hidden" name="contactId" value={c.id} />
-                      <input
-                        type="hidden"
-                        name="idempotencyKey"
-                        value={buildSetPrimaryContactIdempotencyKey(org.id, c.id, org.updatedAt)}
-                      />
-                      <button
-                        type="submit"
-                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                      >
-                        Set primary
-                      </button>
-                    </form>
+                  <p className="text-xs font-light opacity-65 leading-snug mb-3">
+                    These contacts have an email address attached. They are eligible
+                    recipients in the Generate AI draft form — pick one and the draft
+                    will land in their inbox once you approve it.
+                  </p>
+                  {withEmail.length === 0 ? (
+                    <p className="text-sm font-light opacity-60 italic">
+                      None yet. Either approve a candidate with an email or add an email
+                      to one of the contacts below.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {withEmail.map((c) => (
+                        <li
+                          key={c.id}
+                          className="flex flex-wrap justify-between items-start gap-4 border-b border-white/10 pb-2 last:border-b-0 text-sm"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium break-all">
+                              {c.email}
+                              {c.isPrimary ? (
+                                <span className="ml-2 rounded-full border border-[var(--accent)]/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-[var(--accent)]">
+                                  primary
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="opacity-60">
+                              {c.fullName ?? "—"}
+                              {c.roleTitle ? ` · ${c.roleTitle}` : ""}
+                            </div>
+                          </div>
+                          {c.isPrimary ? null : (
+                            <form action="/api/commands" method="post" className="shrink-0">
+                              <input type="hidden" name="commandType" value="set_primary_contact" />
+                              <input type="hidden" name="organizationId" value={org.id} />
+                              <input type="hidden" name="contactId" value={c.id} />
+                              <input
+                                type="hidden"
+                                name="idempotencyKey"
+                                value={buildSetPrimaryContactIdempotencyKey(
+                                  org.id,
+                                  c.id,
+                                  org.updatedAt
+                                )}
+                              />
+                              <button
+                                type="submit"
+                                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                              >
+                                Set primary
+                              </button>
+                            </form>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                </li>
-              ))}
-            </ul>
-          )}
+                </section>
+
+                {/* INERT GROUP — approved by the operator but no address yet. */}
+                {withoutEmail.length > 0 ? (
+                  <section>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xs font-semibold tracking-[0.18em] uppercase text-yellow-400">
+                        Waiting on an email ({withoutEmail.length})
+                      </span>
+                      <span className="flex-1 h-px bg-yellow-500/20" />
+                    </div>
+                    <p className="text-xs font-light opacity-65 leading-snug mb-3">
+                      These contacts are approved but no email address was found yet.
+                      Drafts and sends skip them — they will move to the
+                      &ldquo;Ready to receive&rdquo; group above the moment you add
+                      an address. Leaving them empty is fine; they will just stay
+                      here doing nothing.
+                    </p>
+                    <ul className="space-y-2">
+                      {withoutEmail.map((c) => (
+                        <li
+                          key={c.id}
+                          className="flex flex-wrap justify-between items-start gap-4 rounded-lg border border-yellow-500/20 bg-yellow-500/[0.04] p-3 text-sm"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium">
+                              {c.fullName ?? "(no name)"}
+                              <span className="ml-2 rounded-full border border-yellow-500/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-yellow-400">
+                                no email
+                              </span>
+                            </div>
+                            {c.roleTitle ? (
+                              <div className="opacity-60">{c.roleTitle}</div>
+                            ) : null}
+                            <form
+                              action="/api/commands"
+                              method="post"
+                              className="mt-2 flex flex-wrap gap-2"
+                            >
+                              <input type="hidden" name="commandType" value="set_contact_email" />
+                              <input type="hidden" name="contactId" value={c.id} />
+                              <input
+                                name="email"
+                                type="email"
+                                placeholder="paste email here once you find it"
+                                className="flex-1 min-w-[200px] rounded-lg bg-[#1A1A1B] border border-white/10 p-1.5 text-xs"
+                              />
+                              <button
+                                type="submit"
+                                className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-bold text-black hover:opacity-90"
+                              >
+                                Add email
+                              </button>
+                            </form>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+              </div>
+            );
+          })()}
         </Card>
 
         <Card>
