@@ -11202,6 +11202,75 @@ const DRAFT_CLAIM_SUPPORT_TYPES = new Set<NonNullable<DraftAgentClaim["supportTy
   "context"
 ]);
 
+// T-026BB: identity-by-acceptance whitelist for claim safety.
+//
+// The claim validator marks every uncited claim as `needs_review`, which
+// is correct for factual assertions (revenue, headcount, recent press)
+// but wrong for entity references: by the time the draft agent runs, the
+// operator has already accepted this organisation through discovery and
+// approved this contact (or auto-approval landed it from a verbatim
+// agent find). The org name and the contact's full name are therefore
+// `supported` by operator intent, not by a research_fact.
+//
+// `loadIdentityWhitelistForDraft` returns the strings the validator may
+// treat as supported even when no fact_id resolves. `claimMatchesIdentity`
+// does a case-insensitive substring scan; partial matches count (e.g.
+// "the team at НоваДент" or "Здравствуйте, Анна!" both resolve).
+async function loadIdentityWhitelistForDraft(
+  tx: AnyTx,
+  organizationId: string,
+  contactIdOrNull: string | null
+): Promise<string[]> {
+  const collected: string[] = [];
+  const [org] = await tx
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .limit(1);
+  if (org?.name) collected.push(org.name);
+  if (contactIdOrNull) {
+    const [c] = await tx
+      .select({ fullName: contacts.fullName })
+      .from(contacts)
+      .where(eq(contacts.id, contactIdOrNull))
+      .limit(1);
+    if (c?.fullName) collected.push(c.fullName);
+  }
+  // Expand multi-token names into the original + every 2-consecutive-
+  // token slice so a contact stored as "Грачева Анна Юрьевна" still
+  // matches a body greeting "Анна Юрьевна" or "Грачева Анна". Single
+  // tokens are too short / too generic (e.g. "Анна") and would produce
+  // false positives, so we only emit bigrams when the original has 3+
+  // tokens. Final filter drops anything under 4 chars total.
+  const expanded = new Set<string>();
+  for (const raw of collected) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+    expanded.add(trimmed);
+    const tokens = trimmed.split(/\s+/).filter((t) => t.length > 0);
+    if (tokens.length >= 3) {
+      for (let i = 0; i < tokens.length - 1; i += 1) {
+        expanded.add(`${tokens[i]} ${tokens[i + 1]}`);
+      }
+    }
+  }
+  return Array.from(expanded).filter((s) => s.length >= 4);
+}
+
+function claimMatchesIdentity(claimText: string, whitelist: string[]): string | null {
+  if (whitelist.length === 0) return null;
+  const lower = claimText.toLowerCase();
+  for (const name of whitelist) {
+    if (lower.includes(name.toLowerCase())) return name;
+  }
+  return null;
+}
+
+// AnyTx avoids dragging the drizzle transaction generic everywhere; the
+// helper only needs `.select` which is available on both `db` and the tx
+// handle passed by `db.transaction(...)`.
+type AnyTx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
+
 function tryParseDraftOutput(raw: string): DraftAgentOutput | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -11348,6 +11417,12 @@ export async function routeDraftEmailOutcome(input: {
       agentRunId: input.agentRunId
     });
 
+    const identityWhitelist = await loadIdentityWhitelistForDraft(
+      tx,
+      input.organizationId,
+      input.contactId ?? null,
+    );
+
     let claimCount = 0;
     let factRefCount = 0;
     for (const claim of claims) {
@@ -11359,7 +11434,11 @@ export async function routeDraftEmailOutcome(input: {
             (id): id is string => typeof id === "string" && validFactIds.has(id)
           )
         : [];
-      const safety = claimFactIds.length > 0 ? "supported" : "needs_review";
+      // T-026BB: identity-by-acceptance shortcut.
+      const identityMatch = claimFactIds.length === 0
+        ? claimMatchesIdentity(claimText, identityWhitelist)
+        : null;
+      const safety = claimFactIds.length > 0 || identityMatch ? "supported" : "needs_review";
 
       const [claimRow] = await tx
         .insert(draftClaims)
@@ -11371,6 +11450,22 @@ export async function routeDraftEmailOutcome(input: {
         .returning({ id: draftClaims.id });
       if (!claimRow) throw new Error("Failed to insert draft_claim row");
       claimCount += 1;
+      if (identityMatch) {
+        await appendEvent({
+          eventType: "draft_claim_supported_by_identity",
+          entityType: "draft_claim",
+          entityId: claimRow.id,
+          ...(input.jobId ? { jobId: input.jobId } : {}),
+          correlationId: input.correlationId,
+          payloadJson: {
+            draftId,
+            organizationId: input.organizationId,
+            ...(input.contactId ? { contactId: input.contactId } : {}),
+            claimText,
+            matchedIdentity: identityMatch,
+          },
+        });
+      }
 
       const supportType = DRAFT_CLAIM_SUPPORT_TYPES.has(claim?.supportType as never)
         ? (claim!.supportType as NonNullable<DraftAgentClaim["supportType"]>)
@@ -11546,6 +11641,12 @@ export async function routeWarmDraftEmailOutcome(input: {
       agentRunId: input.agentRunId
     });
 
+    const identityWhitelist = await loadIdentityWhitelistForDraft(
+      tx,
+      input.organizationId,
+      input.contactId ?? null,
+    );
+
     let claimCount = 0;
     let factRefCount = 0;
     for (const claim of claims) {
@@ -11557,7 +11658,13 @@ export async function routeWarmDraftEmailOutcome(input: {
             (id): id is string => typeof id === "string" && validFactIds.has(id)
           )
         : [];
-      const safety = claimFactIds.length > 0 ? "supported" : "needs_review";
+      // T-026BB: identity-by-acceptance shortcut. If the claim text
+      // contains the org name or the targeted contact's full name, it
+      // is supported by operator intent even without a research_fact.
+      const identityMatch = claimFactIds.length === 0
+        ? claimMatchesIdentity(claimText, identityWhitelist)
+        : null;
+      const safety = claimFactIds.length > 0 || identityMatch ? "supported" : "needs_review";
 
       const [claimRow] = await tx
         .insert(draftClaims)
@@ -11565,6 +11672,22 @@ export async function routeWarmDraftEmailOutcome(input: {
         .returning({ id: draftClaims.id });
       if (!claimRow) throw new Error("Failed to insert draft_claim row");
       claimCount += 1;
+      if (identityMatch) {
+        await appendEvent({
+          eventType: "draft_claim_supported_by_identity",
+          entityType: "draft_claim",
+          entityId: claimRow.id,
+          ...(input.jobId ? { jobId: input.jobId } : {}),
+          correlationId: input.correlationId,
+          payloadJson: {
+            draftId,
+            organizationId: input.organizationId,
+            ...(input.contactId ? { contactId: input.contactId } : {}),
+            claimText,
+            matchedIdentity: identityMatch,
+          },
+        });
+      }
 
       const supportType = DRAFT_CLAIM_SUPPORT_TYPES.has(claim?.supportType as never)
         ? (claim!.supportType as NonNullable<DraftAgentClaim["supportType"]>)
@@ -14745,6 +14868,19 @@ export async function routeReviseDraftOutcome(input: {
       await tx.delete(draftClaims).where(inArray(draftClaims.id, oldClaimIds));
     }
 
+    // T-026BB: identity whitelist for revise — pull contactId off the
+    // draft row (revise input does not carry it). Falls back to null.
+    const [identityDraftRow] = await tx
+      .select({ contactId: drafts.contactId })
+      .from(drafts)
+      .where(eq(drafts.id, input.draftId))
+      .limit(1);
+    const identityWhitelist = await loadIdentityWhitelistForDraft(
+      tx,
+      input.organizationId,
+      identityDraftRow?.contactId ?? null,
+    );
+
     let claimCount = 0;
     let factRefCount = 0;
     for (const claim of claims) {
@@ -14756,7 +14892,10 @@ export async function routeReviseDraftOutcome(input: {
             (id): id is string => typeof id === "string" && validFactIds.has(id)
           )
         : [];
-      const safety = claimFactIds.length > 0 ? "supported" : "needs_review";
+      const identityMatch = claimFactIds.length === 0
+        ? claimMatchesIdentity(claimText, identityWhitelist)
+        : null;
+      const safety = claimFactIds.length > 0 || identityMatch ? "supported" : "needs_review";
 
       const [claimRow] = await tx
         .insert(draftClaims)
@@ -14764,6 +14903,22 @@ export async function routeReviseDraftOutcome(input: {
         .returning({ id: draftClaims.id });
       if (!claimRow) throw new Error("Failed to insert draft_claim row");
       claimCount += 1;
+      if (identityMatch) {
+        await appendEvent({
+          eventType: "draft_claim_supported_by_identity",
+          entityType: "draft_claim",
+          entityId: claimRow.id,
+          ...(input.jobId ? { jobId: input.jobId } : {}),
+          correlationId: input.correlationId,
+          payloadJson: {
+            draftId: input.draftId,
+            organizationId: input.organizationId,
+            ...(identityDraftRow?.contactId ? { contactId: identityDraftRow.contactId } : {}),
+            claimText,
+            matchedIdentity: identityMatch,
+          },
+        });
+      }
 
       const supportType = DRAFT_CLAIM_SUPPORT_TYPES.has(claim?.supportType as never)
         ? (claim!.supportType as NonNullable<DraftAgentClaim["supportType"]>)
@@ -15252,6 +15407,18 @@ export async function routeValidateClaimsOutcome(input: {
       await tx.delete(draftClaims).where(inArray(draftClaims.id, oldClaimIds));
     }
 
+    // T-026BB: identity whitelist for validate_claims re-pass.
+    const [validateDraftRow] = await tx
+      .select({ contactId: drafts.contactId })
+      .from(drafts)
+      .where(eq(drafts.id, input.draftId))
+      .limit(1);
+    const identityWhitelist = await loadIdentityWhitelistForDraft(
+      tx,
+      input.organizationId,
+      validateDraftRow?.contactId ?? null,
+    );
+
     let claimCount = 0;
     let factRefCount = 0;
     for (const claim of claims) {
@@ -15263,7 +15430,10 @@ export async function routeValidateClaimsOutcome(input: {
             (id): id is string => typeof id === "string" && validFactIds.has(id)
           )
         : [];
-      const safety = claimFactIds.length > 0 ? "supported" : "needs_review";
+      const identityMatch = claimFactIds.length === 0
+        ? claimMatchesIdentity(claimText, identityWhitelist)
+        : null;
+      const safety = claimFactIds.length > 0 || identityMatch ? "supported" : "needs_review";
 
       const [claimRow] = await tx
         .insert(draftClaims)
@@ -15271,6 +15441,24 @@ export async function routeValidateClaimsOutcome(input: {
         .returning({ id: draftClaims.id });
       if (!claimRow) throw new Error("Failed to insert draft_claim row");
       claimCount += 1;
+      if (identityMatch) {
+        await appendEvent({
+          eventType: "draft_claim_supported_by_identity",
+          entityType: "draft_claim",
+          entityId: claimRow.id,
+          ...(input.jobId ? { jobId: input.jobId } : {}),
+          correlationId: input.correlationId,
+          payloadJson: {
+            draftId: input.draftId,
+            organizationId: input.organizationId,
+            ...(validateDraftRow?.contactId
+              ? { contactId: validateDraftRow.contactId }
+              : {}),
+            claimText,
+            matchedIdentity: identityMatch,
+          },
+        });
+      }
 
       const supportType = DRAFT_CLAIM_SUPPORT_TYPES.has(claim?.supportType as never)
         ? (claim!.supportType as NonNullable<DraftAgentClaim["supportType"]>)
