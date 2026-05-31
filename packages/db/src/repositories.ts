@@ -15951,7 +15951,17 @@ export async function completeSendTelegramNotificationJob(input: {
   const parseMode =
     parseModeRaw === "MarkdownV2" || parseModeRaw === "HTML" ? parseModeRaw : undefined;
   const entityType = readTelegramPayloadOptionalString(payload, "entityType") ?? "telegram_notification";
-  const entityId = readTelegramPayloadOptionalString(payload, "entityId") ?? input.job.id;
+  // `event_log.entity_id` is a uuid column. Most callers pass a uuid
+  // (`<work_item:uuid>`, `<job:uuid>`), but the watchdogs pass a free-form
+  // reference — `runWorkerHeartbeatWatchdog` sends the worker id
+  // ("docker-worker-telegram"), `runQueueDepthWatchdog` sends the job type.
+  // A non-uuid value makes the INSERT fail the uuid cast, which threw and
+  // dead-lettered the notification job. Coerce non-uuid refs to the job id
+  // (always a uuid) and keep the original reference under `entityRef` in the
+  // payload so audit can still correlate by the source entity.
+  const rawEntityId = readTelegramPayloadOptionalString(payload, "entityId");
+  const entityId = rawEntityId && isUuid(rawEntityId) ? rawEntityId : input.job.id;
+  const entityRef = rawEntityId && !isUuid(rawEntityId) ? rawEntityId : null;
   const notificationKey = readTelegramPayloadOptionalString(payload, "notificationKey") ?? null;
 
   if (!input.dispatcher || !chatId) {
@@ -15966,7 +15976,8 @@ export async function completeSendTelegramNotificationJob(input: {
           ? "telegram_dispatcher_not_configured"
           : "telegram_chat_id_not_configured",
         notificationKey,
-        textLength: text.length
+        textLength: text.length,
+        ...(entityRef ? { entityRef } : {})
       }
     });
     await completeJob({ job: input.job, runId: input.runId, workerId: input.workerId });
@@ -15990,7 +16001,8 @@ export async function completeSendTelegramNotificationJob(input: {
         chatId,
         providerMessageId: result.providerMessageId,
         notificationKey,
-        textLength: text.length
+        textLength: text.length,
+        ...(entityRef ? { entityRef } : {})
       }
     });
     await completeJob({ job: input.job, runId: input.runId, workerId: input.workerId });
@@ -16013,7 +16025,7 @@ export async function completeSendTelegramNotificationJob(input: {
     entityId,
     jobId: input.job.id,
     correlationId: input.job.correlation_id,
-    payloadJson: { chatId, reason: result.reason, notificationKey }
+    payloadJson: { chatId, reason: result.reason, notificationKey, ...(entityRef ? { entityRef } : {}) }
   });
   throw new NonRetryableJobError(`telegram_failed: ${result.reason}`);
 }

@@ -81,7 +81,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "node", "--import", "tsx", "apps/worker/src/healthcheck.ts"]
+      test: ["CMD", "node", "apps/worker/dist/healthcheck.js"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -116,7 +116,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "node", "--import", "tsx", "apps/worker/src/healthcheck.ts"]
+      test: ["CMD", "node", "apps/worker/dist/healthcheck.js"]
       interval: 5s
       timeout: 5s
       retries: 20
