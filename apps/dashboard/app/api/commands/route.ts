@@ -24,6 +24,7 @@ import {
   resumeAllSendsCommand,
   resolvePolicyStateCommand,
   runCampaignDiscoveryCommand,
+  setContactEmailCommand,
   setPrimaryContactCommand,
   suppressContactCommand,
   traceOperation,
@@ -366,6 +367,38 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           contactReattached: result.contactReattached,
           previousContactOrganizationId: result.previousContactOrganizationId,
           deduplicated: result.deduplicated
+        });
+      }
+      return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
+    }
+
+    case "set_contact_email": {
+      const result = traceCommandResult(traceSpan, await setContactEmailCommand({
+        ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
+        payload: {
+          contactId: parsed.data.payload.contactId,
+          email: parsed.data.payload.email ?? null,
+          ...(parsed.data.payload.idempotencyKey
+            ? { idempotencyKey: parsed.data.payload.idempotencyKey }
+            : {}),
+        },
+      }));
+      if (!result.ok) {
+        if (isJson) {
+          return NextResponse.json({ error: result.failure }, { status: 409 });
+        }
+        const redirect = safeRedirectUrl(request);
+        redirect.searchParams.set("error", `${result.failure.code}: ${result.failure.message}`);
+        return NextResponse.redirect(redirect, { status: 303 });
+      }
+      if (isJson) {
+        return NextResponse.json({
+          commandId: result.command.id,
+          contactId: result.contactId,
+          email: result.email,
+          previousEmail: result.previousEmail,
+          changed: result.changed,
+          deduplicated: result.deduplicated,
         });
       }
       return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
@@ -1050,6 +1083,23 @@ function formDataToCommand(formData: FormData) {
         ...(reasonText ? { reasonText } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
+    };
+  }
+
+  if (commandType === "set_contact_email") {
+    const contactId = String(formData.get("contactId") ?? "").trim();
+    const emailRaw = String(formData.get("email") ?? "").trim();
+    const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
+    return {
+      commandType,
+      ...base,
+      payload: {
+        contactId,
+        // Empty form value means "clear the email back to null" — the
+        // zod schema for set_contact_email accepts `email: null`.
+        email: emailRaw.length > 0 ? emailRaw : null,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      },
     };
   }
 

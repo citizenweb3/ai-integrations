@@ -124,13 +124,22 @@ export const organizations = pgTable("organizations", {
 export const contacts = pgTable("contacts", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").references(() => organizations.id),
-  email: text("email").notNull(),
+  // T-026AZ: nullable so the operator can approve a contact candidate
+  // before the email is known. Drafts and sends still require an email
+  // and filter `WHERE email IS NOT NULL`; emailless rows hang inert in
+  // the approved list until someone fills the address in.
+  email: text("email"),
   fullName: text("full_name"),
   roleTitle: text("role_title"),
   createdAt: createdAt(),
   updatedAt: updatedAt()
 }, (table) => ({
-  emailIdx: uniqueIndex("contacts_email_idx").on(table.email)
+  // Partial unique index: only non-null emails must be unique. Postgres
+  // treats NULL as distinct in standard unique indexes too, but the
+  // partial form makes the intent explicit.
+  emailIdx: uniqueIndex("contacts_email_idx")
+    .on(table.email)
+    .where(sql`${table.email} IS NOT NULL`)
 }));
 
 export const outreachRecords = pgTable("outreach_records", {

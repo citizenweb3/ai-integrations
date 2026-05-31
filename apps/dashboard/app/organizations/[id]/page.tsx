@@ -198,28 +198,39 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
               <label className="block text-xs uppercase tracking-[0.18em] opacity-70 mt-2">
                 Contact
               </label>
-              {org.contacts.length === 0 ? (
-                <p className="text-xs font-light opacity-60">
-                  No approved contacts yet. The draft will go out without a specific recipient
-                  attached — approve one from the Contacts tab to target a person.
-                </p>
-              ) : (
-                <select
-                  name="contactId"
-                  defaultValue={
-                    org.primaryContactId ?? (org.contacts.length === 1 ? org.contacts[0]!.id : "")
-                  }
-                  className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm"
-                >
-                  <option value="">No specific recipient (generic outreach)</option>
-                  {org.contacts.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.fullName ? `${c.fullName} · ` : ""}{c.email}
-                      {c.isPrimary ? " · primary" : ""}
-                    </option>
-                  ))}
-                </select>
-              )}
+              {(() => {
+                // T-026AZ: only contacts with an email are eligible
+                // recipients — emailless rows hang inert until someone
+                // fills the address in.
+                const eligibleContacts = org.contacts.filter((c) => c.email !== null);
+                if (eligibleContacts.length === 0) {
+                  return (
+                    <p className="text-xs font-light opacity-60">
+                      No approved contacts with an email yet. The draft will go out without a
+                      specific recipient attached — add an email to an approved contact in the
+                      Contacts tab to target a person.
+                    </p>
+                  );
+                }
+                return (
+                  <select
+                    name="contactId"
+                    defaultValue={
+                      org.primaryContactId ??
+                      (eligibleContacts.length === 1 ? eligibleContacts[0]!.id : "")
+                    }
+                    className="w-full rounded-lg bg-[#1A1A1B] border border-white/10 p-3 text-sm"
+                  >
+                    <option value="">No specific recipient (generic outreach)</option>
+                    {eligibleContacts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.fullName ? `${c.fullName} · ` : ""}{c.email}
+                        {c.isPrimary ? " · primary" : ""}
+                      </option>
+                    ))}
+                  </select>
+                );
+              })()}
               <label className="block text-xs uppercase tracking-[0.18em] opacity-70 mt-2">
                 Campaign
               </label>
@@ -332,12 +343,22 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
             <ul className="space-y-2">
               {org.contacts.map((c) => (
                 <li key={c.id} className="flex flex-wrap justify-between items-start gap-4 border-b border-white/10 pb-2 last:border-b-0 text-sm">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="font-medium break-all">
-                      {c.email}
+                      {c.email ?? (
+                        <span className="opacity-60 italic">no email yet</span>
+                      )}
                       {c.isPrimary ? (
                         <span className="ml-2 rounded-full border border-[var(--accent)]/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-[var(--accent)]">
                           primary
+                        </span>
+                      ) : null}
+                      {c.email === null ? (
+                        <span
+                          className="ml-2 rounded-full border border-yellow-500/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-yellow-400"
+                          title="This contact has no email yet. Drafts and sends skip them until an address is added."
+                        >
+                          no email
                         </span>
                       ) : null}
                     </div>
@@ -345,8 +366,30 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
                       {c.fullName ?? "—"}
                       {c.roleTitle ? ` · ${c.roleTitle}` : ""}
                     </div>
+                    {c.email === null ? (
+                      <form
+                        action="/api/commands"
+                        method="post"
+                        className="mt-2 flex flex-wrap gap-2"
+                      >
+                        <input type="hidden" name="commandType" value="set_contact_email" />
+                        <input type="hidden" name="contactId" value={c.id} />
+                        <input
+                          name="email"
+                          type="email"
+                          placeholder="enter email"
+                          className="flex-1 min-w-[180px] rounded-lg bg-[#1A1A1B] border border-white/10 p-1.5 text-xs"
+                        />
+                        <button
+                          type="submit"
+                          className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-bold text-black hover:opacity-90"
+                        >
+                          Add email
+                        </button>
+                      </form>
+                    ) : null}
                   </div>
-                  {c.isPrimary ? null : (
+                  {c.isPrimary || c.email === null ? null : (
                     <form action="/api/commands" method="post" className="shrink-0">
                       <input type="hidden" name="commandType" value="set_primary_contact" />
                       <input type="hidden" name="organizationId" value={org.id} />

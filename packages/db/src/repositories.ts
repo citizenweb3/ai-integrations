@@ -80,7 +80,7 @@ import {
   systemJobTypes
 } from "@bizdev/shared";
 import { dedupeOrganization, type DedupeDb } from "./dedupe";
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, sql, type SQL } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "./client";
 import { getSchemaCompatibility, type SchemaCompatibilitySnapshot } from "./schema-compatibility";
@@ -3711,7 +3711,7 @@ export type ApproveContactCandidateResult =
   | {
       ok: false;
       failure: {
-        code: "not_found" | "not_pending" | "email_required" | "email_suppressed";
+        code: "not_found" | "not_pending" | "email_suppressed";
         message: string;
       };
     }
@@ -3982,46 +3982,47 @@ export async function approveContactCandidateCommand(input: {
       };
     }
 
-    // Operator override falls back to agent-emitted value. Email is the
-    // primary key for contacts so we must have one before persisting.
+    // Operator override falls back to agent-emitted value. T-026AZ:
+    // email may legitimately be null — the operator can approve a
+    // candidate before the email is known and set it later via
+    // setContactEmailCommand. Drafts/sends already filter on
+    // `WHERE email IS NOT NULL` so an emailless contact hangs inert.
     const emailRaw = (payload.email ?? existing.email ?? "").trim().toLowerCase();
     const email = emailRaw || null;
-    if (!email) {
-      return {
-        ok: false as const,
-        failure: {
-          code: "email_required",
-          message: `Candidate ${existing.id} has no email; supply one in the approve payload`
-        }
-      };
-    }
 
-    const [activeSuppression] = await tx
-      .select({ id: suppressionEntries.id, reason: suppressionEntries.reason })
-      .from(suppressionEntries)
-      .where(and(
-        sql`lower(${suppressionEntries.email}) = ${email}`,
-        eq(suppressionEntries.active, true)
-      ))
-      .limit(1);
-    if (activeSuppression) {
-      return {
-        ok: false as const,
-        failure: {
-          code: "email_suppressed",
-          message: `Email ${email} is actively suppressed (${activeSuppression.reason})`
-        }
-      };
+    if (email) {
+      const [activeSuppression] = await tx
+        .select({ id: suppressionEntries.id, reason: suppressionEntries.reason })
+        .from(suppressionEntries)
+        .where(and(
+          sql`lower(${suppressionEntries.email}) = ${email}`,
+          eq(suppressionEntries.active, true)
+        ))
+        .limit(1);
+      if (activeSuppression) {
+        return {
+          ok: false as const,
+          failure: {
+            code: "email_suppressed",
+            message: `Email ${email} is actively suppressed (${activeSuppression.reason})`
+          }
+        };
+      }
     }
 
     const fullName = (payload.fullName ?? existing.fullName ?? "").trim() || null;
     const roleTitle = (payload.roleTitle ?? existing.role ?? "").trim() || null;
 
-    const [existingContact] = await tx
-      .select({ id: contacts.id, organizationId: contacts.organizationId })
-      .from(contacts)
-      .where(eq(contacts.email, email))
-      .limit(1);
+    // Only look up an existing contact when we have an email to look up
+    // with. T-026AZ allows email = null, in which case there is nothing
+    // to dedupe on and a fresh contacts row is inserted unconditionally.
+    const existingContact = email
+      ? (await tx
+          .select({ id: contacts.id, organizationId: contacts.organizationId })
+          .from(contacts)
+          .where(eq(contacts.email, email))
+          .limit(1))[0]
+      : undefined;
 
     if (
       existingContact
@@ -4030,17 +4031,22 @@ export async function approveContactCandidateCommand(input: {
       && existingContact.organizationId !== existing.organizationId
       && payload.confirmReattach !== true
     ) {
+      // Reachable only when `email` is non-null (we only set
+      // existingContact via a non-null lookup above), so the cast is
+      // safe — narrow it explicitly so the contact_org_mismatch
+      // failure shape stays string-typed for callers.
+      const collisionEmail = email as string;
       return {
         ok: false as const,
         failure: {
           code: "contact_org_mismatch",
-          message: `Email ${email} is already attached to another organization; confirm reattach before approving`,
+          message: `Email ${collisionEmail} is already attached to another organization; confirm reattach before approving`,
           requiresConfirmation: true,
           candidateId: existing.id,
           candidateOrganizationId: existing.organizationId,
           contactId: existingContact.id,
           existingOrganizationId: existingContact.organizationId,
-          email
+          email: collisionEmail,
         }
       };
     }
@@ -4101,23 +4107,42 @@ export async function approveContactCandidateCommand(input: {
         contactReattached = true;
       }
     } else {
-      const inserted = await tx
-        .insert(contacts)
-        .values({
-          ...(existing.organizationId ? { organizationId: existing.organizationId } : {}),
-          email,
-          fullName,
-          roleTitle
-        })
-        .onConflictDoNothing({ target: contacts.email })
-        .returning({ id: contacts.id, organizationId: contacts.organizationId });
+      const baseValues = {
+        ...(existing.organizationId ? { organizationId: existing.organizationId } : {}),
+        email,
+        fullName,
+        roleTitle,
+      };
+      // The partial unique index on `email` (WHERE email IS NOT NULL)
+      // does not satisfy a bare `ON CONFLICT (email)` clause — postgres
+      // wants the WHERE predicate too. We only need the conflict guard
+      // for non-null emails (null inserts can never collide on the
+      // partial index), so branch.
+      const insertQuery = email
+        ? tx
+            .insert(contacts)
+            .values(baseValues)
+            .onConflictDoNothing({ target: contacts.email, where: isNotNull(contacts.email) })
+        : tx.insert(contacts).values(baseValues);
+      const inserted = await insertQuery.returning({
+        id: contacts.id,
+        organizationId: contacts.organizationId,
+      });
       if (inserted.length > 0) {
         const insertedContact = expectOne(inserted, "contact insert");
         contactId = insertedContact.id;
         contactOrganizationId = insertedContact.organizationId;
         contactCreated = true;
       } else {
-        // Lost the race to a concurrent insert; re-read.
+        // Lost the race to a concurrent insert; re-read. Only reachable
+        // when `email` is non-null — the partial unique index on email
+        // does not constrain null rows, so an emailless insert can never
+        // collide.
+        if (!email) {
+          throw new Error(
+            "Emailless contact insert returned no rows; the partial unique index should not have fired"
+          );
+        }
         const [raced] = await tx
           .select({ id: contacts.id, organizationId: contacts.organizationId })
           .from(contacts)
@@ -4371,6 +4396,176 @@ export async function rejectContactCandidateCommand(input: {
       candidateId: existing.id,
       idempotencyKey,
       deduplicated: false
+    };
+  });
+}
+
+// T-026AZ: sets or clears the email on an existing contact row. The
+// approve flow no longer requires an email up-front; this command lets
+// the operator fill the address in later, after they look it up in
+// LinkedIn / a corp site / a sourcing tool, without going through the
+// candidate approval path again.
+export type SetContactEmailResult =
+  | {
+      ok: true;
+      command: typeof commands.$inferSelect;
+      contactId: string;
+      email: string | null;
+      previousEmail: string | null;
+      changed: boolean;
+      idempotencyKey: string;
+      deduplicated: boolean;
+    }
+  | {
+      ok: false;
+      failure:
+        | {
+            code: "contact_not_found";
+            message: string;
+          }
+        | {
+            code: "email_suppressed" | "email_taken";
+            message: string;
+          };
+    };
+
+export async function setContactEmailCommand(input: {
+  payload: {
+    contactId: string;
+    email: string | null;
+    idempotencyKey?: string;
+  };
+  actorId?: string;
+}): Promise<SetContactEmailResult> {
+  const { payload } = input;
+  const db = getDb();
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        id: contacts.id,
+        email: contacts.email,
+        updatedAt: contacts.updatedAt,
+      })
+      .from(contacts)
+      .where(eq(contacts.id, payload.contactId))
+      .limit(1);
+    if (!existing) {
+      return {
+        ok: false as const,
+        failure: {
+          code: "contact_not_found",
+          message: `Contact ${payload.contactId} not found`,
+        },
+      };
+    }
+
+    const normalised = payload.email?.trim().toLowerCase() || null;
+
+    if (normalised) {
+      const [activeSuppression] = await tx
+        .select({ reason: suppressionEntries.reason })
+        .from(suppressionEntries)
+        .where(and(
+          sql`lower(${suppressionEntries.email}) = ${normalised}`,
+          eq(suppressionEntries.active, true)
+        ))
+        .limit(1);
+      if (activeSuppression) {
+        return {
+          ok: false as const,
+          failure: {
+            code: "email_suppressed",
+            message: `Email ${normalised} is actively suppressed (${activeSuppression.reason})`,
+          },
+        };
+      }
+
+      const [collision] = await tx
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(and(eq(contacts.email, normalised), ne(contacts.id, payload.contactId)))
+        .limit(1);
+      if (collision) {
+        return {
+          ok: false as const,
+          failure: {
+            code: "email_taken",
+            message: `Email ${normalised} is already attached to contact ${collision.id}`,
+          },
+        };
+      }
+    }
+
+    const idempotencyKey =
+      payload.idempotencyKey ??
+      `set_contact_email:${existing.id}:${existing.updatedAt.toISOString()}:${normalised ?? "null"}:v1`;
+
+    const insertedCommands = await tx
+      .insert(commands)
+      .values({
+        source: "operator",
+        commandType: "set_contact_email",
+        status: "completed",
+        actorId: input.actorId,
+        targetEntityType: "contact",
+        targetEntityId: existing.id,
+        payloadJson: payload as unknown as Record<string, unknown>,
+        idempotencyKey,
+        correlationId: randomUUID(),
+      })
+      .onConflictDoNothing({ target: commands.idempotencyKey })
+      .returning();
+
+    if (insertedCommands.length === 0) {
+      const [existingCommand] = await tx
+        .select()
+        .from(commands)
+        .where(eq(commands.idempotencyKey, idempotencyKey))
+        .limit(1);
+      if (!existingCommand) {
+        throw new Error(`Idempotency key conflict: ${idempotencyKey}`);
+      }
+      // Replay: re-read the contact and report no-op success so the
+      // dashboard's POST + redirect cycle is stable across browser
+      // back-button reposts.
+      const [reread] = await tx
+        .select({ email: contacts.email })
+        .from(contacts)
+        .where(eq(contacts.id, existing.id))
+        .limit(1);
+      return {
+        ok: true as const,
+        command: existingCommand,
+        contactId: existing.id,
+        email: reread?.email ?? null,
+        previousEmail: existing.email,
+        changed: false,
+        idempotencyKey,
+        deduplicated: true,
+      };
+    }
+
+    const command = expectOne(insertedCommands, "set_contact_email command");
+
+    const previousEmail = existing.email;
+    const changed = previousEmail !== normalised;
+    if (changed) {
+      await tx
+        .update(contacts)
+        .set({ email: normalised, updatedAt: new Date() })
+        .where(eq(contacts.id, existing.id));
+    }
+
+    return {
+      ok: true as const,
+      command,
+      contactId: existing.id,
+      email: normalised,
+      previousEmail,
+      changed,
+      idempotencyKey,
+      deduplicated: false,
     };
   });
 }
@@ -8146,7 +8341,7 @@ export type DraftDetail = {
   updatedAt: Date;
   contact: {
     id: string;
-    email: string;
+    email: string | null;
     fullName: string | null;
     organizationId: string | null;
   } | null;
@@ -19870,7 +20065,7 @@ export type OrganizationDetail = {
   } | null;
   contacts: Array<{
     id: string;
-    email: string;
+    email: string | null;
     fullName: string | null;
     roleTitle: string | null;
     isPrimary: boolean;

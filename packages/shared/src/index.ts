@@ -63,6 +63,7 @@ export const operatorCommandTypes = [
   "record_draft_feedback",
   "recompute_quality_score",
   "set_primary_contact",
+  "set_contact_email",
   "approve_contact_candidate",
   "reject_contact_candidate",
   "run_campaign_discovery",
@@ -777,6 +778,23 @@ export const setPrimaryContactPayloadSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 
+// T-026AZ: update a contact's email later, after the operator has found
+// it. `email = null` deliberately clears the address back to "no email"
+// so the operator can undo a mistaken entry without rejecting the
+// contact. Server enforces uniqueness + suppression-list checks.
+export const setContactEmailPayloadSchema = z.object({
+  contactId: z.string().uuid(),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email()
+    .max(320)
+    .nullable()
+    .optional(),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+});
+
 export const approveContactCandidatePayloadSchema = z.object({
   candidateId: z.string().uuid(),
   // Operator can override the agent-emitted role/email/fullName before
@@ -1206,6 +1224,11 @@ export const createCommandRequestSchema = z.discriminatedUnion("commandType", [
     payload: setPrimaryContactPayloadSchema
   }),
   z.object({
+    commandType: z.literal("set_contact_email"),
+    actorId: z.string().uuid().optional(),
+    payload: setContactEmailPayloadSchema,
+  }),
+  z.object({
     commandType: z.literal("approve_contact_candidate"),
     actorId: z.string().uuid().optional(),
     payload: approveContactCandidatePayloadSchema
@@ -1299,6 +1322,7 @@ export type RecordDraftFeedbackPayload = z.infer<typeof recordDraftFeedbackPaylo
 export type RecomputeQualityScorePayload = z.infer<typeof recomputeQualityScorePayloadSchema>;
 export type SetPrimaryContactPayload = z.infer<typeof setPrimaryContactPayloadSchema>;
 export type ApproveContactCandidatePayload = z.infer<typeof approveContactCandidatePayloadSchema>;
+export type SetContactEmailPayload = z.infer<typeof setContactEmailPayloadSchema>;
 export type RejectContactCandidatePayload = z.infer<typeof rejectContactCandidatePayloadSchema>;
 export type RunCampaignDiscoveryPayload = z.infer<typeof runCampaignDiscoveryPayloadSchema>;
 export type AcceptDiscoveryCandidatePayload = z.infer<typeof acceptDiscoveryCandidatePayloadSchema>;
