@@ -33,13 +33,19 @@ export type AssistTurn =
   | { type: "question"; question: string; scope: null; inferred: InferredFlag[] }
   | { type: "ready"; question: null; scope: ScopeDraft; inferred: InferredFlag[] };
 
-const INITIAL_ASSISTANT_MESSAGE = `Hi — let's build a campaign. The more you tell me up front, the fewer questions I'll need to ask.
+const INITIAL_ASSISTANT_MESSAGE = `Hi — let's build a campaign. The more you tell me up front, the fewer questions I'll need to ask. I'll walk through the rest one at a time.
 
-A good opening message looks like:
+A complete opening message covers the seven things I have to ask about:
 
-  "I want to sell <product> to <audience>. The goal is <outcome the email should drive>. We're targeting <regions or 'global'>; aim for around <N> companies. The pitch in one sentence: <one-line offer>. The CTA should be <book a call / get demo / reply with intro>. Internal name: <short label>."
+  "I want to sell <product> to <audience>. The goal is <outcome the email should drive>. The pitch in one sentence: <one-line offer>. The CTA should be <book a call / get demo / reply with intro>. Internal name: <short label>. Targeting <regions or 'global'>; aim for around <N> companies."
 
-You don't have to use every line — start with as much as you have and I'll ask about the rest one question at a time.`;
+You can also pre-set any of these optional fields if you have a preference — otherwise I'll suggest sensible defaults or leave them empty:
+
+  • Forbidden claims — things the cold draft must never say (e.g. "guaranteed ROI", "10x faster", legal/compliance claims).
+  • Discovery source hints — sites or directories I should prefer when searching for companies (e.g. a specific tender platform, an industry directory).
+  • Discovery exclusions — domains or company patterns to skip (e.g. competitors, generic marketplaces).
+
+Start with as much as you have — even just the first sentence is enough to get going.`;
 
 const INITIAL_MESSAGES: Message[] = [
   { role: "assistant", content: INITIAL_ASSISTANT_MESSAGE },
