@@ -94,13 +94,70 @@ export default async function CampaignOrganizationsPage({
               </p>
             )}
           </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {orgs.map((org) => (
-              <OrgListingCard key={org.id} org={org} />
-            ))}
-          </div>
-        )}
+        ) : (() => {
+          // T-026AR: orgs are sorted by addressability — those with at
+          // least one approved-with-email or pending-with-email contact
+          // sit at the top, the rest below. Splitting into two labelled
+          // groups + an explainer makes the contract visible so
+          // operators do not have to infer it from card order alone.
+          const addressable = orgs.filter((o) => o.addressableEmailCount > 0);
+          const inert = orgs.filter((o) => o.addressableEmailCount === 0);
+          return (
+            <div className="space-y-10">
+              <section>
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)]">
+                    Addressable ({addressable.length})
+                  </span>
+                  <span className="flex-1 h-px bg-[var(--accent)]/20" />
+                </div>
+                <p className="text-xs font-light opacity-65 leading-snug max-w-3xl mb-4">
+                  These organisations have at least one contact with an email
+                  address — approved by you, auto-approved from a verbatim agent
+                  find, or still pending with the email already on file. Ordered
+                  by how many sendable addresses are attached, most first. Pick
+                  one to generate a draft against.
+                </p>
+                {addressable.length === 0 ? (
+                  <p className="text-sm font-light opacity-60 italic">
+                    None yet. Either approve a pending candidate with an email
+                    on one of the orgs below, or add an email to an approved
+                    contact, and the org will move up to this group.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {addressable.map((org) => (
+                      <OrgListingCard key={org.id} org={org} />
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {inert.length > 0 ? (
+                <section>
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="text-xs font-semibold tracking-[0.18em] uppercase text-yellow-400">
+                      Waiting on an email ({inert.length})
+                    </span>
+                    <span className="flex-1 h-px bg-yellow-500/20" />
+                  </div>
+                  <p className="text-xs font-light opacity-65 leading-snug max-w-3xl mb-4">
+                    These organisations were accepted by discovery and may
+                    have approved contacts attached, but none of them carry an
+                    email yet. Drafts cannot target them. Open one to look at
+                    the Pending or Approved-but-no-email contacts and add an
+                    address — the org will then jump to the group above.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {inert.map((org) => (
+                      <OrgListingCard key={org.id} org={org} />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+          );
+        })()}
       </PageBody>
     </>
   );
