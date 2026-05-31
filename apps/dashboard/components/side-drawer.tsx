@@ -68,40 +68,52 @@ export function SideDrawer({
         </span>
       </button>
 
-      {open ? (
-        <div className="fixed inset-0 z-50 flex">
-          <button
-            type="button"
-            aria-label="Close drawer backdrop"
-            onClick={() => setOpen(false)}
-            className="flex-1 bg-black/60 backdrop-blur-sm"
-          />
-          <div
-            role="dialog"
-            aria-label={title}
-            className="w-full sm:w-[520px] max-w-full bg-[#0F0F10] border-l border-white/10 p-6 overflow-y-auto shadow-[0_0_60px_rgba(0,0,0,0.8)]"
-          >
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div>
-                <h3 className="text-lg font-bold tracking-[0.02em]">{title}</h3>
-                {description ? (
-                  <p className="text-xs font-light opacity-60 leading-snug mt-1">
-                    {description}
-                  </p>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="text-xs uppercase tracking-[0.18em] opacity-60 hover:opacity-100 shrink-0"
-              >
-                Close ✕
-              </button>
+      {/* Always mounted so enter + exit can transition. The container
+          flips `pointer-events-none` when closed so clicks pass through
+          to the page underneath. The backdrop fades, the panel slides
+          in from the right. */}
+      <div
+        className={`fixed inset-0 z-50 flex transition-opacity duration-200 ease-out ${
+          open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        }`}
+        aria-hidden={!open}
+      >
+        <button
+          type="button"
+          aria-label="Close drawer backdrop"
+          tabIndex={open ? 0 : -1}
+          onClick={() => setOpen(false)}
+          className="flex-1 bg-black/60 backdrop-blur-sm"
+        />
+        <div
+          role="dialog"
+          aria-label={title}
+          aria-modal="true"
+          className={`w-full sm:w-[520px] max-w-full bg-[#0F0F10] border-l border-white/10 p-6 overflow-y-auto shadow-[0_0_60px_rgba(0,0,0,0.8)] transform transition-transform duration-300 ease-out ${
+            open ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h3 className="text-lg font-bold tracking-[0.02em]">{title}</h3>
+              {description ? (
+                <p className="text-xs font-light opacity-60 leading-snug mt-1">
+                  {description}
+                </p>
+              ) : null}
             </div>
-            {children}
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              tabIndex={open ? 0 : -1}
+              className="text-xs uppercase tracking-[0.18em] opacity-60 hover:opacity-100 shrink-0"
+            >
+              Close ✕
+            </button>
           </div>
+          {children}
         </div>
-      ) : null}
+      </div>
     </>
   );
 }
