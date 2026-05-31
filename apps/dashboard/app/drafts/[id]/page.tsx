@@ -13,6 +13,7 @@ import {
 } from "@bizdev/shared";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
@@ -65,6 +66,53 @@ function corpusClass(label: string | null): string {
   return "opacity-70";
 }
 
+// Collapsible group. Native <details>/<summary> — server-rendered,
+// no client JS, keyboard-accessible. Used for context and modify
+// blocks so an operator who just wants to approve a healthy draft
+// sees a short page; an operator who needs to dig has the same
+// information one click away.
+function Collapsible({
+  title,
+  hint,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      className="group rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden"
+    >
+      <summary className="flex items-baseline justify-between gap-3 px-5 py-3 cursor-pointer list-none select-none hover:bg-white/[0.04] transition-colors">
+        <span className="text-sm font-semibold tracking-[0.05em]">{title}</span>
+        <span className="text-[10px] uppercase tracking-[0.2em] opacity-50 group-open:hidden">
+          show
+        </span>
+        <span className="text-[10px] uppercase tracking-[0.2em] opacity-50 hidden group-open:inline">
+          hide
+        </span>
+      </summary>
+      <div className="px-5 pb-5 pt-2 space-y-3">
+        {hint ? <p className="text-xs font-light opacity-60 leading-snug">{hint}</p> : null}
+        {children}
+      </div>
+    </details>
+  );
+}
+
+function GroupHeader({ title, hint }: { title: string; hint: string }) {
+  return (
+    <div className="space-y-1 mt-6">
+      <div className="text-xs font-semibold tracking-[0.2em] uppercase opacity-70">{title}</div>
+      <p className="text-xs font-light opacity-55 leading-snug max-w-3xl">{hint}</p>
+    </div>
+  );
+}
+
 type Props = { params: Promise<{ id: string }> };
 
 export default async function DraftDetailPage({ params }: Props) {
@@ -110,6 +158,9 @@ export default async function DraftDetailPage({ params }: Props) {
       })
     : null;
 
+  const supportedCount = draft.claims.filter((c) => c.safety === "supported").length;
+  const needsReviewCount = needsReviewClaims.length;
+
   return (
     <>
       <ConsoleHero currentNav="drafts"
@@ -132,6 +183,7 @@ export default async function DraftDetailPage({ params }: Props) {
           <span className="opacity-60">Draft detail</span>
         </div>
 
+        {/* META TILES — at-a-glance facts about the draft. */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MetricCard label="Status" value={draft.status} />
           <MetricCard label="Version" value={`v${draft.version}`} accent />
@@ -139,7 +191,7 @@ export default async function DraftDetailPage({ params }: Props) {
             <div className="text-xs uppercase tracking-[0.2em] opacity-60 mb-2">Contact</div>
             {draft.contact ? (
               <>
-                <div className="text-sm font-medium break-all">{draft.contact.email}</div>
+                <div className="text-sm font-medium break-all">{draft.contact.email ?? "no email"}</div>
                 <div className="text-xs opacity-60 mt-1">{draft.contact.fullName ?? "—"}</div>
                 {draft.contact.organizationId ? (
                   <Link
@@ -169,12 +221,57 @@ export default async function DraftDetailPage({ params }: Props) {
           </div>
         </div>
 
+        {/* OUTBOUND — only when an outbound row exists (post-send). */}
+        {draft.outboundMessage ? (
+          <Card>
+            <BlockTitle title="Outbound" className="mb-4 text-left" />
+            <InfoRow label="Status" value={<Badge>{draft.outboundMessage.status}</Badge>} />
+            <InfoRow label="Recipient" value={draft.outboundMessage.recipientEmail} />
+            <InfoRow label="Sent at" value={draft.outboundMessage.createdAt.toISOString()} />
+          </Card>
+        ) : null}
+
+        {/* HARD-FAILURE BANNER — only when claims are stale (always must surface). */}
+        {claimsStale ? (
+          <Card className="border-l-4 border-l-red-500 bg-red-500/5">
+            <BlockTitle title="Claims are stale" className="mb-3 text-left text-red-400" />
+            <p className="text-sm font-light opacity-80">
+              Draft is at v{draft.version}; claim safety last validated for v
+              {draft.claimsValidatedVersion ?? "—"}. The body changed after the last validation —
+              the claim list below describes a prior version. Approve & send is hard-blocked until
+              revalidation finishes (worker job{" "}
+              <code className="font-mono text-xs">job.revalidate_draft_claims</code>) or until the
+              operator triggers AI revise.
+            </p>
+          </Card>
+        ) : null}
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* GROUP 1 — EMAIL PREVIEW. Read-only, always visible at the top. */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        <GroupHeader
+          title="Email preview"
+          hint="This is exactly what the recipient will see when the draft is approved and sent."
+        />
         <Card>
-          <BlockTitle title="Quality score & readiness" className="mb-4 text-left" />
-          <p className="text-xs opacity-60 mb-3">
-            Rule-based, recomputed in-tx after every signal-bearing mutation (canonical §15). Annotation only — does not
-            bypass operator approval.
-          </p>
+          <BlockTitle title="Body" className="mb-4 text-left" />
+          <pre className="m-0 p-3 bg-black/40 rounded-lg text-xs whitespace-pre-wrap break-words font-mono max-h-[500px] overflow-auto">
+            {draft.body}
+          </pre>
+        </Card>
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* GROUP 2 — SEND DECISION. Quality + claims + guardrails + action. */}
+        {/* This is the operator's focal point: "can I approve, or do I    */}
+        {/* need to fix something first?"                                   */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        <GroupHeader
+          title="Send decision"
+          hint="Combined quality signal + claim-safety summary + guardrail check. The action button at the bottom is the operator's next move."
+        />
+
+        <Card>
+          <BlockTitle title="Quality &amp; readiness" className="mb-3 text-left" />
           {draft.qualityScore === null ? (
             <p className="text-sm font-light opacity-60">
               Not computed yet. Edit the draft, record feedback, or click recompute.
@@ -185,9 +282,7 @@ export default async function DraftDetailPage({ params }: Props) {
                 label="Quality score"
                 value={
                   <Badge tone={bandTone(draft.qualityScoreBand)}>
-                    <span
-                      title="Agent-assigned quality score (0–100). Bands: 0–39 weak, 40–69 okay, 70+ strong. Drives the Readiness verdict below."
-                    >
+                    <span title="Agent-assigned quality score (0–100). Bands: 0–39 weak, 40–69 okay, 70+ strong.">
                       {draft.qualityScore}/100 · {draft.qualityScoreBand}
                     </span>
                   </Badge>
@@ -198,7 +293,7 @@ export default async function DraftDetailPage({ params }: Props) {
                 value={
                   <span
                     className={`font-semibold ${readinessColor(draft.autosendReadiness)}`}
-                    title="Verdict on whether the draft can be auto-sent without human review. `ready` = clean signal, `needs_review` = operator decision required, `blocked` = a guard tripped, do not send."
+                    title="Verdict on whether the draft can be auto-sent without human review."
                   >
                     {draft.autosendReadiness ?? "—"}
                   </span>
@@ -221,6 +316,37 @@ export default async function DraftDetailPage({ params }: Props) {
               {draft.scoresComputedAt ? (
                 <InfoRow label="Computed at" value={draft.scoresComputedAt.toISOString()} />
               ) : null}
+              <InfoRow
+                label="Claim safety"
+                value={
+                  <span className="text-sm font-light">
+                    <strong className="text-emerald-400">{supportedCount}</strong> supported ·{" "}
+                    <strong className={needsReviewCount > 0 ? "text-red-400" : "opacity-70"}>
+                      {needsReviewCount}
+                    </strong>{" "}
+                    needs review · {draft.claims.length} total
+                  </span>
+                }
+              />
+              {recipientEmail ? (
+                <InfoRow
+                  label="Pre-send guardrails"
+                  value={
+                    guardrails.failures.length === 0 ? (
+                      <span className="text-emerald-400 font-medium">All checks pass</span>
+                    ) : (
+                      <span className="font-semibold">
+                        <span className={hardFailures.length > 0 ? "text-red-400" : "text-yellow-400"}>
+                          {guardrails.failures.length} failing
+                        </span>{" "}
+                        <span className="text-xs opacity-60">
+                          ({hardFailures.length} hard, {softFailures.length} soft)
+                        </span>
+                      </span>
+                    )
+                  }
+                />
+              ) : null}
             </div>
           )}
           <form action="/api/commands" method="post" className="mt-4">
@@ -232,61 +358,160 @@ export default async function DraftDetailPage({ params }: Props) {
           </form>
         </Card>
 
-        {draft.outboundMessage ? (
+        {/* GUARDRAIL DETAILS — only when there are failures the operator must see. */}
+        {recipientEmail && guardrails.failures.length > 0 ? (
           <Card>
-            <BlockTitle title="Outbound" className="mb-4 text-left" />
-            <InfoRow label="Status" value={<Badge>{draft.outboundMessage.status}</Badge>} />
-            <InfoRow label="Recipient" value={draft.outboundMessage.recipientEmail} />
-            <InfoRow label="Sent at" value={draft.outboundMessage.createdAt.toISOString()} />
+            <BlockTitle title="What is blocking send" className="mb-3 text-left" />
+            <p className="text-xs opacity-60 mb-3">
+              Each failing check below is either non-overridable (must be cleared at the source)
+              or overridable (operator may force-send with an audited reason).
+            </p>
+            <ul className="space-y-2">
+              {guardrails.failures.map((f, idx) => {
+                const isHard = hardFailureSet.has(f.code);
+                return (
+                  <li key={idx} className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-1">
+                    <div className="flex gap-2 items-baseline">
+                      <strong className="text-red-400">{f.code}</strong>
+                      <Badge tone={isHard ? "danger" : "warning"}>
+                        {isHard ? "non-overridable" : "overridable"}
+                      </Badge>
+                    </div>
+                    <div className="text-xs opacity-70">{f.message}</div>
+                  </li>
+                );
+              })}
+            </ul>
           </Card>
         ) : null}
 
-        <Card>
-          <BlockTitle title="Body" className="mb-4 text-left" />
-          <pre className="m-0 p-3 bg-black/40 rounded-lg text-xs whitespace-pre-wrap break-words font-mono max-h-[500px] overflow-auto">
-            {draft.body}
-          </pre>
-        </Card>
+        {/* PRIMARY ACTION — the one button the operator came here to use. */}
+        {sendable && draft.contact ? (
+          <Card className="border-l-4 border-l-emerald-500 bg-emerald-500/5">
+            <BlockTitle title="Approve &amp; send" className="mb-3 text-left text-emerald-400" />
+            <p className="text-sm font-light opacity-80 mb-3">
+              All checks pass. Approves draft v{draft.version} and enqueues outbound send via Resend.
+              The recipient at <strong>{draft.contact.email}</strong> will receive the email above.
+            </p>
+            <form action="/api/commands" method="post" className="space-y-3">
+              <input type="hidden" name="commandType" value="approve_draft_for_send" />
+              <input type="hidden" name="draftId" value={draft.id} />
+              <input type="hidden" name="draftVersion" value={String(draft.version)} />
+              <Button type="submit">Approve and send</Button>
+            </form>
+          </Card>
+        ) : overrideAvailable && draft.contact ? (
+          <Card className="border-l-4 border-l-yellow-500 bg-yellow-500/5">
+            <BlockTitle title="Force-send override" className="mb-3 text-left text-yellow-400" />
+            <p className="text-sm font-light opacity-80 mb-3">
+              All failing checks are overridable. To proceed, acknowledge EVERY code below by
+              ticking it and supply a reason (10..2000 chars). Override is audited (
+              <code className="font-mono text-xs">pre_send_override_applied</code> event); partial
+              acknowledgement is rejected.
+            </p>
+            <form action="/api/commands" method="post" className="space-y-3">
+              <input type="hidden" name="commandType" value="approve_draft_for_send" />
+              <input type="hidden" name="draftId" value={draft.id} />
+              <input type="hidden" name="draftVersion" value={String(draft.version)} />
+              <fieldset className="border border-white/15 rounded-lg p-3">
+                <legend className="text-xs opacity-60 px-2">Acknowledge each blocker</legend>
+                {[...new Set(softFailures.map((f) => f.code))].map((code) => (
+                  <label key={code} className="flex gap-2 items-center py-1">
+                    <input type="checkbox" name="acknowledgedCodes" value={code} required />
+                    <code className="font-mono text-xs">{code}</code>
+                  </label>
+                ))}
+              </fieldset>
+              <textarea
+                className={textareaClass}
+                name="overrideReason"
+                placeholder="Reason for overriding (10..2000 chars). Captured in audit log."
+                rows={3}
+                minLength={10}
+                maxLength={2000}
+                required
+              />
+              <Button type="submit" tone="danger">
+                Override and send
+              </Button>
+            </form>
+          </Card>
+        ) : editable ? (
+          <Card className="border-l-4 border-l-red-500 bg-red-500/5">
+            <BlockTitle title="Send blocked" className="mb-3 text-left text-red-400" />
+            <p className="text-sm font-light opacity-80">
+              {!recipientEmail
+                ? "Link a contact (with email) to enable send."
+                : hardFailures.length > 0
+                  ? "Non-overridable blocker(s) above must be cleared at the source — no operator bypass."
+                  : "Resolve the guardrail blocker(s) above before approval."}
+            </p>
+          </Card>
+        ) : null}
 
-        <Card>
-          <BlockTitle title="Research context" className="mb-4 text-left" />
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* GROUP 3 — CONTEXT. Collapsed by default. Information the       */}
+        {/* operator may want to inspect but does not need to act on.       */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        <GroupHeader
+          title="Context"
+          hint="Optional reading. Open a section to see how the draft was built and what state it carries."
+        />
+
+        <Collapsible
+          title={`Research used by the agent${
+            researchContext?.snapshot
+              ? ` · snapshot v${researchContext.snapshot.version}`
+              : ""
+          }`}
+          hint="Facts from research_snapshot the agent had available + which ones it actually cited in the body."
+        >
           {!researchContext ? (
             <p className="text-sm font-light opacity-60">
-              Draft has no resolvable organization (no linked contact or thread with org). The drafting agent had no
-              research_snapshot to ground claims on.
+              Draft has no resolvable organization (no linked contact or thread with org). The
+              drafting agent had no research_snapshot to ground claims on.
             </p>
           ) : !researchContext.snapshot ? (
             <>
-              <p className="text-sm font-light opacity-80 mb-2">
+              <p className="text-sm font-light opacity-80">
                 <strong>{researchContext.organization.name}</strong>
-                {researchContext.organization.domain ? ` · ${researchContext.organization.domain}` : ""}
+                {researchContext.organization.domain
+                  ? ` · ${researchContext.organization.domain}`
+                  : ""}
               </p>
               <p className="text-sm font-light opacity-60">
                 No research snapshot for this organization. Approve & send is hard-blocked by{" "}
-                <code className="font-mono text-xs">claims_stale</code> until a snapshot lands (operator can trigger
-                via Refresh research / Request research more).
+                <code className="font-mono text-xs">claims_stale</code> until a snapshot lands.
+                Trigger Refresh research / Request research more under Modify.
               </p>
             </>
           ) : (
             <>
-              <p className="text-sm font-light opacity-80 mb-3">
+              <p className="text-sm font-light opacity-80">
                 <strong>{researchContext.organization.name}</strong>
-                {researchContext.organization.domain ? ` · ${researchContext.organization.domain}` : ""} · snapshot v
-                {researchContext.snapshot.version} ({researchContext.snapshot.status}) ·{" "}
+                {researchContext.organization.domain
+                  ? ` · ${researchContext.organization.domain}`
+                  : ""}{" "}
+                · snapshot v{researchContext.snapshot.version} ({researchContext.snapshot.status}) ·{" "}
                 {researchContext.snapshot.createdAt.toISOString()}
               </p>
               {researchContext.facts.length === 0 ? (
-                <p className="text-sm font-light opacity-60">Snapshot has no active facts.</p>
+                <p className="text-sm font-light opacity-60">
+                  Snapshot has no active facts. Try Request more research under Modify.
+                </p>
               ) : (
                 <>
-                  <p className="text-xs opacity-60 mb-3">
+                  <p className="text-xs opacity-60">
                     {researchContext.facts.filter((f) => f.cited).length} cited ·{" "}
-                    {researchContext.facts.filter((f) => !f.cited).length} available · {researchContext.facts.length}{" "}
-                    active facts
+                    {researchContext.facts.filter((f) => !f.cited).length} available ·{" "}
+                    {researchContext.facts.length} active facts
                   </p>
                   <ul className="space-y-3">
                     {researchContext.facts.map((fact) => (
-                      <li key={fact.id} className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-2">
+                      <li
+                        key={fact.id}
+                        className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-2"
+                      >
                         <div className="flex justify-between gap-3">
                           <span className="text-sm">{fact.factText}</span>
                           <Badge tone={fact.cited ? "accent" : "default"}>
@@ -316,7 +541,9 @@ export default async function DraftDetailPage({ params }: Props) {
                                     {ev.supportType}
                                   </div>
                                   {ev.quoteText ? (
-                                    <div className="italic opacity-70">&ldquo;{ev.quoteText}&rdquo;</div>
+                                    <div className="italic opacity-70">
+                                      &ldquo;{ev.quoteText}&rdquo;
+                                    </div>
                                   ) : null}
                                 </li>
                               );
@@ -332,215 +559,122 @@ export default async function DraftDetailPage({ params }: Props) {
               )}
             </>
           )}
-        </Card>
+        </Collapsible>
 
-        {claimsStale ? (
-          <Card className="border-l-4 border-l-red-500 bg-red-500/5">
-            <BlockTitle title="Claims stale" className="mb-3 text-left text-red-400" />
-            <p className="text-sm font-light opacity-80">
-              Draft is at v{draft.version}; claim safety last validated for v{draft.claimsValidatedVersion ?? "—"}. The
-              body has changed since the last validation, so the claim list below describes a prior version.{" "}
-              <strong>Approve & send is hard-blocked</strong> until revalidation finishes (worker job{" "}
-              <code className="font-mono text-xs">job.revalidate_draft_claims</code>) or the operator triggers AI revise.
-            </p>
-          </Card>
-        ) : null}
-
-        <Card>
-          <BlockTitle title="Claim safety" className="mb-4 text-left" />
+        <Collapsible
+          title={`Claim breakdown · ${supportedCount} supported / ${needsReviewCount} needs review`}
+          hint="Per-claim view of what the body says and what backs it. Resolve unresolved claims manually if the operator wants to override the validator without changing the body."
+          defaultOpen={needsReviewCount > 0}
+        >
           {draft.claims.length === 0 ? (
             <p className="text-sm font-light opacity-60">No claims recorded for this draft.</p>
           ) : (
-            <>
-              <p className="text-xs opacity-60 mb-3">
-                {draft.claims.filter((c) => c.safety === "supported").length} supported ·{" "}
-                {draft.claims.filter((c) => c.safety === "needs_review").length} needs review · {draft.claims.length}{" "}
-                total
-              </p>
-              <ul className="space-y-3">
-                {draft.claims.map((claim) => {
-                  const isSupported = claim.safety === "supported";
-                  const isDropped = claim.safety === "dropped";
-                  return (
-                    <li key={claim.id} className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-2">
-                      <div className="flex justify-between gap-3">
-                        <strong className="text-sm font-medium">{claim.claimText}</strong>
-                        <Badge tone={isSupported ? "accent" : isDropped ? "default" : "danger"}>
-                          {claim.safety}
-                        </Badge>
-                      </div>
-                      {claim.facts.length === 0 ? (
-                        <span className={`text-xs ${isSupported ? "text-emerald-400" : "text-red-400"}`}>
-                          No backing facts cited.
-                        </span>
-                      ) : (
-                        <ul className="ml-3 space-y-2">
-                          {claim.facts.map((fact) => (
-                            <li key={fact.factId} className="space-y-1">
-                              <div className="flex justify-between gap-3 text-sm">
-                                <span>{fact.factText}</span>
-                                <span className="text-xs opacity-60 whitespace-nowrap">
-                                  v{fact.snapshotVersion} · conf {fact.confidence} · {fact.supportType}
-                                </span>
-                              </div>
-                              {fact.evidence.length > 0 ? (
-                                <ul className="ml-3 space-y-1">
-                                  {fact.evidence.map((ev) => {
-                                    const safeUrl = safeHttpUrl(ev.sourceUrl);
-                                    return (
-                                      <li key={ev.id} className="text-xs opacity-80 space-y-1">
-                                        <div className="break-all">
-                                          {safeUrl ? (
-                                            <a
-                                              href={safeUrl}
-                                              target="_blank"
-                                              rel="noreferrer noopener"
-                                              className="hover:text-[var(--accent)]"
-                                            >
-                                              {safeUrl}
-                                            </a>
-                                          ) : (
-                                            <em>{ev.sourceType}</em>
-                                          )}
-                                          {" · "}
-                                          {ev.supportType}
+            <ul className="space-y-3">
+              {draft.claims.map((claim) => {
+                const isSupported = claim.safety === "supported";
+                const isDropped = claim.safety === "dropped";
+                return (
+                  <li
+                    key={claim.id}
+                    className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-2"
+                  >
+                    <div className="flex justify-between gap-3">
+                      <strong className="text-sm font-medium">{claim.claimText}</strong>
+                      <Badge tone={isSupported ? "accent" : isDropped ? "default" : "danger"}>
+                        {claim.safety}
+                      </Badge>
+                    </div>
+                    {claim.facts.length === 0 ? (
+                      <span
+                        className={`text-xs ${
+                          isSupported ? "text-emerald-400" : "text-red-400"
+                        }`}
+                      >
+                        No backing facts cited.
+                      </span>
+                    ) : (
+                      <ul className="ml-3 space-y-2">
+                        {claim.facts.map((fact) => (
+                          <li key={fact.factId} className="space-y-1">
+                            <div className="flex justify-between gap-3 text-sm">
+                              <span>{fact.factText}</span>
+                              <span className="text-xs opacity-60 whitespace-nowrap">
+                                v{fact.snapshotVersion} · conf {fact.confidence} · {fact.supportType}
+                              </span>
+                            </div>
+                            {fact.evidence.length > 0 ? (
+                              <ul className="ml-3 space-y-1">
+                                {fact.evidence.map((ev) => {
+                                  const safeUrl = safeHttpUrl(ev.sourceUrl);
+                                  return (
+                                    <li key={ev.id} className="text-xs opacity-80 space-y-1">
+                                      <div className="break-all">
+                                        {safeUrl ? (
+                                          <a
+                                            href={safeUrl}
+                                            target="_blank"
+                                            rel="noreferrer noopener"
+                                            className="hover:text-[var(--accent)]"
+                                          >
+                                            {safeUrl}
+                                          </a>
+                                        ) : (
+                                          <em>{ev.sourceType}</em>
+                                        )}
+                                        {" · "}
+                                        {ev.supportType}
+                                      </div>
+                                      {ev.quoteText ? (
+                                        <div className="italic opacity-70">
+                                          &ldquo;{ev.quoteText}&rdquo;
                                         </div>
-                                        {ev.quoteText ? (
-                                          <div className="italic opacity-70">&ldquo;{ev.quoteText}&rdquo;</div>
-                                        ) : null}
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              ) : (
-                                <span className="text-xs opacity-60">No evidence rows.</span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      {editable && claim.safety === "needs_review" ? (
-                        <form action="/api/commands" method="post" className="mt-3 space-y-2">
-                          <input type="hidden" name="commandType" value="mark_claim_resolved" />
-                          <input type="hidden" name="claimId" value={claim.id} />
-                          <input type="hidden" name="draftVersion" value={String(draft.version)} />
-                          <select className={inputClass} name="resolution" defaultValue="manually_supported">
-                            <option value="manually_supported">Manually supported</option>
-                            <option value="dropped">Dropped from send criteria</option>
-                          </select>
-                          <textarea
-                            className={textareaClass}
-                            name="note"
-                            placeholder="Operator note for claim-resolution audit"
-                            rows={2}
-                            required
-                          />
-                          <Button type="submit">Resolve claim</Button>
-                        </form>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            </>
+                                      ) : null}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            ) : (
+                              <span className="text-xs opacity-60">No evidence rows.</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {editable && claim.safety === "needs_review" ? (
+                      <form action="/api/commands" method="post" className="mt-3 space-y-2">
+                        <input type="hidden" name="commandType" value="mark_claim_resolved" />
+                        <input type="hidden" name="claimId" value={claim.id} />
+                        <input type="hidden" name="draftVersion" value={String(draft.version)} />
+                        <select
+                          className={inputClass}
+                          name="resolution"
+                          defaultValue="manually_supported"
+                        >
+                          <option value="manually_supported">Manually supported</option>
+                          <option value="dropped">Dropped from send criteria</option>
+                        </select>
+                        <textarea
+                          className={textareaClass}
+                          name="note"
+                          placeholder="Operator note for claim-resolution audit"
+                          rows={2}
+                          required
+                        />
+                        <Button type="submit">Resolve claim</Button>
+                      </form>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
           )}
-        </Card>
-
-        {editable ? (
-          <Card>
-            <BlockTitle title="Edit (saves new version)" className="mb-4 text-left" />
-            <form action="/api/commands" method="post" className="space-y-3">
-              <input type="hidden" name="commandType" value="request_manual_edit_save" />
-              <input type="hidden" name="draftId" value={draft.id} />
-              <input type="hidden" name="expectedVersion" value={String(draft.version)} />
-              <input className={inputClass} name="subject" defaultValue={draft.subject} required />
-              <textarea className={textareaClass} name="body" defaultValue={draft.body} required rows={12} />
-              <textarea className={textareaClass} name="notes" placeholder="Edit notes (optional)" />
-              <Button type="submit">Save as v{draft.version + 1}</Button>
-            </form>
-          </Card>
-        ) : null}
-
-        {editable ? (
-          <Card>
-            <BlockTitle title="Request AI revise" className="mb-4 text-left" />
-            <p className="text-sm font-light opacity-80 mb-3">
-              Enqueues <code className="font-mono text-xs">job.revise_draft</code> in the{" "}
-              <code className="font-mono text-xs">drafting</code> pool. The agent reads v{draft.version} + this feedback
-              + the latest research snapshot, then writes v{draft.version + 1} with revalidated claims.
-            </p>
-            <form action="/api/commands" method="post" className="space-y-3">
-              <input type="hidden" name="commandType" value="request_ai_revise" />
-              <input type="hidden" name="draftId" value={draft.id} />
-              <input type="hidden" name="expectedVersion" value={String(draft.version)} />
-              <textarea
-                className={textareaClass}
-                name="operatorFeedback"
-                placeholder="What to change: tone, angle, ask, claims to drop, new angle to push..."
-                required
-                rows={5}
-              />
-              <Button type="submit">Request AI revise</Button>
-            </form>
-          </Card>
-        ) : null}
-
-        {editable && draftOrgId ? (
-          <Card>
-            <BlockTitle title="Request research more" className="mb-4 text-left" />
-            <p className="text-sm font-light opacity-80 mb-3">
-              Enqueues <code className="font-mono text-xs">job.research_more</code> in the{" "}
-              <code className="font-mono text-xs">background</code> pool. The agent runs targeted searches against the
-              flagged claims + your note, then writes a new <code className="font-mono text-xs">research_snapshot</code>{" "}
-              version. Sharing the <code className="font-mono text-xs">research_snapshot:{draftOrgId}</code> concurrency
-              key with refresh, so it serializes against vanilla refreshes.
-            </p>
-            <form action="/api/commands" method="post" className="space-y-3">
-              <input type="hidden" name="commandType" value="request_research_more" />
-              <input type="hidden" name="organizationId" value={draftOrgId} />
-              <input type="hidden" name="draftId" value={draft.id} />
-              {draft.campaign ? <input type="hidden" name="campaignId" value={draft.campaign.id} /> : null}
-              {needsReviewClaims.length > 0 ? (
-                <fieldset className="border border-white/15 rounded-lg p-3">
-                  <legend className="text-xs opacity-60 px-2">Flag claims to investigate (optional)</legend>
-                  {needsReviewClaims.map((claim) => (
-                    <label key={claim.id} className="flex gap-2 items-start mb-2">
-                      <input
-                        type="checkbox"
-                        name="unsupportedClaimIds"
-                        value={claim.id}
-                        defaultChecked
-                        className="mt-1"
-                      />
-                      <span className="text-sm">{claim.claimText}</span>
-                    </label>
-                  ))}
-                </fieldset>
-              ) : (
-                <p className="text-sm font-light opacity-60">
-                  No <code className="font-mono text-xs">needs_review</code> claims on this draft — submit with operator
-                  note alone if you still want broader research.
-                </p>
-              )}
-              <textarea
-                className={textareaClass}
-                name="operatorNote"
-                placeholder="What to look for: market signals, recent press, competitors, hiring, named people..."
-                rows={4}
-                required={needsReviewClaims.length === 0}
-              />
-              <Button type="submit">Request research more</Button>
-            </form>
-          </Card>
-        ) : null}
+        </Collapsible>
 
         {timingAdvice ? (
-          <Card>
-            <BlockTitle title="Timing advice" className="mb-4 text-left" />
-            <p className="text-xs opacity-60 mb-3">
-              Advisory only — never blocks send. {draft.kind === "warm" ? "Warm replies" : "Cold sends"} use{" "}
-              {draft.kind === "warm" ? "lower" : "stricter"} recipient-local timing rules.
-            </p>
+          <Collapsible
+            title={`Timing advice · ${timingAdvice.severity}`}
+            hint="Advisory only — never blocks send. Just tells you whether the recipient's local time looks reasonable right now."
+          >
             <div
               className={`rounded-lg p-3 space-y-2 ${
                 timingAdvice.severity === "warn"
@@ -564,7 +698,9 @@ export default async function DraftDetailPage({ params }: Props) {
                 </strong>
                 <span className="text-xs opacity-60">
                   {timingAdvice.recipientTimezone ?? "tz unknown"}
-                  {timingAdvice.recipientLocalHour !== null ? ` · ${timingAdvice.recipientLocalHour}:00` : ""}
+                  {timingAdvice.recipientLocalHour !== null
+                    ? ` · ${timingAdvice.recipientLocalHour}:00`
+                    : ""}
                   {timingAdvice.isWeekend ? " · weekend" : ""}
                 </span>
               </div>
@@ -582,122 +718,15 @@ export default async function DraftDetailPage({ params }: Props) {
                 </div>
               ) : null}
             </div>
-          </Card>
+          </Collapsible>
         ) : null}
 
-        {recipientEmail ? (
-          <Card>
-            <BlockTitle title="Pre-send guardrails" className="mb-4 text-left" />
-            {guardrails.failures.length === 0 ? (
-              <p className="text-sm font-light opacity-60">All checks pass. Safe to approve.</p>
-            ) : (
-              <ul className="space-y-2">
-                {guardrails.failures.map((f, idx) => {
-                  const isHard = hardFailureSet.has(f.code);
-                  return (
-                    <li key={idx} className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-1">
-                      <div className="flex gap-2 items-baseline">
-                        <strong className="text-red-400">{f.code}</strong>
-                        <Badge tone={isHard ? "danger" : "warning"}>
-                          {isHard ? "non-overridable" : "overridable"}
-                        </Badge>
-                      </div>
-                      <div className="text-xs opacity-70">{f.message}</div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </Card>
-        ) : null}
-
-        {overrideAvailable && draft.contact ? (
-          <Card className="border-l-4 border-l-yellow-500">
-            <BlockTitle title="Force-send override" className="mb-4 text-left text-yellow-400" />
-            <p className="text-sm font-light opacity-80 mb-3">
-              All failing checks are overridable. To proceed, acknowledge EVERY code below by ticking it and supply a
-              reason (10..2000 chars). Override is audited (
-              <code className="font-mono text-xs">pre_send_override_applied</code> event); partial acknowledgement is
-              rejected.
-            </p>
-            <form action="/api/commands" method="post" className="space-y-3">
-              <input type="hidden" name="commandType" value="approve_draft_for_send" />
-              <input type="hidden" name="draftId" value={draft.id} />
-              <input type="hidden" name="draftVersion" value={String(draft.version)} />
-              <fieldset className="border border-white/15 rounded-lg p-3">
-                <legend className="text-xs opacity-60 px-2">Acknowledge each blocker</legend>
-                {[...new Set(softFailures.map((f) => f.code))].map((code) => (
-                  <label key={code} className="flex gap-2 items-center py-1">
-                    <input type="checkbox" name="acknowledgedCodes" value={code} required />
-                    <code className="font-mono text-xs">{code}</code>
-                  </label>
-                ))}
-              </fieldset>
-              <textarea
-                className={textareaClass}
-                name="overrideReason"
-                placeholder="Reason for overriding (10..2000 chars). Captured in audit log."
-                rows={3}
-                minLength={10}
-                maxLength={2000}
-                required
-              />
-              <Button type="submit" tone="danger">
-                Override and send
-              </Button>
-            </form>
-          </Card>
-        ) : null}
-
-        {sendable && draft.contact ? (
-          <Card>
-            <BlockTitle title="Approve & send" className="mb-4 text-left" />
-            <p className="text-sm font-light opacity-80 mb-3">
-              Approves draft v{draft.version} and enqueues outbound send via Resend.
-            </p>
-            <form action="/api/commands" method="post" className="space-y-3">
-              <input type="hidden" name="commandType" value="approve_draft_for_send" />
-              <input type="hidden" name="draftId" value={draft.id} />
-              <input type="hidden" name="draftVersion" value={String(draft.version)} />
-              <Button type="submit">Approve and send</Button>
-            </form>
-          </Card>
-        ) : editable && !overrideAvailable ? (
-          <Card>
-            <BlockTitle title="Approve & send" className="mb-4 text-left" />
-            <p className="text-sm font-light opacity-60">
-              {!recipientEmail
-                ? "Link a contact (with email) to enable send."
-                : hardFailures.length > 0
-                  ? "Non-overridable blocker(s) above must be cleared at the source — no operator bypass."
-                  : "Resolve the guardrail blocker(s) above before approval."}
-            </p>
-          </Card>
-        ) : null}
-
-        {editable ? (
-          <Card>
-            <BlockTitle title="Discard draft" className="mb-4 text-left" />
-            <form action="/api/commands" method="post" className="space-y-3">
-              <input type="hidden" name="commandType" value="discard_draft" />
-              <input type="hidden" name="draftId" value={draft.id} />
-              <input type="hidden" name="expectedVersion" value={String(draft.version)} />
-              <textarea
-                className={textareaClass}
-                name="reason"
-                placeholder="Reason for discarding"
-                rows={3}
-                required
-              />
-              <Button type="submit" tone="danger">
-                Discard draft
-              </Button>
-            </form>
-          </Card>
-        ) : null}
-
-        <Card>
-          <BlockTitle title="Version history" className="mb-4 text-left" />
+        <Collapsible
+          title={`Version history · ${versionHistory.length} version${
+            versionHistory.length === 1 ? "" : "s"
+          }`}
+          hint="Every saved version (agent-generated, operator-edited, AI-revised). The current head sits at the top of the list."
+        >
           {versionHistory.length === 0 ? (
             <p className="text-sm font-light opacity-60">No prior versions recorded.</p>
           ) : (
@@ -706,7 +735,10 @@ export default async function DraftDetailPage({ params }: Props) {
                 const isHead = v.version === draft.version;
                 const excerpt = v.body.length > 280 ? `${v.body.slice(0, 280)}…` : v.body;
                 return (
-                  <li key={v.id} className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-2">
+                  <li
+                    key={v.id}
+                    className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-2"
+                  >
                     <div className="flex justify-between gap-3 items-baseline">
                       <strong className="font-medium">
                         v{v.version}
@@ -715,13 +747,16 @@ export default async function DraftDetailPage({ params }: Props) {
                       <Badge tone={sourceTone(v.source)}>{v.source}</Badge>
                     </div>
                     <div className="text-xs opacity-60">
-                      {v.createdAt.toISOString()} · claims_validated_version={v.claimsValidatedVersion ?? "—"}
+                      {v.createdAt.toISOString()} · claims_validated_version=
+                      {v.claimsValidatedVersion ?? "—"}
                       {v.agentRunId ? ` · agent_run=${v.agentRunId}` : ""}
                     </div>
                     {v.corpusLabel ? (
                       <div className="text-xs opacity-70">
                         corpus:{" "}
-                        <code className={`font-mono ${corpusClass(v.corpusLabel)}`}>{v.corpusLabel}</code>
+                        <code className={`font-mono ${corpusClass(v.corpusLabel)}`}>
+                          {v.corpusLabel}
+                        </code>
                         {v.corpusLabelReasons.length > 0 ? (
                           <span className="ml-2">
                             ({v.corpusLabelReasons.map((r) => (
@@ -735,12 +770,11 @@ export default async function DraftDetailPage({ params }: Props) {
                       </div>
                     ) : null}
                     {v.editSeverity ? (
-                      <div
-                        className="text-xs opacity-70"
-                        title="How significantly this version differs from the previous one. `minor` = wording polish, `major` = structural rewrite, `inverted` = the intent changed."
-                      >
+                      <div className="text-xs opacity-70">
                         edit severity:{" "}
-                        <code className={`font-mono ${severityClass(v.editSeverity)}`}>{v.editSeverity}</code>
+                        <code className={`font-mono ${severityClass(v.editSeverity)}`}>
+                          {v.editSeverity}
+                        </code>
                         {v.editSeveritySignals.length > 0 ? (
                           <span className="ml-2">
                             ({v.editSeveritySignals.map((s) => (
@@ -767,10 +801,14 @@ export default async function DraftDetailPage({ params }: Props) {
               })}
             </ul>
           )}
-        </Card>
+        </Collapsible>
 
-        <Card>
-          <BlockTitle title="Feedback" className="mb-4 text-left" />
+        <Collapsible
+          title={`Feedback log · ${feedbackRows.length} entr${
+            feedbackRows.length === 1 ? "y" : "ies"
+          }`}
+          hint="Operator signals captured against past versions — approvals, manual edits, AI-revises, discards, tags."
+        >
           {feedbackRows.length === 0 ? (
             <p className="text-sm font-light opacity-60">No feedback recorded yet.</p>
           ) : (
@@ -783,7 +821,10 @@ export default async function DraftDetailPage({ params }: Props) {
                       ? "warning"
                       : "primary";
                 return (
-                  <li key={f.id} className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-1">
+                  <li
+                    key={f.id}
+                    className="border border-white/10 rounded-xl p-3 bg-black/30 space-y-1"
+                  >
                     <div className="flex justify-between gap-3">
                       <Badge tone={kindTone}>{f.kind}</Badge>
                       <span className="text-xs opacity-60 whitespace-nowrap">
@@ -793,7 +834,9 @@ export default async function DraftDetailPage({ params }: Props) {
                     {f.corpusLabel ? (
                       <div className="text-xs opacity-70">
                         corpus:{" "}
-                        <code className={`font-mono ${corpusClass(f.corpusLabel)}`}>{f.corpusLabel}</code>
+                        <code className={`font-mono ${corpusClass(f.corpusLabel)}`}>
+                          {f.corpusLabel}
+                        </code>
                         {f.corpusLabelReasons.length > 0 ? (
                           <span className="ml-2">
                             ({f.corpusLabelReasons.map((r) => (
@@ -822,42 +865,13 @@ export default async function DraftDetailPage({ params }: Props) {
               })}
             </ul>
           )}
-        </Card>
-
-        <Card>
-          <BlockTitle title="Record feedback" className="mb-4 text-left" />
-          <p className="text-xs opacity-60 mb-3">
-            Standalone explicit signal. Pick at least one tag or write a note; both is best. Bound to v{draft.version}{" "}
-            via optimistic version check.
-          </p>
-          <form action="/api/commands" method="post" className="space-y-3">
-            <input type="hidden" name="commandType" value="record_draft_feedback" />
-            <input type="hidden" name="draftId" value={draft.id} />
-            <input type="hidden" name="draftVersion" value={String(draft.version)} />
-            <fieldset className="border border-white/15 rounded-lg p-3">
-              <legend className="text-xs opacity-60 px-2">Tags</legend>
-              <div className="flex flex-wrap gap-3">
-                {draftFeedbackTags.map((tag) => (
-                  <label key={tag} className="inline-flex gap-2 items-center">
-                    <input type="checkbox" name="tags" value={tag} />
-                    <code className="font-mono text-xs">{tag}</code>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <textarea
-              className={textareaClass}
-              name="note"
-              placeholder="Free-form note (optional if at least one tag is checked)"
-              rows={3}
-            />
-            <Button type="submit">Record feedback</Button>
-          </form>
-        </Card>
+        </Collapsible>
 
         {draft.workItem ? (
-          <Card>
-            <BlockTitle title="Work item" className="mb-4 text-left" />
+          <Collapsible
+            title={`Linked work item · ${draft.workItem.status}`}
+            hint="Inbox task that mirrors this draft. Closes automatically when you approve, discard, or resolve the underlying signal."
+          >
             <InfoRow label="Type" value={<Badge>{draft.workItem.type}</Badge>} />
             <InfoRow label="Status" value={draft.workItem.status} />
             <Link
@@ -866,7 +880,163 @@ export default async function DraftDetailPage({ params }: Props) {
             >
               Open work item →
             </Link>
-          </Card>
+          </Collapsible>
+        ) : null}
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* GROUP 4 — MODIFY. Collapsed by default. All the forms an       */}
+        {/* operator might use to change the draft before approving.        */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {editable ? (
+          <>
+            <GroupHeader
+              title="Modify"
+              hint="Optional. Open one of the panels below to change the body manually, ask the agent to revise, pull more research, record feedback, or discard the draft."
+            />
+
+            <Collapsible
+              title="Edit body manually (saves new version)"
+              hint="Direct edit. Saves as a new version; the previous version stays in history."
+            >
+              <form action="/api/commands" method="post" className="space-y-3">
+                <input type="hidden" name="commandType" value="request_manual_edit_save" />
+                <input type="hidden" name="draftId" value={draft.id} />
+                <input type="hidden" name="expectedVersion" value={String(draft.version)} />
+                <input className={inputClass} name="subject" defaultValue={draft.subject} required />
+                <textarea
+                  className={textareaClass}
+                  name="body"
+                  defaultValue={draft.body}
+                  required
+                  rows={12}
+                />
+                <textarea
+                  className={textareaClass}
+                  name="notes"
+                  placeholder="Edit notes (optional)"
+                />
+                <Button type="submit">Save as v{draft.version + 1}</Button>
+              </form>
+            </Collapsible>
+
+            <Collapsible
+              title="Ask the AI to revise"
+              hint="Enqueues job.revise_draft in the drafting pool. The agent reads the current version + your feedback + the latest research snapshot, then writes a new version with re-validated claims."
+            >
+              <form action="/api/commands" method="post" className="space-y-3">
+                <input type="hidden" name="commandType" value="request_ai_revise" />
+                <input type="hidden" name="draftId" value={draft.id} />
+                <input type="hidden" name="expectedVersion" value={String(draft.version)} />
+                <textarea
+                  className={textareaClass}
+                  name="operatorFeedback"
+                  placeholder="What to change: tone, angle, ask, claims to drop, new angle to push..."
+                  required
+                  rows={5}
+                />
+                <Button type="submit">Request AI revise</Button>
+              </form>
+            </Collapsible>
+
+            {draftOrgId ? (
+              <Collapsible
+                title="Pull more research on this organisation"
+                hint="Enqueues job.research_more in the background pool. The agent runs targeted searches against the flagged claims + your note, then writes a new research_snapshot version."
+              >
+                <form action="/api/commands" method="post" className="space-y-3">
+                  <input type="hidden" name="commandType" value="request_research_more" />
+                  <input type="hidden" name="organizationId" value={draftOrgId} />
+                  <input type="hidden" name="draftId" value={draft.id} />
+                  {draft.campaign ? (
+                    <input type="hidden" name="campaignId" value={draft.campaign.id} />
+                  ) : null}
+                  {needsReviewClaims.length > 0 ? (
+                    <fieldset className="border border-white/15 rounded-lg p-3">
+                      <legend className="text-xs opacity-60 px-2">
+                        Flag claims to investigate (optional)
+                      </legend>
+                      {needsReviewClaims.map((claim) => (
+                        <label key={claim.id} className="flex gap-2 items-start mb-2">
+                          <input
+                            type="checkbox"
+                            name="unsupportedClaimIds"
+                            value={claim.id}
+                            defaultChecked
+                            className="mt-1"
+                          />
+                          <span className="text-sm">{claim.claimText}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  ) : (
+                    <p className="text-sm font-light opacity-60">
+                      No <code className="font-mono text-xs">needs_review</code> claims on this
+                      draft — submit with the operator note alone if you still want broader
+                      research.
+                    </p>
+                  )}
+                  <textarea
+                    className={textareaClass}
+                    name="operatorNote"
+                    placeholder="What to look for: market signals, recent press, competitors, hiring, named people..."
+                    rows={4}
+                    required={needsReviewClaims.length === 0}
+                  />
+                  <Button type="submit">Request research more</Button>
+                </form>
+              </Collapsible>
+            ) : null}
+
+            <Collapsible
+              title="Record feedback on this draft"
+              hint="Standalone explicit signal — used by the quality/corpus scoring and surfaces in the feedback log above. Pick at least one tag or write a note."
+            >
+              <form action="/api/commands" method="post" className="space-y-3">
+                <input type="hidden" name="commandType" value="record_draft_feedback" />
+                <input type="hidden" name="draftId" value={draft.id} />
+                <input type="hidden" name="draftVersion" value={String(draft.version)} />
+                <fieldset className="border border-white/15 rounded-lg p-3">
+                  <legend className="text-xs opacity-60 px-2">Tags</legend>
+                  <div className="flex flex-wrap gap-3">
+                    {draftFeedbackTags.map((tag) => (
+                      <label key={tag} className="inline-flex gap-2 items-center">
+                        <input type="checkbox" name="tags" value={tag} />
+                        <code className="font-mono text-xs">{tag}</code>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <textarea
+                  className={textareaClass}
+                  name="note"
+                  placeholder="Free-form note (optional if at least one tag is checked)"
+                  rows={3}
+                />
+                <Button type="submit">Record feedback</Button>
+              </form>
+            </Collapsible>
+
+            <Collapsible
+              title="Discard draft"
+              hint="Close the draft without sending. Captures a reason in the audit log. Cannot be undone."
+            >
+              <form action="/api/commands" method="post" className="space-y-3">
+                <input type="hidden" name="commandType" value="discard_draft" />
+                <input type="hidden" name="draftId" value={draft.id} />
+                <input type="hidden" name="expectedVersion" value={String(draft.version)} />
+                <textarea
+                  className={textareaClass}
+                  name="reason"
+                  placeholder="Reason for discarding"
+                  rows={3}
+                  required
+                />
+                <Button type="submit" tone="danger">
+                  Discard draft
+                </Button>
+              </form>
+            </Collapsible>
+          </>
         ) : null}
       </PageBody>
     </>
