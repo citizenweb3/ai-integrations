@@ -10255,27 +10255,29 @@ function normalizeSafeForCopyDomain(input: string | null | undefined): string | 
 
 function shouldAutoPromoteFactForCopy(
   evidence: readonly ResearchAgentEvidence[],
-  organizationDomain: string | null
+  _organizationDomain: string | null
 ): boolean {
-  let supportingEvidenceCount = 0;
-  let hasTrustedSource = false;
-  const distinctUrls = new Set<string>();
-
+  // Original gate required ≥2 supporting evidence from ≥2 distinct URLs
+  // with at least one trusted host. That was too strict for narrow /
+  // non-English / regional companies — research routinely surfaced 6+
+  // facts at confidence 85% but none of them carried two press
+  // articles from "trusted" hosts, so the validator saw zero active
+  // facts and every draft landed in `blocked_by_facts` until the
+  // operator either ran research_more (which never caught up) or
+  // force-overrode.
+  //
+  // Relaxed contract: any single supporting evidence row is enough to
+  // promote the fact to `active`. The agent's confidence score already
+  // gates trust, the operator reviews drafts before send, and most
+  // research evidence rows arrive with `source_url=null` anyway
+  // (search-result snippets, not URLs the agent can attribute), so
+  // requiring a URL on top of evidence existence threw away the bulk
+  // of usable facts.
   for (const item of evidence) {
     if ((item.supportType ?? "supports") !== "supports") continue;
-    const canonicalUrl = canonicalEvidenceUrl(item.sourceUrl);
-    if (!canonicalUrl) continue;
-
-    supportingEvidenceCount += 1;
-    distinctUrls.add(canonicalUrl);
-
-    const host = normalizeHostname(canonicalUrl);
-    if (host && isSafeForCopyTrustedHost(host, organizationDomain)) {
-      hasTrustedSource = true;
-    }
+    return true;
   }
-
-  return supportingEvidenceCount >= 2 && distinctUrls.size >= 2 && hasTrustedSource;
+  return false;
 }
 
 const CONFIDENCE_SCORE: Record<NonNullable<ResearchAgentFact["confidence"]>, number> = {
