@@ -20635,6 +20635,16 @@ export type CampaignListItem = {
   totalCandidates: number;
   pendingCandidates: number;
   progress: CampaignProgress;
+  // Same shape as CampaignDiscoveryView.liveActivity but computed in
+  // batch across every campaign in one SQL pass so the /campaigns
+  // listing can show a per-card "discovery / research / contacts /
+  // drafting still in flight" indicator without making N queries.
+  liveActivity: {
+    discoveryRunning: number;
+    researchInFlight: number;
+    contactDiscoveryInFlight: number;
+    draftingInFlight: number;
+  };
 };
 
 function emptyCampaignProgress(): CampaignProgress {
@@ -20881,10 +20891,127 @@ export async function listCampaignsForDashboard(limit = 100): Promise<CampaignLi
   });
 
   const progressMap = await getCampaignProgressMap(items.map((item) => item.id));
+  const activityMap = await getCampaignLiveActivityMap(items.map((item) => item.id));
   return items.map((item) => ({
     ...item,
-    progress: progressMap.get(item.id) ?? emptyCampaignProgress()
+    progress: progressMap.get(item.id) ?? emptyCampaignProgress(),
+    liveActivity:
+      activityMap.get(item.id) ?? {
+        discoveryRunning: 0,
+        researchInFlight: 0,
+        contactDiscoveryInFlight: 0,
+        draftingInFlight: 0,
+      },
   }));
+}
+
+// Batch counterpart to the liveActivity block in getCampaignDiscoveryView.
+// Returns one row per campaign with in-flight job counts grouped into the
+// four pipeline buckets the dashboard renders. Used by the /campaigns
+// listing so each card can show "background work" without spawning N
+// per-campaign view queries.
+async function getCampaignLiveActivityMap(
+  campaignIds: string[]
+): Promise<
+  Map<
+    string,
+    {
+      discoveryRunning: number;
+      researchInFlight: number;
+      contactDiscoveryInFlight: number;
+      draftingInFlight: number;
+    }
+  >
+> {
+  const ids = [...new Set(campaignIds)];
+  const map = new Map<
+    string,
+    {
+      discoveryRunning: number;
+      researchInFlight: number;
+      contactDiscoveryInFlight: number;
+      draftingInFlight: number;
+    }
+  >();
+  if (ids.length === 0) return map;
+  const db = getDb();
+  const idList = sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `);
+  const rows = await db.execute(sql`
+    with active_jobs as (
+      select id, job_type, target_entity_id
+      from jobs
+      where status in ('queued', 'leased', 'running')
+        and job_type in (
+          'job.run_campaign_discovery',
+          'job.refresh_research_snapshot',
+          'job.research_more',
+          'job.discover_contacts',
+          'job.generate_cold_draft',
+          'job.revalidate_draft_claims',
+          'job.revise_draft',
+          'job.validate_draft_claims'
+        )
+    ),
+    org_to_campaign as (
+      select distinct matched_organization_id as org_id, campaign_id
+      from discovery_candidates
+      where campaign_id in (${idList})
+        and matched_organization_id is not null
+    ),
+    draft_to_campaign as (
+      select id as draft_id, campaign_id
+      from drafts
+      where campaign_id in (${idList})
+    )
+    select
+      c.id as campaign_id,
+      count(*) filter (
+        where j.job_type = 'job.run_campaign_discovery'
+          and j.target_entity_id = c.id
+      )::int as discovery_running,
+      count(*) filter (
+        where j.job_type in ('job.refresh_research_snapshot', 'job.research_more')
+          and j.target_entity_id in (
+            select org_id from org_to_campaign where campaign_id = c.id
+          )
+      )::int as research_in_flight,
+      count(*) filter (
+        where j.job_type = 'job.discover_contacts'
+          and j.target_entity_id in (
+            select org_id from org_to_campaign where campaign_id = c.id
+          )
+      )::int as contact_discovery_in_flight,
+      count(*) filter (
+        where j.job_type in (
+          'job.generate_cold_draft',
+          'job.revalidate_draft_claims',
+          'job.revise_draft',
+          'job.validate_draft_claims'
+        )
+          and j.target_entity_id in (
+            select draft_id from draft_to_campaign where campaign_id = c.id
+          )
+      )::int as drafting_in_flight
+    from campaigns c
+    cross join active_jobs j
+    where c.id in (${idList})
+    group by c.id
+  `);
+  for (const row of rows as unknown as Array<{
+    campaign_id: string;
+    discovery_running: number;
+    research_in_flight: number;
+    contact_discovery_in_flight: number;
+    drafting_in_flight: number;
+  }>) {
+    map.set(row.campaign_id, {
+      discoveryRunning: Number(row.discovery_running),
+      researchInFlight: Number(row.research_in_flight),
+      contactDiscoveryInFlight: Number(row.contact_discovery_in_flight),
+      draftingInFlight: Number(row.drafting_in_flight),
+    });
+  }
+  return map;
 }
 
 export type DiscoveryCandidateView = {
