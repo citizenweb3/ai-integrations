@@ -33,8 +33,13 @@ export type AssistTurn =
   | { type: "question"; question: string; scope: null; inferred: InferredFlag[] }
   | { type: "ready"; question: null; scope: ScopeDraft; inferred: InferredFlag[] };
 
-const INITIAL_ASSISTANT_MESSAGE =
-  "Hi — let's build a campaign. To start, what's the goal of this outreach campaign? Try to be specific about who you want to reach and what you want them to do.";
+const INITIAL_ASSISTANT_MESSAGE = `Hi — let's build a campaign. The more you tell me up front, the fewer questions I'll need to ask.
+
+A good opening message looks like:
+
+  "I want to sell <product> to <audience>. The goal is <outcome the email should drive>. We're targeting <regions or 'global'>; aim for around <N> companies. The pitch in one sentence: <one-line offer>. The CTA should be <book a call / get demo / reply with intro>. Internal name: <short label>."
+
+You don't have to use every line — start with as much as you have and I'll ask about the rest one question at a time.`;
 
 const INITIAL_MESSAGES: Message[] = [
   { role: "assistant", content: INITIAL_ASSISTANT_MESSAGE },
@@ -48,11 +53,21 @@ export default function ScopeChat() {
   const [finalTurn, setFinalTurn] = useState<AssistTurn | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     const node = scrollRef.current;
     if (node) node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
   }, [messages.length, busy, finalTurn]);
+
+  // Re-focus the input as soon as the assistant turn lands so the operator
+  // can keep typing without reaching for the mouse. Skipped when the chat
+  // moves to the preview card (finalTurn) — there is no input to focus.
+  useEffect(() => {
+    if (!busy && !finalTurn) {
+      textareaRef.current?.focus();
+    }
+  }, [busy, finalTurn, messages.length]);
 
   async function send() {
     const trimmed = input.trim();
@@ -154,6 +169,7 @@ export default function ScopeChat() {
       {finalTurn ? null : (
         <div className="flex flex-col gap-2">
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -166,6 +182,7 @@ export default function ScopeChat() {
             disabled={busy}
             rows={3}
             className={textareaClass}
+            autoFocus
           />
           <div className="flex items-center justify-end gap-3">
             <span className="text-[11px] opacity-40">
