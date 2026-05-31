@@ -19828,6 +19828,15 @@ export type OrganizationDetail = {
   discoveryFitRationale: string | null;
   discoveryWebsiteUrl: string | null;
   discoveryRegion: string | null;
+  // Per-org pipeline activity. Counts jobs whose target_entity_id is
+  // this org and whose status is still queued / leased / running, so
+  // the org detail page can show "research is running, wait" instead
+  // of "no research snapshot yet" while the worker is mid-flight.
+  pipelineActivity: {
+    researchInFlight: number;
+    contactDiscoveryInFlight: number;
+    draftingInFlight: number;
+  };
   createdAt: Date;
   updatedAt: Date;
   stats: {
@@ -20076,6 +20085,42 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
     region: string | null;
   }>)[0] ?? null;
 
+  const pipelineRows = await db.execute(sql`
+    select job_type, count(*)::int as cnt
+    from jobs
+    where target_entity_id = ${id}::uuid
+      and status in ('queued', 'leased', 'running')
+      and job_type in (
+        'job.refresh_research_snapshot',
+        'job.research_more',
+        'job.discover_contacts',
+        'job.generate_cold_draft',
+        'job.revise_draft',
+        'job.validate_draft_claims'
+      )
+    group by job_type
+  `);
+  const pipelineActivity = (pipelineRows as unknown as Array<{
+    job_type: string;
+    cnt: number;
+  }>).reduce(
+    (acc, row) => {
+      if (row.job_type === "job.refresh_research_snapshot" || row.job_type === "job.research_more") {
+        acc.researchInFlight += row.cnt;
+      } else if (row.job_type === "job.discover_contacts") {
+        acc.contactDiscoveryInFlight += row.cnt;
+      } else if (
+        row.job_type === "job.generate_cold_draft" ||
+        row.job_type === "job.revise_draft" ||
+        row.job_type === "job.validate_draft_claims"
+      ) {
+        acc.draftingInFlight += row.cnt;
+      }
+      return acc;
+    },
+    { researchInFlight: 0, contactDiscoveryInFlight: 0, draftingInFlight: 0 },
+  );
+
   return {
     id: row.id,
     name: row.name,
@@ -20086,6 +20131,7 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
     discoveryFitRationale: latestCandidate?.fit_rationale ?? null,
     discoveryWebsiteUrl: latestCandidate?.website_url ?? null,
     discoveryRegion: latestCandidate?.region ?? null,
+    pipelineActivity,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     stats: {

@@ -14,6 +14,10 @@ import {
 import { deriveCampaignStage, type CampaignStageSnapshot } from "@/lib/campaign-stage";
 import { DismissableBanner } from "@/components/dismissable-banner";
 import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
+import {
+  BackgroundActivityStrip,
+  liveActivityTotal,
+} from "@/components/background-activity-strip";
 import { BackLink } from "@/components/back-link";
 import { formatRelativeTime } from "@/lib/format";
 
@@ -115,11 +119,7 @@ export default async function CampaignDetailPage({
         <AutoRefreshWhenActive
           active={
             view.scopeValidation.state === "pending" ||
-            view.liveActivity.discoveryRunning +
-              view.liveActivity.researchInFlight +
-              view.liveActivity.contactDiscoveryInFlight +
-              view.liveActivity.draftingInFlight >
-              0
+            liveActivityTotal(view.liveActivity) > 0
           }
         />
 
@@ -519,54 +519,6 @@ function ScopeIncompleteCallout({ view }: { view: CampaignDiscoveryViewModel }) 
           Open scope editor →
         </Link>
       </div>
-    </div>
-  );
-}
-
-// T-026AD/B: shows in-flight job counts for the four pipeline stages so the
-// operator can tell that "I just clicked Run discovery and nothing visible
-// changed" really means "the agent is running, hold on, refresh in a bit".
-// Renders nothing when no work is in flight to keep the page calm.
-function BackgroundActivityStrip({
-  activity
-}: {
-  activity: CampaignDiscoveryViewModel["liveActivity"];
-}) {
-  const items: Array<{ label: string; count: number }> = [
-    { label: "Discovery", count: activity.discoveryRunning },
-    { label: "Research", count: activity.researchInFlight },
-    { label: "Contact discovery", count: activity.contactDiscoveryInFlight },
-    { label: "Drafting", count: activity.draftingInFlight }
-  ];
-  const active = items.filter((item) => item.count > 0);
-  if (active.length === 0) {
-    return null;
-  }
-  return (
-    <div className="rounded-2xl border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-4">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full rounded-full bg-[var(--accent)] opacity-75 animate-ping" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[var(--accent)]" />
-          </span>
-          <span className="text-xs font-semibold tracking-[0.2em] uppercase text-[var(--accent)]">
-            Background work
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-4 text-sm">
-          {active.map((item) => (
-            <span key={item.label} className="opacity-90">
-              <span className="font-semibold">{item.count}</span>{" "}
-              <span className="opacity-70">{item.label}</span>
-            </span>
-          ))}
-        </div>
-      </div>
-      <p className="text-xs font-light opacity-60 mt-3">
-        Agent jobs are running on the worker pool. The page auto-refreshes every 5 seconds while
-        anything is in flight — leave it open and the counters will update on their own.
-      </p>
     </div>
   );
 }

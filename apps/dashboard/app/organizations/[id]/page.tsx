@@ -12,6 +12,11 @@ import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 import { Badge } from "@/components/ui";
 import { BackLink } from "@/components/back-link";
+import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
+import {
+  BackgroundActivityStrip,
+  liveActivityTotal,
+} from "@/components/background-activity-strip";
 
 // T-026AH/B: split the org detail page into tabs (research / contacts /
 // threads / timeline) so the operator sees one section at a time
@@ -89,6 +94,25 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
           <span className="opacity-40">·</span>
           <span className="opacity-60">Organisation detail</span>
         </div>
+
+        <BackgroundActivityStrip
+          activity={{
+            discoveryRunning: 0,
+            researchInFlight: org.pipelineActivity.researchInFlight,
+            contactDiscoveryInFlight: org.pipelineActivity.contactDiscoveryInFlight,
+            draftingInFlight: org.pipelineActivity.draftingInFlight,
+          }}
+        />
+        <AutoRefreshWhenActive
+          active={
+            liveActivityTotal({
+              discoveryRunning: 0,
+              researchInFlight: org.pipelineActivity.researchInFlight,
+              contactDiscoveryInFlight: org.pipelineActivity.contactDiscoveryInFlight,
+              draftingInFlight: org.pipelineActivity.draftingInFlight,
+            }) > 0
+          }
+        />
 
         {org.discoveryFitRationale || org.discoveryWebsiteUrl ? (
           <Card>

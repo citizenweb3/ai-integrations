@@ -5,6 +5,11 @@ import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import { Badge, PageBody } from "@/components/ui";
 import { OrgListingCard } from "@/components/org-listing-card";
+import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
+import {
+  BackgroundActivityStrip,
+  liveActivityTotal,
+} from "@/components/background-activity-strip";
 
 // T-026AO/B: per-campaign organisations subpage. The flat /organizations
 // listing became a hub of campaign cards; the actual organisation
@@ -64,18 +69,30 @@ export default async function CampaignOrganizationsPage({
           </span>
         </div>
 
+        <BackgroundActivityStrip activity={view.liveActivity} />
+        <AutoRefreshWhenActive active={liveActivityTotal(view.liveActivity) > 0} />
+
         {orgs.length === 0 ? (
           <Card>
-            <p className="text-sm font-light opacity-80">
-              No organisations accepted from this campaign yet. Accept a candidate from the{" "}
-              <Link
-                href={`/campaigns/${view.campaign.id}/candidates`}
-                className="text-[hsl(var(--primary))]"
-              >
-                candidate triage page
-              </Link>{" "}
-              and the org will land here once research_snapshot runs.
-            </p>
+            {liveActivityTotal(view.liveActivity) > 0 ? (
+              <p className="text-sm font-light opacity-80">
+                Discovery is running for this campaign right now — organisations
+                will appear here as soon as the agent accepts the first
+                candidate. The page auto-refreshes every 5 seconds while
+                background work is in flight; you do not need to reload.
+              </p>
+            ) : (
+              <p className="text-sm font-light opacity-80">
+                No organisations accepted from this campaign yet. Accept a candidate from the{" "}
+                <Link
+                  href={`/campaigns/${view.campaign.id}/candidates`}
+                  className="text-[hsl(var(--primary))]"
+                >
+                  candidate triage page
+                </Link>{" "}
+                and the org will land here once research_snapshot runs.
+              </p>
+            )}
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
