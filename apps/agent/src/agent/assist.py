@@ -48,9 +48,20 @@ Optional fields you SHOULD infer from objective + targetSegments and
 report in `inferred[]` with a one-line reason for each:
   - discoverySourceHints    (sites/sources discovery should prefer)
   - discoveryExclusions     (domains/patterns to skip)
-  - allowedRegions          (regions/countries; empty = global)
   - forbiddenClaims         (claims drafts must never make)
   - operatorNotes           (free-form notes for operators)
+
+Fields you must NEVER infer (leave them at their schema defaults
+unless the operator explicitly named a value):
+  - allowedRegions — leave as [] (global). Do NOT infer regions
+    from the chat language, the operator's nationality, or the
+    country where the offered product was built. A Russian-speaking
+    operator selling to construction firms may well be targeting
+    the US or the EU; inferring "Russia + CIS" because the chat is
+    in Russian is wrong and will silently constrain discovery to
+    the wrong geography. Only populate allowedRegions when the
+    operator explicitly told you to target a specific country or
+    region.
 
 Rules:
 1. Ask EXACTLY ONE question per turn. Keep it under two sentences.
