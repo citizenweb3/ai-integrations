@@ -28,8 +28,12 @@ export function OrgListingCard({
           <div className="min-w-0">
             <h3 className="text-xl font-bold tracking-[0.02em] truncate">{org.name}</h3>
             <div className="text-sm font-light opacity-70 mt-1 truncate">
-              {org.domain ?? "no domain"}
-              {org.countryCode ? ` · ${org.countryCode}` : ""}
+              {org.discoveryWebsiteUrl ?? org.domain ?? "no domain"}
+              {org.discoveryRegion
+                ? ` · ${org.discoveryRegion}`
+                : org.countryCode
+                  ? ` · ${org.countryCode}`
+                  : ""}
             </div>
           </div>
           <div className="flex flex-col items-end gap-1 shrink-0">
@@ -66,6 +70,12 @@ export function OrgListingCard({
               </span>
             ))}
           </div>
+        ) : null}
+
+        {org.discoveryFitRationale ? (
+          <p className="text-sm font-light opacity-75 leading-snug mt-2 line-clamp-3">
+            {org.discoveryFitRationale}
+          </p>
         ) : null}
 
         <div className="grid grid-cols-2 gap-x-4 gap-y-5 mt-6">

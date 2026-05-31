@@ -19571,6 +19571,17 @@ export type OrganizationListItem = {
   campaigns: Array<{ id: string; name: string }>;
   latestSnapshotVersion: number | null;
   latestSnapshotStatus: string | null;
+  // Latest discovery candidate's fit context — surfaced on the org card
+  // and the org detail page so the operator sees WHY the agent picked
+  // this organisation without drilling into the candidate triage page.
+  // `discoveryFitRationale` is the LLM's one-paragraph reasoning,
+  // `discoveryWebsiteUrl` is the full URL (often more useful than the
+  // bare domain), and `discoveryRegion` is the city or area the agent
+  // attached to the candidate. All three are nullable because a row
+  // may exist that pre-dates this surface.
+  discoveryFitRationale: string | null;
+  discoveryWebsiteUrl: string | null;
+  discoveryRegion: string | null;
   updatedAt: Date;
 };
 
@@ -19607,7 +19618,10 @@ export async function listOrganizationsForDashboard(
       coalesce(ae.cnt, 0)::int as addressable_email_count,
       coalesce(cam.campaigns_json, '[]'::jsonb) as campaigns_json,
       s.snapshot_version as latest_snapshot_version,
-      s.status as latest_snapshot_status
+      s.status as latest_snapshot_status,
+      dcx.fit_rationale as discovery_fit_rationale,
+      dcx.website_url as discovery_website_url,
+      dcx.region as discovery_region
     from organizations o
     left join (
       select organization_id, count(*) as cnt
@@ -19673,6 +19687,17 @@ export async function listOrganizationsForDashboard(
       order by snapshot_version desc
       limit 1
     ) s on true
+    left join lateral (
+      -- Pick the most recent matched discovery candidate so the org
+      -- card can surface the LLM's fit rationale, the full website
+      -- URL, and the agent-assigned region. Falls back gracefully
+      -- (all nulls) for legacy orgs that have no candidate row.
+      select dc.fit_rationale, dc.website_url, dc.region
+      from discovery_candidates dc
+      where dc.matched_organization_id = o.id
+      order by dc.created_at desc
+      limit 1
+    ) dcx on true
     ${campaignFilter}
     order by
       -- T-026AR: orgs with at least one addressable email surface
@@ -19697,6 +19722,9 @@ export async function listOrganizationsForDashboard(
     campaigns_json: Array<{ id: string; name: string }> | string | null;
     latest_snapshot_version: number | null;
     latest_snapshot_status: string | null;
+    discovery_fit_rationale: string | null;
+    discovery_website_url: string | null;
+    discovery_region: string | null;
   }>).map((r) => ({
     id: r.id,
     name: r.name,
@@ -19714,6 +19742,9 @@ export async function listOrganizationsForDashboard(
       : [],
     latestSnapshotVersion: r.latest_snapshot_version,
     latestSnapshotStatus: r.latest_snapshot_status,
+    discoveryFitRationale: r.discovery_fit_rationale,
+    discoveryWebsiteUrl: r.discovery_website_url,
+    discoveryRegion: r.discovery_region,
     updatedAt: r.updated_at instanceof Date ? r.updated_at : new Date(r.updated_at)
   }));
 }
@@ -19791,6 +19822,12 @@ export type OrganizationDetail = {
   // Generate AI draft form's campaign dropdown so the operator does
   // not have to remember or look up the campaign UUID.
   sourceCampaigns: Array<{ id: string; name: string }>;
+  // Latest discovery candidate's fit context — same fields the org
+  // listing card surfaces, just hoisted to the detail page so the
+  // operator can read the agent's WHY without leaving the org.
+  discoveryFitRationale: string | null;
+  discoveryWebsiteUrl: string | null;
+  discoveryRegion: string | null;
   createdAt: Date;
   updatedAt: Date;
   stats: {
@@ -20026,6 +20063,19 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
     (r) => ({ id: r.id, name: r.name })
   );
 
+  const latestCandidateRows = await db.execute(sql`
+    select fit_rationale, website_url, region
+    from discovery_candidates
+    where matched_organization_id = ${id}::uuid
+    order by created_at desc
+    limit 1
+  `);
+  const latestCandidate = (latestCandidateRows as unknown as Array<{
+    fit_rationale: string | null;
+    website_url: string | null;
+    region: string | null;
+  }>)[0] ?? null;
+
   return {
     id: row.id,
     name: row.name,
@@ -20033,6 +20083,9 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
     countryCode: row.countryCode ?? null,
     primaryContactId: row.primaryContactId ?? null,
     sourceCampaigns,
+    discoveryFitRationale: latestCandidate?.fit_rationale ?? null,
+    discoveryWebsiteUrl: latestCandidate?.website_url ?? null,
+    discoveryRegion: latestCandidate?.region ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     stats: {

@@ -73,8 +73,12 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
         title={org.name}
         subtitle={
           <>
-            {org.domain ?? "no domain"}
-            {org.countryCode ? ` · ${org.countryCode}` : ""}
+            {org.discoveryWebsiteUrl ?? org.domain ?? "no domain"}
+            {org.discoveryRegion
+              ? ` · ${org.discoveryRegion}`
+              : org.countryCode
+                ? ` · ${org.countryCode}`
+                : ""}
           </>
         }
       />
@@ -85,6 +89,36 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
           <span className="opacity-40">·</span>
           <span className="opacity-60">Organisation detail</span>
         </div>
+
+        {org.discoveryFitRationale || org.discoveryWebsiteUrl ? (
+          <Card>
+            <div className="flex items-baseline justify-between gap-3 mb-2">
+              <div className="text-xs font-semibold tracking-[0.2em] uppercase opacity-70">
+                Why the agent picked this org
+              </div>
+              {org.discoveryWebsiteUrl ? (
+                <a
+                  href={org.discoveryWebsiteUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)] hover:opacity-80"
+                >
+                  Open website ↗
+                </a>
+              ) : null}
+            </div>
+            {org.discoveryFitRationale ? (
+              <p className="text-sm font-light opacity-90 leading-relaxed whitespace-pre-wrap">
+                {org.discoveryFitRationale}
+              </p>
+            ) : (
+              <p className="text-sm font-light opacity-60">
+                Discovery left no rationale for this org. Open the candidate
+                triage page to see the original source references.
+              </p>
+            )}
+          </Card>
+        ) : null}
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <StatCard
