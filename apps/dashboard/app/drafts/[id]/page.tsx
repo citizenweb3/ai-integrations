@@ -19,6 +19,7 @@ import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 import { BackLink } from "@/components/back-link";
 import { Badge, Button, InfoRow, MetricCard, PageBody, inputClass, textareaClass } from "@/components/ui";
+import { SideDrawer } from "@/components/side-drawer";
 
 export const dynamic = "force-dynamic";
 
@@ -891,151 +892,164 @@ export default async function DraftDetailPage({ params }: Props) {
           <>
             <GroupHeader
               title="Modify"
-              hint="Optional. Open one of the panels below to change the body manually, ask the agent to revise, pull more research, record feedback, or discard the draft."
+              hint="Optional write actions. Each button opens a side panel with the relevant form. The page underneath stays where it is."
             />
 
-            <Collapsible
-              title="Edit body manually (saves new version)"
-              hint="Direct edit. Saves as a new version; the previous version stays in history."
-            >
-              <form action="/api/commands" method="post" className="space-y-3">
-                <input type="hidden" name="commandType" value="request_manual_edit_save" />
-                <input type="hidden" name="draftId" value={draft.id} />
-                <input type="hidden" name="expectedVersion" value={String(draft.version)} />
-                <input className={inputClass} name="subject" defaultValue={draft.subject} required />
-                <textarea
-                  className={textareaClass}
-                  name="body"
-                  defaultValue={draft.body}
-                  required
-                  rows={12}
-                />
-                <textarea
-                  className={textareaClass}
-                  name="notes"
-                  placeholder="Edit notes (optional)"
-                />
-                <Button type="submit">Save as v{draft.version + 1}</Button>
-              </form>
-            </Collapsible>
-
-            <Collapsible
-              title="Ask the AI to revise"
-              hint="Enqueues job.revise_draft in the drafting pool. The agent reads the current version + your feedback + the latest research snapshot, then writes a new version with re-validated claims."
-            >
-              <form action="/api/commands" method="post" className="space-y-3">
-                <input type="hidden" name="commandType" value="request_ai_revise" />
-                <input type="hidden" name="draftId" value={draft.id} />
-                <input type="hidden" name="expectedVersion" value={String(draft.version)} />
-                <textarea
-                  className={textareaClass}
-                  name="operatorFeedback"
-                  placeholder="What to change: tone, angle, ask, claims to drop, new angle to push..."
-                  required
-                  rows={5}
-                />
-                <Button type="submit">Request AI revise</Button>
-              </form>
-            </Collapsible>
-
-            {draftOrgId ? (
-              <Collapsible
-                title="Pull more research on this organisation"
-                hint="Enqueues job.research_more in the background pool. The agent runs targeted searches against the flagged claims + your note, then writes a new research_snapshot version."
+            <div className="grid grid-cols-1 gap-3">
+              <SideDrawer
+                triggerLabel="Edit body manually"
+                description="Direct edit. Saves as a new version; previous one stays in history."
+                title={`Edit draft v${draft.version} → v${draft.version + 1}`}
               >
                 <form action="/api/commands" method="post" className="space-y-3">
-                  <input type="hidden" name="commandType" value="request_research_more" />
-                  <input type="hidden" name="organizationId" value={draftOrgId} />
+                  <input type="hidden" name="commandType" value="request_manual_edit_save" />
                   <input type="hidden" name="draftId" value={draft.id} />
-                  {draft.campaign ? (
-                    <input type="hidden" name="campaignId" value={draft.campaign.id} />
-                  ) : null}
-                  {needsReviewClaims.length > 0 ? (
-                    <fieldset className="border border-white/15 rounded-lg p-3">
-                      <legend className="text-xs opacity-60 px-2">
-                        Flag claims to investigate (optional)
-                      </legend>
-                      {needsReviewClaims.map((claim) => (
-                        <label key={claim.id} className="flex gap-2 items-start mb-2">
-                          <input
-                            type="checkbox"
-                            name="unsupportedClaimIds"
-                            value={claim.id}
-                            defaultChecked
-                            className="mt-1"
-                          />
-                          <span className="text-sm">{claim.claimText}</span>
-                        </label>
-                      ))}
-                    </fieldset>
-                  ) : (
-                    <p className="text-sm font-light opacity-60">
-                      No <code className="font-mono text-xs">needs_review</code> claims on this
-                      draft — submit with the operator note alone if you still want broader
-                      research.
-                    </p>
-                  )}
+                  <input type="hidden" name="expectedVersion" value={String(draft.version)} />
+                  <input
+                    className={inputClass}
+                    name="subject"
+                    defaultValue={draft.subject}
+                    required
+                  />
                   <textarea
                     className={textareaClass}
-                    name="operatorNote"
-                    placeholder="What to look for: market signals, recent press, competitors, hiring, named people..."
-                    rows={4}
-                    required={needsReviewClaims.length === 0}
+                    name="body"
+                    defaultValue={draft.body}
+                    required
+                    rows={14}
                   />
-                  <Button type="submit">Request research more</Button>
+                  <textarea
+                    className={textareaClass}
+                    name="notes"
+                    placeholder="Edit notes (optional)"
+                  />
+                  <Button type="submit">Save as v{draft.version + 1}</Button>
                 </form>
-              </Collapsible>
-            ) : null}
+              </SideDrawer>
 
-            <Collapsible
-              title="Record feedback on this draft"
-              hint="Standalone explicit signal — used by the quality/corpus scoring and surfaces in the feedback log above. Pick at least one tag or write a note."
-            >
-              <form action="/api/commands" method="post" className="space-y-3">
-                <input type="hidden" name="commandType" value="record_draft_feedback" />
-                <input type="hidden" name="draftId" value={draft.id} />
-                <input type="hidden" name="draftVersion" value={String(draft.version)} />
-                <fieldset className="border border-white/15 rounded-lg p-3">
-                  <legend className="text-xs opacity-60 px-2">Tags</legend>
-                  <div className="flex flex-wrap gap-3">
-                    {draftFeedbackTags.map((tag) => (
-                      <label key={tag} className="inline-flex gap-2 items-center">
-                        <input type="checkbox" name="tags" value={tag} />
-                        <code className="font-mono text-xs">{tag}</code>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-                <textarea
-                  className={textareaClass}
-                  name="note"
-                  placeholder="Free-form note (optional if at least one tag is checked)"
-                  rows={3}
-                />
-                <Button type="submit">Record feedback</Button>
-              </form>
-            </Collapsible>
+              <SideDrawer
+                triggerLabel="Ask the AI to revise"
+                description="Enqueues job.revise_draft. Agent reads current version + your feedback + latest research, writes a new version with revalidated claims."
+                title="Request AI revise"
+              >
+                <form action="/api/commands" method="post" className="space-y-3">
+                  <input type="hidden" name="commandType" value="request_ai_revise" />
+                  <input type="hidden" name="draftId" value={draft.id} />
+                  <input type="hidden" name="expectedVersion" value={String(draft.version)} />
+                  <textarea
+                    className={textareaClass}
+                    name="operatorFeedback"
+                    placeholder="What to change: tone, angle, ask, claims to drop, new angle to push..."
+                    required
+                    rows={6}
+                  />
+                  <Button type="submit">Request AI revise</Button>
+                </form>
+              </SideDrawer>
 
-            <Collapsible
-              title="Discard draft"
-              hint="Close the draft without sending. Captures a reason in the audit log. Cannot be undone."
-            >
-              <form action="/api/commands" method="post" className="space-y-3">
-                <input type="hidden" name="commandType" value="discard_draft" />
-                <input type="hidden" name="draftId" value={draft.id} />
-                <input type="hidden" name="expectedVersion" value={String(draft.version)} />
-                <textarea
-                  className={textareaClass}
-                  name="reason"
-                  placeholder="Reason for discarding"
-                  rows={3}
-                  required
-                />
-                <Button type="submit" tone="danger">
-                  Discard draft
-                </Button>
-              </form>
-            </Collapsible>
+              {draftOrgId ? (
+                <SideDrawer
+                  triggerLabel="Pull more research on this organisation"
+                  description="Enqueues job.research_more. Agent runs targeted searches and writes a new research_snapshot version."
+                  title="Request more research"
+                >
+                  <form action="/api/commands" method="post" className="space-y-3">
+                    <input type="hidden" name="commandType" value="request_research_more" />
+                    <input type="hidden" name="organizationId" value={draftOrgId} />
+                    <input type="hidden" name="draftId" value={draft.id} />
+                    {draft.campaign ? (
+                      <input type="hidden" name="campaignId" value={draft.campaign.id} />
+                    ) : null}
+                    {needsReviewClaims.length > 0 ? (
+                      <fieldset className="border border-white/15 rounded-lg p-3">
+                        <legend className="text-xs opacity-60 px-2">
+                          Flag claims to investigate (optional)
+                        </legend>
+                        {needsReviewClaims.map((claim) => (
+                          <label key={claim.id} className="flex gap-2 items-start mb-2">
+                            <input
+                              type="checkbox"
+                              name="unsupportedClaimIds"
+                              value={claim.id}
+                              defaultChecked
+                              className="mt-1"
+                            />
+                            <span className="text-sm">{claim.claimText}</span>
+                          </label>
+                        ))}
+                      </fieldset>
+                    ) : (
+                      <p className="text-sm font-light opacity-60">
+                        No <code className="font-mono text-xs">needs_review</code> claims on this
+                        draft — submit with the operator note alone if you still want broader
+                        research.
+                      </p>
+                    )}
+                    <textarea
+                      className={textareaClass}
+                      name="operatorNote"
+                      placeholder="What to look for: market signals, recent press, competitors, hiring, named people..."
+                      rows={5}
+                      required={needsReviewClaims.length === 0}
+                    />
+                    <Button type="submit">Request research more</Button>
+                  </form>
+                </SideDrawer>
+              ) : null}
+
+              <SideDrawer
+                triggerLabel="Record feedback on this draft"
+                description="Standalone explicit signal — feeds the quality / corpus scoring and lands in the feedback log."
+                title="Record feedback"
+              >
+                <form action="/api/commands" method="post" className="space-y-3">
+                  <input type="hidden" name="commandType" value="record_draft_feedback" />
+                  <input type="hidden" name="draftId" value={draft.id} />
+                  <input type="hidden" name="draftVersion" value={String(draft.version)} />
+                  <fieldset className="border border-white/15 rounded-lg p-3">
+                    <legend className="text-xs opacity-60 px-2">Tags</legend>
+                    <div className="flex flex-wrap gap-3">
+                      {draftFeedbackTags.map((tag) => (
+                        <label key={tag} className="inline-flex gap-2 items-center">
+                          <input type="checkbox" name="tags" value={tag} />
+                          <code className="font-mono text-xs">{tag}</code>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <textarea
+                    className={textareaClass}
+                    name="note"
+                    placeholder="Free-form note (optional if at least one tag is checked)"
+                    rows={4}
+                  />
+                  <Button type="submit">Record feedback</Button>
+                </form>
+              </SideDrawer>
+
+              <SideDrawer
+                triggerLabel="Discard draft"
+                description="Close the draft without sending. Captures a reason in the audit log. Cannot be undone."
+                title="Discard draft"
+                triggerTone="danger"
+              >
+                <form action="/api/commands" method="post" className="space-y-3">
+                  <input type="hidden" name="commandType" value="discard_draft" />
+                  <input type="hidden" name="draftId" value={draft.id} />
+                  <input type="hidden" name="expectedVersion" value={String(draft.version)} />
+                  <textarea
+                    className={textareaClass}
+                    name="reason"
+                    placeholder="Reason for discarding"
+                    rows={4}
+                    required
+                  />
+                  <Button type="submit" tone="danger">
+                    Discard draft
+                  </Button>
+                </form>
+              </SideDrawer>
+            </div>
           </>
         ) : null}
       </PageBody>
