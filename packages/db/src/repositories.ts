@@ -20680,6 +20680,20 @@ export type OrganizationDetail = {
       }>;
     }>;
   } | null;
+  // T-026BI: the org's current draft (one per org). Powers the org-page draft
+  // panel — preview + open/send/discard/regenerate. Null when none exists yet
+  // (e.g. auto-generation hasn't fired or the only draft was discarded).
+  latestDraft: {
+    id: string;
+    version: number;
+    status: string;
+    subject: string;
+    bodyExcerpt: string;
+    contactEmail: string | null;
+    contactName: string | null;
+    qualityScoreBand: string | null;
+    autosendReadiness: string | null;
+  } | null;
   contacts: Array<{
     id: string;
     email: string | null;
@@ -20884,6 +20898,45 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
     (r) => ({ id: r.id, name: r.name })
   );
 
+  // T-026BI: the org's current draft (one per org), linked via its contact.
+  // Most-recent non-discarded draft drives the org-page draft panel. Body is
+  // truncated to a short excerpt for the preview card.
+  const latestDraftRows = await db.execute(sql`
+    select d.id, d.version, d.status, d.subject,
+           left(d.body, 300) as body_excerpt,
+           d.quality_score_band, d.autosend_readiness,
+           c.email as contact_email, c.full_name as contact_name
+    from drafts d
+    join contacts c on c.id = d.contact_id
+    where c.organization_id = ${id}::uuid
+      and d.status <> 'discarded'
+    order by d.created_at desc
+    limit 1
+  `) as unknown as Array<{
+    id: string;
+    version: number;
+    status: string;
+    subject: string;
+    body_excerpt: string | null;
+    quality_score_band: string | null;
+    autosend_readiness: string | null;
+    contact_email: string | null;
+    contact_name: string | null;
+  }>;
+  const latestDraft: OrganizationDetail["latestDraft"] = latestDraftRows[0]
+    ? {
+        id: latestDraftRows[0].id,
+        version: latestDraftRows[0].version,
+        status: latestDraftRows[0].status,
+        subject: latestDraftRows[0].subject,
+        bodyExcerpt: latestDraftRows[0].body_excerpt ?? "",
+        contactEmail: latestDraftRows[0].contact_email,
+        contactName: latestDraftRows[0].contact_name,
+        qualityScoreBand: latestDraftRows[0].quality_score_band,
+        autosendReadiness: latestDraftRows[0].autosend_readiness
+      }
+    : null;
+
   const latestCandidateRows = await db.execute(sql`
     select fit_rationale, website_url, region
     from discovery_candidates
@@ -20955,6 +21008,7 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
       openWorkItems: workItemRows.length
     },
     latestSnapshot,
+    latestDraft,
     contacts: contactRows.map((c) => ({
       id: c.id,
       email: c.email,

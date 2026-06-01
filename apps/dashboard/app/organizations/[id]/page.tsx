@@ -308,6 +308,8 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
           />
         ) : null}
 
+        {activeTab === "research" ? <OrgDraftPanel draft={org.latestDraft} /> : null}
+
         {activeTab === "threads" ? (
         <Card>
           <BlockTitle title="Threads" className="mb-4 text-left" />
@@ -976,6 +978,109 @@ function SnapshotPanel({
           ))}
         </ul>
       ) : null}
+    </Card>
+  );
+}
+
+// T-026BI: org-page draft panel. Shows the org's single auto-generated cold
+// draft — subject, recipient, body excerpt, status — with the actions the
+// operator would otherwise have to hunt for on the draft page. Send/Discard/
+// Regenerate post the existing commands; Open/Edit deep-link into the draft.
+function OrgDraftPanel({
+  draft
+}: {
+  draft: NonNullable<Awaited<ReturnType<typeof getOrganizationDetail>>>["latestDraft"];
+}) {
+  if (!draft) {
+    return (
+      <Card>
+        <BlockTitle title="Outreach draft" className="mb-2 text-left" />
+        <p className="text-sm font-light opacity-60">
+          No draft yet. One is generated automatically once research is verified and an
+          addressable contact is found — or use “Generate AI draft” below.
+        </p>
+      </Card>
+    );
+  }
+
+  const isOpen = draft.status === "draft";
+  const isSent = draft.status === "sent" || draft.status === "sending" || draft.status === "approved" || draft.status === "approved_pending_send";
+  const isFailed = draft.status === "send_failed_post_approve";
+  const statusTone = isSent ? "accent" : isFailed ? "danger" : "default";
+  const statusLabel = isSent
+    ? "✓ Sent / sending"
+    : isFailed
+      ? "⚠ Send failed"
+      : "Ready for review";
+
+  return (
+    <Card>
+      <div className="flex justify-between items-start flex-wrap gap-3 mb-4">
+        <div>
+          <BlockTitle title="Outreach draft" className="mb-1 text-left" />
+          <p className="text-sm opacity-70 font-light">
+            <Badge tone={statusTone}>{statusLabel}</Badge>
+            {draft.qualityScoreBand ? (
+              <span className="ml-2 text-xs opacity-60">quality: {draft.qualityScoreBand}</span>
+            ) : null}
+            {draft.autosendReadiness ? (
+              <span className="ml-2 text-xs opacity-60">· {draft.autosendReadiness}</span>
+            ) : null}
+          </p>
+        </div>
+      </div>
+
+      <div className="border border-white/10 rounded-xl p-4 bg-black/20 space-y-2">
+        <div className="text-xs opacity-60">
+          To: {draft.contactName ? `${draft.contactName} · ` : ""}
+          <span className="font-mono">{draft.contactEmail ?? "no email"}</span>
+        </div>
+        <div className="text-sm font-medium">{draft.subject}</div>
+        <p className="text-sm font-light opacity-70 whitespace-pre-wrap leading-snug">
+          {draft.bodyExcerpt}
+          {draft.bodyExcerpt.length >= 300 ? "…" : ""}
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2 mt-4">
+        <Link
+          href={`/drafts/${draft.id}`}
+          className="rounded-lg border border-white/15 px-4 py-2 text-sm hover:bg-white/5"
+        >
+          Open / Edit
+        </Link>
+        {isOpen ? (
+          <>
+            <form action="/api/commands" method="post">
+              <input type="hidden" name="commandType" value="approve_draft_for_send" />
+              <input type="hidden" name="draftId" value={draft.id} />
+              <input type="hidden" name="draftVersion" value={String(draft.version)} />
+              <button
+                type="submit"
+                className="rounded-lg bg-[hsl(var(--primary))] text-black font-bold px-4 py-2 text-sm hover:opacity-90"
+              >
+                Send
+              </button>
+            </form>
+            <form action="/api/commands" method="post">
+              <input type="hidden" name="commandType" value="discard_draft" />
+              <input type="hidden" name="draftId" value={draft.id} />
+              <input type="hidden" name="expectedVersion" value={String(draft.version)} />
+              <input type="hidden" name="reason" value="Discarded from org page" />
+              <button
+                type="submit"
+                className="rounded-lg border border-red-500/40 text-red-300 px-4 py-2 text-sm hover:bg-red-500/10"
+              >
+                Discard
+              </button>
+            </form>
+          </>
+        ) : null}
+      </div>
+      <p className="text-xs opacity-50 mt-2">
+        Send re-checks pre-send guardrails. To change the email, edit the contact on the draft
+        page.
+      </p>
     </Card>
   );
 }
