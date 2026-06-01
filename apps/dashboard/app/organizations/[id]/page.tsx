@@ -877,6 +877,21 @@ function SnapshotPanel({
               <span title="Snapshot version. Bumps every time the snapshot is refreshed.">
                 research v{snapshot.version}
               </span>{" · "}
+              {snapshot.status === "published" ? (
+                <span
+                  title="This snapshot passed the research quality gate (enough verified facts to ground a draft)."
+                  className="text-emerald-400 font-medium"
+                >
+                  ✓ verified
+                </span>
+              ) : (
+                <span
+                  title="Snapshot recorded but not yet passed the quality gate. The agent may still be enriching it, or the gate flagged it as too thin."
+                  className="opacity-60"
+                >
+                  unverified
+                </span>
+              )}{" · "}
               {new Date(snapshot.createdAt).toISOString().slice(0, 19).replace("T", " ")}{" · "}
               <span title="Number of distinct facts the agent extracted into this snapshot.">
                 {snapshot.facts.length} fact{snapshot.facts.length === 1 ? "" : "s"}
@@ -901,7 +916,7 @@ function SnapshotPanel({
             type="submit"
             className="rounded-lg bg-[hsl(var(--primary))] text-black font-bold px-4 py-2 text-sm hover:opacity-90"
           >
-            {snapshot ? "Refresh snapshot" : "Run research"}
+            {snapshot ? "Refresh research (whole org)" : "Run research (whole org)"}
           </button>
         </form>
       </div>

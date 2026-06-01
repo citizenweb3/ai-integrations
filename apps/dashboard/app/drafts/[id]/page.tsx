@@ -300,6 +300,18 @@ export default async function DraftDetailPage({ params }: Props) {
                   </span>
                 }
               />
+              {/* Plain-language why: the readiness label is derived from the
+                  quality score + claim safety, not a separate judgement. The
+                  bands trip operators ("why low_confidence when it looks
+                  fine?"), so spell out the thresholds inline. */}
+              {draft.autosendReadiness === "low_confidence" || draft.autosendReadiness === "promising" ? (
+                <p className="text-xs font-light opacity-55 leading-snug text-right">
+                  Score {draft.qualityScore}/100 — needs ≥75 for{" "}
+                  <span className="text-emerald-400">promising</span>, ≥55 is{" "}
+                  <span className="text-yellow-400">low_confidence</span>. Not a blocker; it
+                  just means review before sending. See Reasons below for what moved the score.
+                </p>
+              ) : null}
               {draft.qualityScoreReasons.length > 0 ? (
                 <InfoRow
                   label="Reasons"
@@ -483,7 +495,7 @@ export default async function DraftDetailPage({ params }: Props) {
               <p className="text-sm font-light opacity-60">
                 No research snapshot for this organization. Approve & send is hard-blocked by{" "}
                 <code className="font-mono text-xs">claims_stale</code> until a snapshot lands.
-                Trigger Refresh research / Request research more under Modify.
+                Trigger “Investigate flagged claims” under Modify, or refresh research on the org page.
               </p>
             </>
           ) : (
@@ -493,12 +505,27 @@ export default async function DraftDetailPage({ params }: Props) {
                 {researchContext.organization.domain
                   ? ` · ${researchContext.organization.domain}`
                   : ""}{" "}
-                · snapshot v{researchContext.snapshot.version} ({researchContext.snapshot.status}) ·{" "}
+                · snapshot v{researchContext.snapshot.version} ·{" "}
+                {researchContext.snapshot.status === "published" ? (
+                  <span
+                    className="text-emerald-400 font-medium"
+                    title="Passed the research quality gate — enough verified facts to ground a draft."
+                  >
+                    ✓ verified
+                  </span>
+                ) : (
+                  <span
+                    className="opacity-60"
+                    title="Not yet passed the quality gate (still enriching, or flagged as too thin)."
+                  >
+                    unverified
+                  </span>
+                )}{" · "}
                 {researchContext.snapshot.createdAt.toISOString()}
               </p>
               {researchContext.facts.length === 0 ? (
                 <p className="text-sm font-light opacity-60">
-                  Snapshot has no active facts. Try Request more research under Modify.
+                  Snapshot has no active facts. Try “Investigate flagged claims” under Modify.
                 </p>
               ) : (
                 <>
@@ -949,9 +976,9 @@ export default async function DraftDetailPage({ params }: Props) {
 
               {draftOrgId ? (
                 <SideDrawer
-                  triggerLabel="Pull more research on this organisation"
-                  description="Enqueues job.research_more. Agent runs targeted searches and writes a new research_snapshot version."
-                  title="Request more research"
+                  triggerLabel="Investigate flagged claims (targeted research)"
+                  description="Targeted re-research for THIS draft: the agent searches specifically for the claims you flag below, then writes a new snapshot version. Different from the org page's whole-org refresh."
+                  title="Investigate flagged claims"
                 >
                   <form action="/api/commands" method="post" className="space-y-3">
                     <input type="hidden" name="commandType" value="request_research_more" />
@@ -992,7 +1019,7 @@ export default async function DraftDetailPage({ params }: Props) {
                       rows={5}
                       required={needsReviewClaims.length === 0}
                     />
-                    <Button type="submit">Request research more</Button>
+                    <Button type="submit">Investigate flagged claims</Button>
                   </form>
                 </SideDrawer>
               ) : null}
