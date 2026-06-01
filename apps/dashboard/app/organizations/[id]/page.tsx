@@ -11,6 +11,7 @@ import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 import { Badge } from "@/components/ui";
+import { SideDrawer } from "@/components/side-drawer";
 import { BackLink } from "@/components/back-link";
 import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
 import {
@@ -180,11 +181,17 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
-            <BlockTitle title="Generate AI draft" className="mb-4 text-left" />
-            <p className="text-sm font-light opacity-70 mb-4">
-              Enqueues <code className="text-[var(--accent)]">job.generate_cold_draft</code>. Agent receives latest
-              research_snapshot facts and must cite each claim by factId.
+            <BlockTitle title="Generate draft manually" className="mb-2 text-left" />
+            <p className="text-sm font-light opacity-60 mb-4">
+              Drafts generate automatically once an org is verified with an addressable contact —
+              see the Outreach draft panel above. Use this only to force a draft or regenerate with
+              a custom brief.
             </p>
+            <SideDrawer
+              triggerLabel={org.latestDraft ? "Regenerate draft" : "Generate draft manually"}
+              description="Enqueues job.generate_cold_draft. The agent uses the latest research snapshot facts; your brief steers angle, ask, and voice."
+              title={org.latestDraft ? "Regenerate draft" : "Generate draft manually"}
+            >
             <form className="space-y-3" action="/api/commands" method="post">
               <input type="hidden" name="commandType" value="generate_draft" />
               <input type="hidden" name="organizationId" value={org.id} />
@@ -262,6 +269,7 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
                 Generate draft
               </button>
             </form>
+            </SideDrawer>
           </Card>
 
           <Card>
