@@ -11695,6 +11695,10 @@ export async function routeDraftEmailOutcome(input: {
         actionLabel: "Review draft",
         dedupeKey,
         draftId,
+        // T-026BI: link the review item to the org so it shows in the org
+        // page's "Active work items" (and the org-scoped inbox), not only the
+        // campaign view. Without this, auto-drafts produced no visible task.
+        organizationId: input.organizationId,
         ...(input.campaignId ? { campaignId: input.campaignId } : {}),
         ...(input.threadId ? { threadId: input.threadId } : {})
       })
@@ -11920,6 +11924,7 @@ export async function routeWarmDraftEmailOutcome(input: {
         actionLabel: "Review reply",
         dedupeKey,
         draftId,
+        organizationId: input.organizationId,
         threadId: input.threadId
       })
       .onConflictDoNothing({ target: workItems.dedupeKey })
@@ -15211,6 +15216,7 @@ export async function routeReviseDraftOutcome(input: {
         actionLabel: "Review draft",
         dedupeKey,
         draftId: input.draftId,
+        organizationId: input.organizationId,
         ...(draftRow.campaignId ? { campaignId: draftRow.campaignId } : {}),
         ...(draftRow.threadId ? { threadId: draftRow.threadId } : {})
       })
