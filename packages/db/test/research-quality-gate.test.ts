@@ -13,6 +13,9 @@ import {
   jobRuns,
   jobs,
   organizations,
+  ragChunks,
+  ragDocuments,
+  ragEmbeddings,
   researchContactCandidates,
   researchEvidence,
   researchFactEvidence,
@@ -175,6 +178,23 @@ test("research quality gate queues one follow-up research_more job when evidence
     ))
     .limit(1);
   assert.deepEqual(queuedEvent, { eventType: "research_quality_gate_retry_queued" });
+
+  // T-026BG: the gate returned sufficient=false, so the snapshot must NOT be
+  // promoted — it stays `draft` and emits no published event.
+  const unpromoted = await db
+    .select({ id: researchSnapshots.id, status: researchSnapshots.status })
+    .from(researchSnapshots)
+    .where(eq(researchSnapshots.organizationId, organization.id));
+  assert.equal(unpromoted.length, 1);
+  assert.equal(unpromoted[0]!.status, "draft", "insufficient gate must leave snapshot draft");
+  const noPublish = await db
+    .select({ id: eventLog.id })
+    .from(eventLog)
+    .where(and(
+      eq(eventLog.eventType, "research_snapshot_published"),
+      eq(eventLog.entityId, unpromoted[0]!.id)
+    ));
+  assert.equal(noPublish.length, 0, "no published event when gate insufficient");
 });
 
 test("research snapshot job routes citation primary URLs for redirect evidence", async (t) => {
@@ -324,6 +344,23 @@ test("research snapshot job routes citation primary URLs for redirect evidence",
     ));
   assert.equal(snapshotArtifacts.length, 1);
   assert.equal(Array.isArray((snapshotArtifacts[0]!.payloadJson as Record<string, unknown>)["citations"]), true);
+
+  // T-026BG: the gate returned sufficient=true, so the snapshot must be
+  // promoted to `published` and a `research_snapshot_published` event emitted.
+  const promotedSnapshots = await db
+    .select({ id: researchSnapshots.id, status: researchSnapshots.status })
+    .from(researchSnapshots)
+    .where(eq(researchSnapshots.organizationId, organization.id));
+  assert.equal(promotedSnapshots.length, 1);
+  assert.equal(promotedSnapshots[0]!.status, "published");
+  const publishedEvents = await db
+    .select({ id: eventLog.id })
+    .from(eventLog)
+    .where(and(
+      eq(eventLog.eventType, "research_snapshot_published"),
+      eq(eventLog.entityId, promotedSnapshots[0]!.id)
+    ));
+  assert.equal(publishedEvents.length, 1, "one research_snapshot_published event");
 });
 
 async function createRunningResearchSnapshotJob(input: {
@@ -455,6 +492,26 @@ async function clearResearchQualityGateArtifacts(suffix: string) {
   }
   if (snapshotIds.length > 0) {
     await db.delete(researchSnapshots).where(inArray(researchSnapshots.id, snapshotIds));
+  }
+  // RAG corpus indexing produces rag_documents tied to the org (chunks +
+  // embeddings hang off the document). They must go before the org or the
+  // organization delete trips rag_documents_organization_id_fkey.
+  const ragDocRows = await db
+    .select({ id: ragDocuments.id })
+    .from(ragDocuments)
+    .where(inArray(ragDocuments.organizationId, orgIds));
+  const ragDocIds = ragDocRows.map((row) => row.id);
+  if (ragDocIds.length > 0) {
+    const ragChunkRows = await db
+      .select({ id: ragChunks.id })
+      .from(ragChunks)
+      .where(inArray(ragChunks.documentId, ragDocIds));
+    const ragChunkIds = ragChunkRows.map((row) => row.id);
+    if (ragChunkIds.length > 0) {
+      await db.delete(ragEmbeddings).where(inArray(ragEmbeddings.chunkId, ragChunkIds));
+      await db.delete(ragChunks).where(inArray(ragChunks.id, ragChunkIds));
+    }
+    await db.delete(ragDocuments).where(inArray(ragDocuments.id, ragDocIds));
   }
   await db.delete(organizations).where(inArray(organizations.id, orgIds));
 }

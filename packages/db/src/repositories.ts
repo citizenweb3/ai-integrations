@@ -11066,6 +11066,52 @@ function shouldEnqueueResearchQualityRetry(decision: ResearchQualityGateDecision
   );
 }
 
+// T-026BG: record the quality gate's verdict on the snapshot itself. The gate
+// (an LLM stage) already decides `sufficient`; until now that verdict only
+// drove retry / review-recommended and the snapshot status stayed `draft`
+// forever. When the gate passes, promote the snapshot to `published` so the
+// status column reflects "passed the full quality check". This is a status
+// signal only — drafting is NOT gated on `published` (a gate hiccup must not
+// stall the pipeline). The update is idempotent (only transitions a non-
+// published row) and runs as a post-gate follow-up: the snapshot row is
+// already committed by the router, and the gate is a separate network call,
+// so this mirrors how `research_quality_gate_review_recommended` is appended.
+async function promoteSnapshotOnQualityPass(input: {
+  snapshotId: string;
+  organizationId: string;
+  decision: ResearchQualityGateDecision | null;
+  sourceStage: "research_snapshot" | "research_more";
+  correlationId: string;
+  jobId: string;
+}): Promise<void> {
+  if (!input.decision || input.decision.sufficient !== true) {
+    return;
+  }
+  const db = getDb();
+  const promoted = await db
+    .update(researchSnapshots)
+    .set({ status: "published" })
+    .where(sql`${researchSnapshots.id} = ${input.snapshotId}
+      and ${researchSnapshots.status} <> 'published'`)
+    .returning({ id: researchSnapshots.id });
+  if (promoted.length === 0) {
+    // Already published (duplicate gate run / re-leased job) — no re-emit.
+    return;
+  }
+  await appendEvent({
+    eventType: "research_snapshot_published",
+    entityType: "research_snapshot",
+    entityId: input.snapshotId,
+    jobId: input.jobId,
+    correlationId: input.correlationId,
+    payloadJson: {
+      organizationId: input.organizationId,
+      sourceStage: input.sourceStage,
+      confidence: input.decision.confidence
+    }
+  });
+}
+
 function buildResearchQualityGateRetryNote(decision: ResearchQualityGateDecision): string {
   const lines: string[] = [
     "Research quality gate requested follow-up search. Use these as investigation targets; do not treat them as facts."
@@ -12219,6 +12265,18 @@ export async function completeRefreshResearchSnapshotJob(input: {
         missing: qualityGateDecision.missing,
         operatorReviewRecommended: qualityGateDecision.operatorReviewRecommended
       }
+    });
+  }
+
+  // T-026BG: gate passed → mark the snapshot published.
+  if (routerResult) {
+    await promoteSnapshotOnQualityPass({
+      snapshotId: routerResult.snapshotId,
+      organizationId: input.organizationId,
+      decision: qualityGateDecision,
+      sourceStage: "research_snapshot",
+      correlationId: input.job.correlation_id,
+      jobId: input.job.id
     });
   }
 
@@ -14275,6 +14333,18 @@ export async function completeResearchMoreJob(input: {
         missing: qualityGateDecision.missing,
         operatorReviewRecommended: qualityGateDecision.operatorReviewRecommended
       }
+    });
+  }
+
+  // T-026BG: gate passed → mark the (new research_more) snapshot published.
+  if (routerResult) {
+    await promoteSnapshotOnQualityPass({
+      snapshotId: routerResult.snapshotId,
+      organizationId: input.organizationId,
+      decision: qualityGateDecision,
+      sourceStage: "research_more",
+      correlationId: input.job.correlation_id,
+      jobId: input.job.id
     });
   }
 
