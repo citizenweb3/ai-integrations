@@ -202,6 +202,32 @@ export default async function DraftDetailPage({ params }: Props) {
                     org
                   </Link>
                 ) : null}
+                {/* T-026BI: change the contact email without leaving the
+                    draft. Auto-drafts may land with a wrong/empty email;
+                    set_contact_email updates the contact, which the draft
+                    picks up via contact_id. */}
+                {editable && draft.contactId ? (
+                  <details className="mt-2">
+                    <summary className="text-xs opacity-60 cursor-pointer hover:opacity-100">
+                      Change email
+                    </summary>
+                    <form action="/api/commands" method="post" className="mt-2 space-y-2">
+                      <input type="hidden" name="commandType" value="set_contact_email" />
+                      <input type="hidden" name="contactId" value={draft.contactId} />
+                      <input
+                        className={inputClass}
+                        name="email"
+                        type="email"
+                        defaultValue={draft.contact.email ?? ""}
+                        placeholder="new@email.com"
+                        required
+                      />
+                      <Button type="submit" tone="ghost" size="sm">
+                        Save email
+                      </Button>
+                    </form>
+                  </details>
+                ) : null}
               </>
             ) : (
               <p className="text-sm font-light opacity-60">No contact linked.</p>

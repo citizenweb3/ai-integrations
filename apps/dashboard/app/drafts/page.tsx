@@ -4,6 +4,7 @@ import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 import { Badge, Button, PageBody, inputClass, textareaClass } from "@/components/ui";
+import { SideDrawer } from "@/components/side-drawer";
 
 export const dynamic = "force-dynamic";
 
@@ -26,21 +27,29 @@ export default async function DraftsListPage() {
       />
 
       <PageBody>
-        <Card>
-          <BlockTitle title="Create draft" className="mb-4 text-left" />
-          <form action="/api/commands" method="post" className="space-y-3">
-            <input type="hidden" name="commandType" value="create_draft" />
-            <input className={inputClass} name="subject" placeholder="Subject" required />
-            <textarea className={textareaClass} name="body" placeholder="Body" required rows={8} />
-            <input className={inputClass} name="recipientEmail" type="email" placeholder="Recipient email (optional)" />
-            <input className={inputClass} name="fromEmail" type="email" placeholder="From email (optional)" />
-            <input className={inputClass} name="campaignId" placeholder="Campaign ID (UUID, optional)" />
-            <input className={inputClass} name="threadId" placeholder="Thread ID (UUID, optional)" />
-            <input className={inputClass} name="contactId" placeholder="Contact ID (UUID, optional)" />
-            <textarea className={textareaClass} name="notes" placeholder="Operator notes (optional)" />
-            <Button type="submit">Create draft</Button>
-          </form>
-        </Card>
+        {/* T-026BI: manual draft creation moved off the top of the list into
+            a drawer. Most drafts auto-generate now; the by-hand form is a
+            fallback, one click away, so the list stays the focus. */}
+        <div>
+          <SideDrawer
+            triggerLabel="Create manual draft"
+            description="Write a one-off draft by hand (subject, body, recipient). Most drafts generate automatically — this is the fallback."
+            title="Create manual draft"
+          >
+            <form action="/api/commands" method="post" className="space-y-3">
+              <input type="hidden" name="commandType" value="create_draft" />
+              <input className={inputClass} name="subject" placeholder="Subject" required />
+              <textarea className={textareaClass} name="body" placeholder="Body" required rows={8} />
+              <input className={inputClass} name="recipientEmail" type="email" placeholder="Recipient email (optional)" />
+              <input className={inputClass} name="fromEmail" type="email" placeholder="From email (optional)" />
+              <input className={inputClass} name="campaignId" placeholder="Campaign ID (UUID, optional)" />
+              <input className={inputClass} name="threadId" placeholder="Thread ID (UUID, optional)" />
+              <input className={inputClass} name="contactId" placeholder="Contact ID (UUID, optional)" />
+              <textarea className={textareaClass} name="notes" placeholder="Operator notes (optional)" />
+              <Button type="submit">Create draft</Button>
+            </form>
+          </SideDrawer>
+        </div>
 
         <Card>
           <BlockTitle title={`Recent drafts (${drafts.length})`} className="mb-4 text-left" />
