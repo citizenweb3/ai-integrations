@@ -4854,6 +4854,21 @@ export async function generateDraftCommand(input: {
       };
     }
 
+    // T-026BI regenerate: discard the org's current open draft first, so the
+    // org keeps a single live draft instead of stacking versions. Only
+    // editable ('draft') rows are discarded — already-approved/sent drafts
+    // are immutable history and left untouched.
+    if (payload.replaceExisting) {
+      await tx
+        .update(drafts)
+        .set({ status: "discarded", updatedAt: new Date() })
+        .where(sql`${drafts.status} = 'draft'
+          and ${drafts.contactId} in (
+            select ${contacts.id} from ${contacts}
+            where ${contacts.organizationId} = ${organization.id}
+          )`);
+    }
+
     let resolvedContactId: string;
     if (payload.contactId) {
       const [contact] = await tx

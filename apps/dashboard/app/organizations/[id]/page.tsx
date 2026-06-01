@@ -179,7 +179,7 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
           />
         </div>
 
-        <OrgDraftPanel draft={org.latestDraft} />
+        <OrgDraftPanel draft={org.latestDraft} orgId={org.id} />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
@@ -995,9 +995,11 @@ function SnapshotPanel({
 // operator would otherwise have to hunt for on the draft page. Send/Discard/
 // Regenerate post the existing commands; Open/Edit deep-link into the draft.
 function OrgDraftPanel({
-  draft
+  draft,
+  orgId
 }: {
   draft: NonNullable<Awaited<ReturnType<typeof getOrganizationDetail>>>["latestDraft"];
+  orgId: string;
 }) {
   if (!draft) {
     return (
@@ -1082,12 +1084,31 @@ function OrgDraftPanel({
                 Discard
               </button>
             </form>
+            {/* One-click regenerate: same generate_draft command with a
+                default brief and no form. Contact/campaign resolve on the
+                backend. For a custom brief, use the drawer below. */}
+            <form action="/api/commands" method="post">
+              <input type="hidden" name="commandType" value="generate_draft" />
+              <input type="hidden" name="organizationId" value={orgId} />
+              <input type="hidden" name="replaceExisting" value="true" />
+              <input
+                type="hidden"
+                name="operatorBrief"
+                value="Regenerate this cold outreach draft from the latest research snapshot facts; keep it concise with one clear ask."
+              />
+              <button
+                type="submit"
+                className="rounded-lg border border-white/15 px-4 py-2 text-sm hover:bg-white/5"
+              >
+                Regenerate
+              </button>
+            </form>
           </>
         ) : null}
       </div>
       <p className="text-xs opacity-50 mt-2">
-        Send re-checks pre-send guardrails. To change the email, edit the contact on the draft
-        page.
+        Send re-checks pre-send guardrails. Regenerate rewrites the draft from the latest research.
+        To change the email, edit the contact on the draft page.
       </p>
     </Card>
   );

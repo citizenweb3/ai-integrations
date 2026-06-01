@@ -880,7 +880,12 @@ export const generateDraftPayloadSchema = z.object({
   campaignId: z.string().uuid().optional(),
   threadId: z.string().uuid().optional(),
   contactId: z.string().uuid().optional(),
-  idempotencyKey: z.string().trim().min(1).max(200).optional()
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  // T-026BI: regenerate. When true, the command discards the org's current
+  // non-discarded draft before generating, so an org keeps one live draft
+  // instead of accumulating stale versions. The /api/commands form parser
+  // converts the hidden-input string to a boolean before validation.
+  replaceExisting: z.boolean().optional()
 });
 
 // Warm draft = in-thread reply (canonical §11.657-662 + §42.2902-2916). Bound
