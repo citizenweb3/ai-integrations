@@ -179,13 +179,15 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
           />
         </div>
 
+        <OrgDraftPanel draft={org.latestDraft} />
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <BlockTitle title="Generate draft manually" className="mb-2 text-left" />
             <p className="text-sm font-light opacity-60 mb-4">
               Drafts generate automatically once an org is verified with an addressable contact —
-              see the Outreach draft panel above. Use this only to force a draft or regenerate with
-              a custom brief.
+              see the Outreach draft panel above. Use this only to force a draft now or regenerate
+              with a custom brief.
             </p>
             <SideDrawer
               triggerLabel={org.latestDraft ? "Regenerate draft" : "Generate draft manually"}
@@ -315,8 +317,6 @@ export default async function OrganizationDetailPage({ params, searchParams }: P
             orgDomain={org.domain}
           />
         ) : null}
-
-        {activeTab === "research" ? <OrgDraftPanel draft={org.latestDraft} /> : null}
 
         {activeTab === "threads" ? (
         <Card>
