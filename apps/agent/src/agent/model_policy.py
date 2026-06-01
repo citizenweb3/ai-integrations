@@ -40,3 +40,34 @@ def resolve_model(stage: str) -> str:
         if value:
             return value
     return os.environ.get("AGENT_DEFAULT_MODEL") or _HARD_DEFAULT
+
+
+def _parse_model_list(raw: str | None) -> list[str]:
+    """Split a comma-separated model env value into a clean list."""
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def resolve_model_chain(stage: str) -> list[str]:
+    """Ordered model chain for a stage: primary first, then failovers.
+
+    The primary is `resolve_model(stage)`. Failovers come from a
+    stage-specific `AGENT_<STAGE>_MODEL_FALLBACK` (comma-separated for a
+    multi-step chain), falling back to a global `AGENT_DEFAULT_MODEL_FALLBACK`.
+    The primary is de-duplicated out of the failover list and order is
+    preserved. A stage with no configured fallback yields a single-element
+    chain, so callers behave exactly as before failover existed.
+    """
+    primary = resolve_model(stage)
+
+    fallback_key = f"AGENT_{stage.upper()}_MODEL_FALLBACK"
+    fallbacks = _parse_model_list(os.environ.get(fallback_key))
+    if not fallbacks:
+        fallbacks = _parse_model_list(os.environ.get("AGENT_DEFAULT_MODEL_FALLBACK"))
+
+    chain = [primary]
+    for model in fallbacks:
+        if model not in chain:
+            chain.append(model)
+    return chain

@@ -720,88 +720,47 @@ def _tools_for(stage: str) -> list[BaseTool]:
     return list(_STAGE_TOOLS.get(stage, []))
 
 
-def build_agent(stage: str) -> Agent:
-    if stage == "research_snapshot":
-        return Agent(
-            name="research_snapshot_agent",
-            model=resolve_model("research_snapshot"),
-            instruction=_RESEARCH_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
+# Stage -> (agent name, system instruction). Single source of truth so
+# build_agent threads the optional model override once instead of repeating
+# it across one branch per stage. Tools come from _STAGE_TOOLS.
+_STAGE_SPEC: dict[str, tuple[str, str]] = {
+    "research_snapshot": ("research_snapshot_agent", _RESEARCH_INSTRUCTION),
+    "research_more": ("research_more_agent", _RESEARCH_MORE_INSTRUCTION),
+    "research_quality_gate": (
+        "research_quality_gate_agent",
+        _RESEARCH_QUALITY_GATE_INSTRUCTION,
+    ),
+    "contact_candidate_discovery": (
+        "contact_candidate_discovery_agent",
+        _CONTACT_DISCOVERY_INSTRUCTION,
+    ),
+    "draft_email": ("draft_email_agent", _DRAFT_INSTRUCTION),
+    "draft_warm_email": ("draft_warm_email_agent", _DRAFT_WARM_INSTRUCTION),
+    "revise_email": ("revise_email_agent", _REVISE_INSTRUCTION),
+    "validate_claims": ("validate_claims_agent", _VALIDATE_CLAIMS_INSTRUCTION),
+    "classify_reply": ("classify_reply_agent", _CLASSIFY_REPLY_INSTRUCTION),
+    "campaign_discovery": ("campaign_discovery_agent", _DISCOVERY_INSTRUCTION),
+}
 
-    if stage == "research_more":
-        return Agent(
-            name="research_more_agent",
-            model=resolve_model("research_more"),
-            instruction=_RESEARCH_MORE_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
 
-    if stage == "research_quality_gate":
-        return Agent(
-            name="research_quality_gate_agent",
-            model=resolve_model("research_quality_gate"),
-            instruction=_RESEARCH_QUALITY_GATE_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
+def build_agent(stage: str, model: str | None = None) -> Agent:
+    """Build the ADK agent for a stage.
 
-    if stage == "contact_candidate_discovery":
-        return Agent(
-            name="contact_candidate_discovery_agent",
-            model=resolve_model("contact_candidate_discovery"),
-            instruction=_CONTACT_DISCOVERY_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
-
-    if stage == "draft_email":
-        return Agent(
-            name="draft_email_agent",
-            model=resolve_model("draft_email"),
-            instruction=_DRAFT_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
-
-    if stage == "draft_warm_email":
-        return Agent(
-            name="draft_warm_email_agent",
-            model=resolve_model("draft_warm_email"),
-            instruction=_DRAFT_WARM_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
-
-    if stage == "revise_email":
-        return Agent(
-            name="revise_email_agent",
-            model=resolve_model("revise_email"),
-            instruction=_REVISE_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
-
-    if stage == "validate_claims":
-        return Agent(
-            name="validate_claims_agent",
-            model=resolve_model("validate_claims"),
-            instruction=_VALIDATE_CLAIMS_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
-
-    if stage == "classify_reply":
-        return Agent(
-            name="classify_reply_agent",
-            model=resolve_model("classify_reply"),
-            instruction=_CLASSIFY_REPLY_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
-
-    if stage == "campaign_discovery":
-        return Agent(
-            name="campaign_discovery_agent",
-            model=resolve_model("campaign_discovery"),
-            instruction=_DISCOVERY_INSTRUCTION,
-            tools=_tools_for(stage),
-        )
-
-    raise ValueError(f"Unknown stage: {stage}")
+    `model` overrides the stage's resolved model — used by the failover loop
+    to rebuild the agent on the next model in the chain. When omitted the
+    stage's configured primary (`resolve_model`) is used, preserving the
+    pre-failover behavior.
+    """
+    spec = _STAGE_SPEC.get(stage)
+    if spec is None:
+        raise ValueError(f"Unknown stage: {stage}")
+    name, instruction = spec
+    return Agent(
+        name=name,
+        model=model or resolve_model(stage),
+        instruction=instruction,
+        tools=_tools_for(stage),
+    )
 
 
 def supported_stages() -> list[str]:
