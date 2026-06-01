@@ -10569,6 +10569,24 @@ export async function routeContactDiscoveryOutcome(input: {
       }
     });
 
+    // T-026BE: the contact stage just finished for this org — the only
+    // point where an addressable contact can have been auto-created. Fire
+    // the "first contact ready" ping (A) if the campaign just crossed zero
+    // → one addressable, and re-check "expansion complete" (B) since this
+    // may have been the last contact-discovery job in flight.
+    await maybeNotifyFirstAddressable(tx, {
+      organizationId: input.organizationId,
+      correlationId: input.correlationId
+    });
+    const campaignIdForOrg = await resolveCampaignIdForOrganization(tx, input.organizationId);
+    if (campaignIdForOrg) {
+      await maybeNotifyExpansionComplete(tx, {
+        campaignId: campaignIdForOrg,
+        currentJobId: input.jobId ?? "",
+        correlationId: input.correlationId
+      });
+    }
+
     return {
       contactCandidateCount: inserted + updated,
       insertedCount: inserted,
@@ -10843,6 +10861,22 @@ export async function routeResearchSnapshotOutcome(input: {
           allowGenericInboxFallback
         },
         concurrencyKey: `research_snapshot:${input.organizationId}`,
+        correlationId: input.correlationId
+      });
+    }
+
+    // T-026BE: a research job (snapshot refresh OR research_more) just
+    // finished — it may be the last campaign-scoped job in flight. Re-check
+    // "expansion complete" (B). When this run chained a contact-discovery job
+    // above, that freshly-queued job keeps pending > 0 so B correctly waits;
+    // when nothing is left (e.g. a research_more that finished after the last
+    // contact run), B fires here. Without this anchor a campaign whose last
+    // job is research_more never emits the "campaign ready" ping.
+    const campaignIdForResearch = await resolveCampaignIdForOrganization(tx, input.organizationId);
+    if (campaignIdForResearch) {
+      await maybeNotifyExpansionComplete(tx, {
+        campaignId: campaignIdForResearch,
+        currentJobId: input.jobId ?? "",
         correlationId: input.correlationId
       });
     }
@@ -13976,6 +14010,23 @@ export async function completeRunCampaignDiscoveryJob(input: {
     jobId: input.job.id
   });
 
+  // T-026BE: discovery has now stopped (cooldown active). Re-check whether
+  // the campaign's expansion is fully complete. Usually this discovery run
+  // has just enqueued research/contact jobs for freshly found orgs, so the
+  // pending check fails here and the "expansion complete" ping (B) instead
+  // fires from the contact-discovery anchor once those drain. This anchor
+  // matters for the tail case where discovery was the last thing running
+  // (e.g. a re-run that found nothing new). The current discovery job is
+  // job.run_campaign_discovery — not in B's pending job-type set — so it is
+  // not double-counted.
+  await getDb().transaction(async (tx) => {
+    await maybeNotifyExpansionComplete(tx, {
+      campaignId: input.campaignId,
+      currentJobId: input.job.id,
+      correlationId: input.job.correlation_id
+    });
+  });
+
   // `succeeded` status reflects the ADK run itself, not the router
   // outcome — matches the classify_reply / refresh_research_snapshot
   // pattern. A parse failure or per-proposal validation failure is
@@ -16915,6 +16966,178 @@ async function telegramNotificationJobExists(tx: DbTransaction, notificationKey:
     .where(eq(jobs.concurrencyKey, `telegram_notification:${notificationKey}`))
     .limit(1);
   return existing.length > 0;
+}
+
+// T-026BE: campaign-progress Telegram notifications. A cold campaign runs
+// discovery → research → contacts silently; these two helpers give the
+// operator the two batch-state signals they actually need to act on —
+// "the first reachable contact exists" and "the batch is fully assembled".
+// Both reuse the existing notification path + concurrency-key dedup so they
+// are emitted exactly once per campaign (A) or per discovery wave (B), even
+// under the parallel per-org transactions that drive the contact stage.
+//
+// Organizations carry no campaign_id; the link lives on discovery_candidates
+// (campaign_id + matched_organization_id). This subquery resolves a
+// campaign's organizations for the count predicates below.
+function campaignOrgIdsSubquery(campaignId: string) {
+  return sql`(
+    select ${discoveryCandidates.matchedOrganizationId}
+    from ${discoveryCandidates}
+    where ${discoveryCandidates.campaignId} = ${campaignId}
+      and ${discoveryCandidates.matchedOrganizationId} is not null
+  )`;
+}
+
+// Resolve the campaign that owns an organization via its accepted discovery
+// candidate. Returns null for organizations with no campaign link (e.g.
+// orgs created outside the discovery flow), in which case the campaign-level
+// notifications simply do not apply.
+async function resolveCampaignIdForOrganization(
+  tx: DbTransaction,
+  organizationId: string
+): Promise<string | null> {
+  const [row] = await tx
+    .select({ campaignId: discoveryCandidates.campaignId })
+    .from(discoveryCandidates)
+    .where(eq(discoveryCandidates.matchedOrganizationId, organizationId))
+    .limit(1);
+  return row?.campaignId ?? null;
+}
+
+// Notification A — first addressable contact for the campaign. Fires when the
+// campaign crosses from zero to one addressable contact (email present). The
+// per-campaign dedup key makes this once-ever: a batch that converts several
+// emails in one router pass, or two orgs converting in parallel, still yields
+// exactly one ping. The `>= 1` predicate (rather than `== 1`) is deliberate —
+// dedup is the source of truth for "once", so we only need "addressable now
+// exists", which is robust to multi-insert passes.
+async function maybeNotifyFirstAddressable(
+  tx: DbTransaction,
+  input: { organizationId: string; correlationId: string }
+): Promise<void> {
+  const campaignId = await resolveCampaignIdForOrganization(tx, input.organizationId);
+  if (!campaignId) return;
+
+  const notificationKey = `campaign_addressable_ready:${campaignId}`;
+  if (await telegramNotificationJobExists(tx, notificationKey)) return;
+
+  const [addressable] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(contacts)
+    .where(sql`${contacts.organizationId} in ${campaignOrgIdsSubquery(campaignId)}
+      and ${contacts.email} is not null`);
+  if (!addressable || addressable.count < 1) return;
+
+  const [campaign] = await tx
+    .select({ name: campaigns.name })
+    .from(campaigns)
+    .where(eq(campaigns.id, campaignId))
+    .limit(1);
+
+  const [contact] = await tx
+    .select({ email: contacts.email, fullName: contacts.fullName })
+    .from(contacts)
+    .where(sql`${contacts.organizationId} = ${input.organizationId}
+      and ${contacts.email} is not null`)
+    .orderBy(desc(contacts.createdAt))
+    .limit(1);
+
+  const [org] = await tx
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, input.organizationId))
+    .limit(1);
+
+  await enqueueTelegramNotificationJob(tx, {
+    text:
+      `📇 First contact ready\n` +
+      `campaign: ${truncateForTelegram(campaign?.name ?? campaignId, 200)}\n` +
+      `org: ${truncateForTelegram(org?.name ?? input.organizationId, 200)}\n` +
+      `${truncateForTelegram(contact?.email ?? "(email on file)", 200)}\n` +
+      `Generate a draft to start outreach.`,
+    entityType: "campaign",
+    entityId: campaignId,
+    notificationKey,
+    correlationId: input.correlationId,
+    priority: 85
+  });
+}
+
+// Notification B — campaign expansion complete. Fires when discovery has
+// stopped (cooldown active) AND no campaign-scoped research/contact job is
+// still in flight. Checked at two anchors (cooldown start, last
+// contact-discovery completion); whichever runs last satisfies both
+// predicates. The dedup key carries the discovery scope version so a resume /
+// scope edit (which bumps the version and re-runs discovery) re-arms the
+// notification for the new wave.
+async function maybeNotifyExpansionComplete(
+  tx: DbTransaction,
+  input: { campaignId: string; currentJobId: string; correlationId: string }
+): Promise<void> {
+  const [campaign] = await tx
+    .select({ name: campaigns.name, discoveryScopeVersion: campaigns.discoveryScopeVersion })
+    .from(campaigns)
+    .where(eq(campaigns.id, input.campaignId))
+    .limit(1);
+  if (!campaign) return;
+
+  const notificationKey =
+    `campaign_expansion_done:${input.campaignId}:v${campaign.discoveryScopeVersion}`;
+  if (await telegramNotificationJobExists(tx, notificationKey)) return;
+
+  // Discovery must have stopped: an active discovery_cooldown policy state.
+  const [cooldown] = await tx
+    .select({ id: policyStateEntries.id })
+    .from(policyStateEntries)
+    .where(sql`${policyStateEntries.scopeType} = 'campaign'
+      and ${policyStateEntries.scopeId} = ${input.campaignId}
+      and ${policyStateEntries.stateType} = 'discovery_cooldown'
+      and ${policyStateEntries.status} = 'active'`)
+    .limit(1);
+  if (!cooldown) return;
+
+  // No research/contact job for the campaign still in flight (excluding the
+  // job that triggered this check, which may still be leased/running). The
+  // current-job exclusion only applies when a job id is supplied — callers
+  // outside a job context (or test harnesses) pass none.
+  const excludeCurrentJob =
+    input.currentJobId.length > 0
+      ? sql`and ${jobs.id} <> ${input.currentJobId}`
+      : sql``;
+  const [pending] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(jobs)
+    .where(sql`${jobs.targetEntityId} in ${campaignOrgIdsSubquery(input.campaignId)}
+      and ${jobs.jobType} in ('job.refresh_research_snapshot', 'job.discover_contacts', 'job.research_more')
+      and ${jobs.status} in ('queued', 'leased', 'running')
+      ${excludeCurrentJob}`);
+  if (pending && pending.count > 0) return;
+
+  const [addressable] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(contacts)
+    .where(sql`${contacts.organizationId} in ${campaignOrgIdsSubquery(input.campaignId)}
+      and ${contacts.email} is not null`);
+  const addressableCount = addressable?.count ?? 0;
+
+  const tail =
+    addressableCount > 0
+      ? `${addressableCount} addressable contact${addressableCount === 1 ? "" : "s"}\n` +
+        `Discovery finished. Time to review drafts.`
+      : `0 addressable contacts\n` +
+        `No reachable contacts found — review discovery scope.`;
+
+  await enqueueTelegramNotificationJob(tx, {
+    text:
+      `✅ Campaign ready\n` +
+      `campaign: ${truncateForTelegram(campaign.name ?? input.campaignId, 200)}\n` +
+      tail,
+    entityType: "campaign",
+    entityId: input.campaignId,
+    notificationKey,
+    correlationId: input.correlationId,
+    priority: 80
+  });
 }
 
 export async function failJob(input: { job: LeasedJob; runId: string; workerId: string; error: unknown }) {
