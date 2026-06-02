@@ -6,7 +6,6 @@ import {
   getResearchContextForDraft
 } from "@bizdev/db";
 import {
-  draftFeedbackTags,
   evaluateTimingAdvice,
   nonOverridableGuardrailCodes,
   overridableGuardrailCodes
@@ -20,6 +19,7 @@ import BlockTitle from "@/components/block-title";
 import { BackLink } from "@/components/back-link";
 import { Badge, Button, InfoRow, MetricCard, PageBody, inputClass, textareaClass } from "@/components/ui";
 import { SideDrawer } from "@/components/side-drawer";
+import { DraftModifyDrawers } from "@/components/draft-modify-drawers";
 
 export const dynamic = "force-dynamic";
 
@@ -949,56 +949,12 @@ export default async function DraftDetailPage({ params }: Props) {
             />
 
             <div className="grid grid-cols-1 gap-3">
-              <SideDrawer
-                triggerLabel="Edit body manually"
-                description="Direct edit. Saves as a new version; previous one stays in history."
-                title={`Edit draft v${draft.version} → v${draft.version + 1}`}
-              >
-                <form action="/api/commands" method="post" className="space-y-3">
-                  <input type="hidden" name="commandType" value="request_manual_edit_save" />
-                  <input type="hidden" name="draftId" value={draft.id} />
-                  <input type="hidden" name="expectedVersion" value={String(draft.version)} />
-                  <input
-                    className={inputClass}
-                    name="subject"
-                    defaultValue={draft.subject}
-                    required
-                  />
-                  <textarea
-                    className={textareaClass}
-                    name="body"
-                    defaultValue={draft.body}
-                    required
-                    rows={14}
-                  />
-                  <textarea
-                    className={textareaClass}
-                    name="notes"
-                    placeholder="Edit notes (optional)"
-                  />
-                  <Button type="submit">Save as v{draft.version + 1}</Button>
-                </form>
-              </SideDrawer>
-
-              <SideDrawer
-                triggerLabel="Ask the AI to revise"
-                description="Enqueues job.revise_draft. Agent reads current version + your feedback + latest research, writes a new version with revalidated claims."
-                title="Request AI revise"
-              >
-                <form action="/api/commands" method="post" className="space-y-3">
-                  <input type="hidden" name="commandType" value="request_ai_revise" />
-                  <input type="hidden" name="draftId" value={draft.id} />
-                  <input type="hidden" name="expectedVersion" value={String(draft.version)} />
-                  <textarea
-                    className={textareaClass}
-                    name="operatorFeedback"
-                    placeholder="What to change: tone, angle, ask, claims to drop, new angle to push..."
-                    required
-                    rows={6}
-                  />
-                  <Button type="submit">Request AI revise</Button>
-                </form>
-              </SideDrawer>
+              <DraftModifyDrawers
+                draftId={draft.id}
+                version={draft.version}
+                subject={draft.subject}
+                body={draft.body}
+              />
 
               {draftOrgId ? (
                 <SideDrawer
@@ -1049,36 +1005,6 @@ export default async function DraftDetailPage({ params }: Props) {
                   </form>
                 </SideDrawer>
               ) : null}
-
-              <SideDrawer
-                triggerLabel="Record feedback on this draft"
-                description="Standalone explicit signal — feeds the quality / corpus scoring and lands in the feedback log."
-                title="Record feedback"
-              >
-                <form action="/api/commands" method="post" className="space-y-3">
-                  <input type="hidden" name="commandType" value="record_draft_feedback" />
-                  <input type="hidden" name="draftId" value={draft.id} />
-                  <input type="hidden" name="draftVersion" value={String(draft.version)} />
-                  <fieldset className="border border-white/15 rounded-lg p-3">
-                    <legend className="text-xs opacity-60 px-2">Tags</legend>
-                    <div className="flex flex-wrap gap-3">
-                      {draftFeedbackTags.map((tag) => (
-                        <label key={tag} className="inline-flex gap-2 items-center">
-                          <input type="checkbox" name="tags" value={tag} />
-                          <code className="font-mono text-xs">{tag}</code>
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                  <textarea
-                    className={textareaClass}
-                    name="note"
-                    placeholder="Free-form note (optional if at least one tag is checked)"
-                    rows={4}
-                  />
-                  <Button type="submit">Record feedback</Button>
-                </form>
-              </SideDrawer>
 
               <SideDrawer
                 triggerLabel="Discard draft"

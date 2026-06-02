@@ -12,6 +12,7 @@ import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
 import { Badge } from "@/components/ui";
 import { SideDrawer } from "@/components/side-drawer";
+import { DraftModifyDrawers } from "@/components/draft-modify-drawers";
 import { BackLink } from "@/components/back-link";
 import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
 import {
@@ -1124,6 +1125,21 @@ function OrgDraftPanel({
           </>
         ) : null}
       </div>
+      {isOpen ? (
+        <div className="mt-5 border-t border-white/10 pt-4">
+          <div className="text-xs font-semibold tracking-[0.2em] uppercase opacity-50 mb-3">
+            Modify
+          </div>
+          <div className="grid grid-cols-1 gap-2">
+            <DraftModifyDrawers
+              draftId={draft.id}
+              version={draft.version}
+              subject={draft.subject}
+              body={draft.body}
+            />
+          </div>
+        </div>
+      ) : null}
       <p className="text-xs opacity-50 mt-2">
         Send re-checks pre-send guardrails. Regenerate rewrites the draft from the latest research.
         To change the email, edit the contact on the draft page.
