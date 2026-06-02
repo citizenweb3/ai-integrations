@@ -6117,10 +6117,13 @@ function sanitizePromptInsertion(raw: string, maxLen: number): string {
   return raw.replace(/[`\r\n]+/g, " ").trim().slice(0, maxLen);
 }
 
-// Vertex AI grounding wraps citation URLs in a tracker host with
-// short-lived signed tokens. Operators need stable primary URLs they can
-// audit weeks later, so we drop the tracker form. The system prompt asks
-// the model to emit `web.uri` directly; this filter is the safety net.
+// Vertex AI grounding wraps citation URLs in a redirect host with
+// short-lived signed tokens. We DETECT that form (not drop it): when the
+// caller recovered a raw primary URL from grounding metadata we prefer it,
+// but otherwise we keep the redirect as the source rather than nulling it
+// (T-026BJ — a working redirect beats a missing citation; the model only
+// ever emits redirect URLs from Vertex google_search). The system prompt
+// still asks for `web.uri` directly when the model has it.
 function isGroundingTrackerUrl(url: string): boolean {
   let host: string;
   try {
@@ -10076,9 +10079,18 @@ function normalizeResearchContactSourceRefs(input: unknown, evidenceUrl: string 
   return refs.slice(0, 8);
 }
 
+// T-026BJ: keep the grounding-redirect URL as a valid source. Vertex
+// google_search only ever returns redirect URLs; nulling them (the old
+// behaviour) lost the citation whenever the quote→citation recovery in
+// resolveCitationUrl failed (~45% of rows), which left the quality gate with
+// an unverifiable snapshot. A redirect is a real, working link
+// (vertexaisearch.../grounding-api-redirect/... -> the source site). The
+// ~30-day TTL is acceptable: snapshots are refreshed sooner, and a stale
+// redirect just prompts a re-research. Raw URLs are still preferred where
+// the caller recovered one; this only stops the redirect from becoming null.
 function normalizePrimaryResearchUrl(input: string | null | undefined): string | null {
   const trimmed = input?.trim();
-  if (!trimmed || isGroundingTrackerUrl(trimmed)) return null;
+  if (!trimmed) return null;
 
   try {
     const parsed = new URL(trimmed);
@@ -10313,13 +10325,16 @@ function buildCitationEnrichedResearchOutputText(input: {
   return JSON.stringify({ ...parsed, facts, contactCandidates }, null, 2);
 }
 
-function normalizeEvidence(input: unknown, citationSourceUrl?: string | null): ResearchAgentEvidence | null {
+export function normalizeEvidence(input: unknown, citationSourceUrl?: string | null): ResearchAgentEvidence | null {
   if (!input || typeof input !== "object") return null;
   const raw = input as Record<string, unknown>;
   const sourceUrlRawTrim = typeof raw.sourceUrl === "string" ? raw.sourceUrl.trim() : "";
   const citationUrl = normalizePrimaryResearchUrl(citationSourceUrl);
+  // T-026BJ: prefer a recovered raw citation URL for grounding-redirect
+  // sources (prettier, permanent); otherwise keep the redirect itself rather
+  // than dropping the source to null. Non-grounding URLs normalize directly.
   const sourceUrlRaw = sourceUrlRawTrim && isGroundingTrackerUrl(sourceUrlRawTrim)
-    ? citationUrl
+    ? citationUrl ?? normalizePrimaryResearchUrl(sourceUrlRawTrim)
     : normalizePrimaryResearchUrl(sourceUrlRawTrim) || citationUrl;
   const quoteTextRaw = typeof raw.quoteText === "string" ? raw.quoteText.trim() : "";
   const sourceTypeRaw = typeof raw.sourceType === "string" ? raw.sourceType.trim() : "";
