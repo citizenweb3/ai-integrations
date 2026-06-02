@@ -8,7 +8,7 @@ import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
-import { Badge, Button, InfoRow, MetricCard, PageBody, PillLink } from "@/components/ui";
+import { Badge, Button, InfoRow, MetricCard, PageBody, PillLink, textareaClass } from "@/components/ui";
 import { BackLink } from "@/components/back-link";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +32,7 @@ export default async function WorkItemDetailPage({ params }: Props) {
 
   const isResolved =
     item.status === "resolved" || item.status === "dismissed" || item.status === "superseded";
+  const isWarmReply = item.type === "warm_reply_review_needed";
 
   return (
     <>
@@ -70,9 +71,69 @@ export default async function WorkItemDetailPage({ params }: Props) {
           </div>
         </div>
 
+        {/* Type-specific primary action — what this item actually needs you to
+            do. For a warm reply that's writing the response, so the
+            generate-warm-draft form lives right here instead of being buried on
+            the thread page. The card CTA in the inbox lands the operator here. */}
+        {isWarmReply && !isResolved ? (
+          <Card className="border border-[var(--accent)]/30">
+            <BlockTitle title="Reply to this contact" className="mb-2 text-left" />
+            <p className="text-sm font-light opacity-80 mb-4 max-w-2xl">
+              {item.inboundMessage?.fromEmail ? `${item.inboundMessage.fromEmail} replied.` : "This contact replied."}{" "}
+              Say what your reply should accomplish, then generate a warm draft — the agent writes it
+              using the whole thread, this message, and the org&apos;s research. You review and send it
+              after; nothing goes out automatically.
+            </p>
+            {item.inboundMessage?.threadId ? (
+              <form action="/api/commands" method="post" className="space-y-3 max-w-2xl">
+                <input type="hidden" name="commandType" value="generate_warm_draft" />
+                <input type="hidden" name="threadId" value={item.inboundMessage.threadId} />
+                <label className="block">
+                  <span className="text-xs font-semibold tracking-[0.15em] uppercase opacity-70">
+                    What should this reply do?
+                  </span>
+                  <textarea
+                    className={`${textareaClass} mt-2`}
+                    name="replyIntent"
+                    required
+                    rows={4}
+                    placeholder="e.g. Confirm we'd love a call next week and propose Tue or Wed 3pm. Ask what their biggest hiring bottleneck is right now."
+                  />
+                </label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button type="submit" tone="primary">
+                    Generate warm draft →
+                  </Button>
+                  {item.inboundMessage.threadId ? (
+                    <Link
+                      href={`/threads/${item.inboundMessage.threadId}`}
+                      className="text-xs opacity-60 hover:text-[var(--accent)]"
+                    >
+                      open full thread (pick a different recipient, see history) →
+                    </Link>
+                  ) : null}
+                </div>
+                <p className="text-xs font-light opacity-50">
+                  Default recipient is whoever sent the latest reply. The draft then shows up under
+                  <span className="opacity-80"> Approvals</span> for you to review and send.
+                </p>
+              </form>
+            ) : (
+              <p className="text-sm text-yellow-300">
+                This reply isn&apos;t attached to a thread yet — attach it first (see Triage below),
+                then come back here to generate the draft.
+              </p>
+            )}
+          </Card>
+        ) : null}
+
         {!isResolved ? (
           <Card>
-            <BlockTitle title="Actions" className="mb-4 text-left" />
+            <BlockTitle title="Queue actions" className="mb-1 text-left" />
+            <p className="text-sm font-light opacity-60 mb-4 max-w-2xl">
+              Move this item through your queue. These don&apos;t do the task itself — they just say
+              what happens to the entry.
+            </p>
             <div className="flex flex-wrap gap-2">
               <form action="/api/work-items" method="post">
                 <input type="hidden" name="workItemId" value={item.id} />
