@@ -1046,10 +1046,28 @@ function OrgDraftPanel({
           <span className="font-mono">{draft.contactEmail ?? "no email"}</span>
         </div>
         <div className="text-sm font-medium">{draft.subject}</div>
-        <p className="text-sm font-light opacity-70 whitespace-pre-wrap leading-snug">
-          {draft.bodyExcerpt}
-          {draft.bodyExcerpt.length >= 300 ? "…" : ""}
-        </p>
+        {draft.body.length > draft.bodyExcerpt.length ? (
+          <details className="group">
+            <summary className="list-none cursor-pointer">
+              <p className="text-sm font-light opacity-70 whitespace-pre-wrap leading-snug group-open:hidden">
+                {draft.bodyExcerpt}…
+              </p>
+              <span className="text-xs text-[var(--accent)] opacity-80 group-open:hidden">
+                More ▾
+              </span>
+              <span className="text-xs text-[var(--accent)] opacity-80 hidden group-open:inline">
+                Less ▴
+              </span>
+            </summary>
+            <p className="text-sm font-light opacity-70 whitespace-pre-wrap leading-snug mt-1">
+              {draft.body}
+            </p>
+          </details>
+        ) : (
+          <p className="text-sm font-light opacity-70 whitespace-pre-wrap leading-snug">
+            {draft.body}
+          </p>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2 mt-4">

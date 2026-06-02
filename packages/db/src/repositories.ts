@@ -20731,6 +20731,7 @@ export type OrganizationDetail = {
     status: string;
     subject: string;
     bodyExcerpt: string;
+    body: string;
     contactEmail: string | null;
     contactName: string | null;
     qualityScoreBand: string | null;
@@ -20967,6 +20968,7 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
         status: latestDraftRows[0].status,
         subject: latestDraftRows[0].subject,
         bodyExcerpt: (latestDraftRows[0].body ?? "").slice(0, 300),
+        body: latestDraftRows[0].body ?? "",
         contactEmail: latestDraftRows[0].contactEmail,
         contactName: latestDraftRows[0].contactFullName,
         qualityScoreBand: latestDraftRows[0].qualityScoreBand,
