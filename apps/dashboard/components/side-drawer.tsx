@@ -16,12 +16,16 @@ export function SideDrawer({
   title,
   description,
   triggerTone = "ghost",
+  triggerVariant = "block",
   children,
 }: {
   triggerLabel: string;
   title: string;
   description?: string;
   triggerTone?: "ghost" | "danger";
+  // "block" (default): full-width card trigger for page sidebars.
+  // "inline": compact pill trigger for toolbars/headers (T-026BL inbox).
+  triggerVariant?: "block" | "inline";
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -46,6 +50,24 @@ export function SideDrawer({
       ? "border border-red-500/40 text-red-300 hover:bg-red-500/10"
       : "border border-white/15 text-white hover:bg-white/5";
 
+  if (triggerVariant === "inline") {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className={`inline-flex items-center gap-2 rounded-[10px] px-4 py-2 text-sm font-medium tracking-[0.02em] transition-colors hover:no-underline ${triggerClass}`}
+        >
+          <span>{triggerLabel}</span>
+          <span className="text-[10px] uppercase tracking-[0.2em] opacity-50">→</span>
+        </button>
+        <DrawerPanel open={open} setOpen={setOpen} title={title} description={description}>
+          {children}
+        </DrawerPanel>
+      </>
+    );
+  }
+
   return (
     <>
       <button
@@ -68,52 +90,71 @@ export function SideDrawer({
         </span>
       </button>
 
-      {/* Always mounted so enter + exit can transition. The container
-          flips `pointer-events-none` when closed so clicks pass through
-          to the page underneath. The backdrop fades, the panel slides
-          in from the right. */}
-      <div
-        className={`fixed inset-0 z-50 flex transition-opacity duration-200 ease-out ${
-          open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-        }`}
-        aria-hidden={!open}
-      >
-        <button
-          type="button"
-          aria-label="Close drawer backdrop"
-          tabIndex={open ? 0 : -1}
-          onClick={() => setOpen(false)}
-          className="flex-1 bg-black/60 backdrop-blur-sm"
-        />
-        <div
-          role="dialog"
-          aria-label={title}
-          aria-modal="true"
-          className={`w-full sm:w-[520px] max-w-full bg-[#0F0F10] border-l border-white/10 p-6 overflow-y-auto shadow-[0_0_60px_rgba(0,0,0,0.8)] transform transition-transform duration-300 ease-out ${
-            open ? "translate-x-0" : "translate-x-full"
-          }`}
-        >
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <div>
-              <h3 className="text-lg font-bold tracking-[0.02em]">{title}</h3>
-              {description ? (
-                <p className="text-xs font-light opacity-60 leading-snug mt-1">
-                  {description}
-                </p>
-              ) : null}
-            </div>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              tabIndex={open ? 0 : -1}
-              className="text-xs uppercase tracking-[0.18em] opacity-60 hover:opacity-100 shrink-0"
-            >
-              Close ✕
-            </button>
-          </div>
-          {children}
-        </div>
-      </div>
+      <DrawerPanel open={open} setOpen={setOpen} title={title} description={description}>
+        {children}
+      </DrawerPanel>
     </>
+  );
+}
+
+// Shared backdrop + sliding panel for both trigger variants. Always mounted so
+// enter + exit can transition; the container flips `pointer-events-none` when
+// closed so clicks pass through. Backdrop fades, panel slides in from the right.
+function DrawerPanel({
+  open,
+  setOpen,
+  title,
+  description,
+  children,
+}: {
+  open: boolean;
+  setOpen: (value: boolean) => void;
+  title: string;
+  description?: string | undefined;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`fixed inset-0 z-50 flex transition-opacity duration-200 ease-out ${
+        open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+      }`}
+      aria-hidden={!open}
+    >
+      <button
+        type="button"
+        aria-label="Close drawer backdrop"
+        tabIndex={open ? 0 : -1}
+        onClick={() => setOpen(false)}
+        className="flex-1 bg-black/60 backdrop-blur-sm"
+      />
+      <div
+        role="dialog"
+        aria-label={title}
+        aria-modal="true"
+        className={`w-full sm:w-[560px] max-w-full bg-[#0F0F10] border-l border-white/10 p-6 overflow-y-auto shadow-[0_0_60px_rgba(0,0,0,0.8)] transform transition-transform duration-300 ease-out ${
+          open ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-lg font-bold tracking-[0.02em]">{title}</h3>
+            {description ? (
+              <p className="text-xs font-light opacity-60 leading-snug mt-1">
+                {description}
+              </p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            tabIndex={open ? 0 : -1}
+            className="text-xs uppercase tracking-[0.18em] opacity-60 hover:opacity-100 shrink-0"
+          >
+            Close ✕
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }

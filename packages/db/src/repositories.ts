@@ -12871,6 +12871,21 @@ async function applyReplyClassRouting(
           threadId: input.threadId
         }
       });
+      // T-026BL: warm replies are the most valuable inbound signal but were the
+      // only routed class with no Telegram ping (unsubscribe/complaint already
+      // notify). A positive_interest reply sitting silently in the queue is a
+      // missed opportunity — page the operator.
+      if (created) {
+        const emoji = input.replyClass === "positive_interest" ? "🔥" : "💬";
+        await enqueueTelegramNotificationJob(tx, {
+          text: `${emoji} Warm reply (${input.replyClass})\ninbound:${input.inboundMessageId}${input.subject ? `\nsubject:${truncateForTelegram(input.subject, 200)}` : ""}${input.fromEmail ? `\nfrom:${truncateForTelegram(input.fromEmail, 200)}` : ""}`,
+          entityType: "inbound_message",
+          entityId: input.inboundMessageId,
+          notificationKey: `warm_reply:${input.inboundMessageId}`,
+          correlationId: input.correlationId,
+          priority: 70
+        });
+      }
       break;
     }
 
@@ -19844,7 +19859,16 @@ export async function getWorkItemDetail(id: string): Promise<WorkItemDetail | nu
   };
 }
 
-export const inboxTabs = ["needs_reply", "awaiting_approval", "low_confidence", "manual_hold", "all"] as const;
+// Tab taxonomy (T-026BL). Re-grouped around the work-item types that are
+// actually created today. The previous taxonomy mapped mostly dead legacy
+// types (`low_confidence_draft`, `manual_hold_thread`) and left every reply
+// outcome orphaned — visible only under "all". Buckets now:
+//   replies     human replied to our outreach (warm / reassign / defer /
+//               unsubscribe / complaint)
+//   unmatched   inbound we couldn't attach to a thread or parse
+//   approvals   drafts awaiting operator go-ahead
+//   attention   policy / scope / suppression / provider blockers + blocked items
+export const inboxTabs = ["replies", "unmatched", "approvals", "attention", "all"] as const;
 export type InboxTab = (typeof inboxTabs)[number];
 
 export type InboxWorkItemRow = {
@@ -19856,6 +19880,13 @@ export type InboxWorkItemRow = {
   summary: string | null;
   reasonCode: string;
   actionLabel: string | null;
+  // Inbound preview (T-026BL) — populated for reply / unmatched items that
+  // carry an inbound_message_id, so a card can show who replied and a snippet
+  // of what they wrote without the operator opening the detail page. Null for
+  // work items with no associated inbound message (drafts, policy, scope).
+  inboundFromEmail: string | null;
+  inboundSubject: string | null;
+  inboundSnippet: string | null;
   availableAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -19892,16 +19923,50 @@ export const DEFAULT_INBOX_OPERATOR_ID = "local-operator";
 const INBOX_PAGE_SIZE = 200;
 
 const inboxTabTypeFilters: Record<Exclude<InboxTab, "all">, string[]> = {
-  needs_reply: ["unmatched_inbound_message", "thread_match_ambiguous"],
-  awaiting_approval: ["draft_review_pending", "draft_awaiting_approval"],
-  low_confidence: ["low_confidence_draft"],
-  // `cooldown_expired` and `followup_eligible` (canonical §66.5447-5456)
-  // surface here because they're policy-state-resurfacing prompts: the
-  // operator must decide whether to resume cold expansion / send a follow-up
-  // before any draft work is queued. Grouped alongside policy_blocker so
-  // both sides of the policy lifecycle (entry / expiry) appear in one tab.
-  manual_hold: ["manual_hold_thread", "policy_blocker", "cooldown_expired", "followup_eligible"]
+  // Human replies to our outreach — the operator decides intent. Warm classes
+  // (positive_interest / question / neutral) land as warm_reply_review_needed;
+  // the rest are reassign / defer / unsubscribe / complaint outcomes.
+  replies: [
+    "warm_reply_review_needed",
+    "wrong_person_reassignment",
+    "not_now_resurface",
+    "reply_unsubscribe_recorded",
+    "reply_complaint_received"
+  ],
+  // Inbound the system could not confidently attach to a thread/contact, or
+  // could not parse — needs manual matching before any reply work.
+  unmatched: [
+    "unmatched_inbound_message",
+    "thread_match_ambiguous",
+    "unmatched_inbound_summary",
+    "inbound_parse_failed",
+    "send_ambiguity_review"
+  ],
+  // Drafts waiting for an operator go-ahead before send.
+  approvals: ["draft_review_pending"],
+  // Policy / scope / suppression / provider-reconciliation blockers, plus
+  // policy-lifecycle resurfacing prompts. `cooldown_expired` / `followup_eligible`
+  // (canonical §66.5447-5456) are the operator's "resume cold expansion / send a
+  // follow-up?" decisions. Blocked-status items also fold in here (see
+  // inboxTabFilterSql) so nothing stuck is hidden.
+  attention: [
+    "policy_blocker",
+    "campaign_scope_incomplete",
+    "cooldown_expired",
+    "followup_eligible",
+    "suppression_event_review",
+    "provider_event_reconciliation"
+  ]
 };
+
+// Collapse an inbound raw body into a one-line snippet for inbox cards.
+// Whitespace-normalised and capped; appends an ellipsis when truncated.
+function buildInboundSnippet(raw: string | null): string | null {
+  if (!raw) return null;
+  const flat = raw.replace(/\s+/g, " ").trim();
+  if (!flat) return null;
+  return flat.length > 240 ? `${flat.slice(0, 240).trimEnd()}…` : flat;
+}
 
 const inboxOpenStatusSql = sql`(
   ${workItems.status} = 'open'
@@ -19917,10 +19982,10 @@ export type GetInboxViewInput = {
   limit?: number;
 };
 
-export async function getInboxView(input: InboxTab | GetInboxViewInput = "needs_reply"): Promise<InboxView> {
+export async function getInboxView(input: InboxTab | GetInboxViewInput = "replies"): Promise<InboxView> {
   const db = getDb();
   const request = typeof input === "string" ? { tab: input } : input;
-  const tab = request.tab ?? "needs_reply";
+  const tab = request.tab ?? "replies";
   const operatorId = normalizeOperatorId(request.operatorId);
   const savedViews = await listInboxViews(operatorId);
   const activeSavedView = request.savedViewId
@@ -19932,10 +19997,10 @@ export async function getInboxView(input: InboxTab | GetInboxViewInput = "needs_
   const cursor = decodeInboxCursor(request.cursor ?? null);
   const limit = Math.min(Math.max(request.limit ?? INBOX_PAGE_SIZE, 1), INBOX_PAGE_SIZE);
   const counts: Record<InboxTab, number> = {
-    needs_reply: 0,
-    awaiting_approval: 0,
-    low_confidence: 0,
-    manual_hold: 0,
+    replies: 0,
+    unmatched: 0,
+    approvals: 0,
+    attention: 0,
     all: 0
   };
 
@@ -19952,17 +20017,15 @@ export async function getInboxView(input: InboxTab | GetInboxViewInput = "needs_
   for (const row of aggregateRows) {
     const n = toNumber(row.count);
     counts.all += n;
-    if (row.status === "blocked" || inboxTabTypeFilters.manual_hold.includes(row.type)) {
-      counts.manual_hold += n;
-    }
-    if (inboxTabTypeFilters.needs_reply.includes(row.type)) {
-      counts.needs_reply += n;
-    }
-    if (inboxTabTypeFilters.awaiting_approval.includes(row.type)) {
-      counts.awaiting_approval += n;
-    }
-    if (inboxTabTypeFilters.low_confidence.includes(row.type)) {
-      counts.low_confidence += n;
+    for (const tabKey of inboxTabs) {
+      if (tabKey === "all") continue;
+      const inBucket = inboxTabTypeFilters[tabKey].includes(row.type);
+      // Blocked items fold into attention so nothing stuck is hidden — mirrors
+      // the SQL filter in inboxTabFilterSql.
+      const blockedToAttention = tabKey === "attention" && row.status === "blocked";
+      if (inBucket || blockedToAttention) {
+        counts[tabKey] += n;
+      }
     }
   }
 
@@ -19982,11 +20045,15 @@ export async function getInboxView(input: InboxTab | GetInboxViewInput = "needs_
       summary: workItems.summary,
       reasonCode: workItems.reasonCode,
       actionLabel: workItems.actionLabel,
+      inboundFromEmail: inboundMessages.fromEmail,
+      inboundSubject: inboundMessages.subject,
+      inboundRawText: inboundMessages.rawText,
       availableAt: workItems.availableAt,
       createdAt: workItems.createdAt,
       updatedAt: workItems.updatedAt
     })
     .from(workItems)
+    .leftJoin(inboundMessages, eq(inboundMessages.id, workItems.inboundMessageId))
     .where(and(
       inboxOpenStatusSql,
       activeFilter,
@@ -20009,6 +20076,9 @@ export async function getInboxView(input: InboxTab | GetInboxViewInput = "needs_
     summary: row.summary ?? null,
     reasonCode: row.reasonCode,
     actionLabel: row.actionLabel ?? null,
+    inboundFromEmail: row.inboundFromEmail ?? null,
+    inboundSubject: row.inboundSubject ?? null,
+    inboundSnippet: buildInboundSnippet(row.inboundRawText ?? null),
     availableAt: row.availableAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
@@ -20126,8 +20196,8 @@ function inboxTabFilterSql(tab: InboxTab) {
   if (tab === "all") {
     return sql`true`;
   }
-  if (tab === "manual_hold") {
-    const types = inboxTabTypeFilters.manual_hold;
+  if (tab === "attention") {
+    const types = inboxTabTypeFilters.attention;
     return sql`(${workItems.status} = 'blocked' or ${inArray(workItems.type, types)})`;
   }
   const types = inboxTabTypeFilters[tab];
