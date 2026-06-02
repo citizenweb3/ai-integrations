@@ -1202,6 +1202,7 @@ function formDataToCommand(formData: FormData) {
     const threadId = String(formData.get("threadId") ?? "").trim();
     const replyIntent = String(formData.get("replyIntent") ?? "").trim();
     const targetContactId = String(formData.get("targetContactId") ?? "").trim();
+    const replaceExisting = String(formData.get("replaceExisting") ?? "").trim() === "true";
     const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
     return {
       commandType,
@@ -1210,6 +1211,7 @@ function formDataToCommand(formData: FormData) {
         threadId,
         replyIntent,
         ...(targetContactId ? { targetContactId } : {}),
+        ...(replaceExisting ? { replaceExisting: true } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
     };

@@ -898,6 +898,10 @@ export const generateWarmDraftPayloadSchema = z.object({
   threadId: z.string().uuid(),
   replyIntent: z.string().trim().min(1).max(8000),
   targetContactId: z.string().uuid().optional(),
+  // T-026BM: regenerate path — discard the thread's current live draft first so
+  // the thread keeps a single warm draft instead of stacking versions. Mirrors
+  // GenerateDraftPayload.replaceExisting on the cold side.
+  replaceExisting: z.boolean().optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 

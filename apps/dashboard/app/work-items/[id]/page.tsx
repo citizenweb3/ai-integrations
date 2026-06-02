@@ -1,4 +1,4 @@
-import { getWorkItemDetail } from "@bizdev/db";
+import { DEFAULT_WARM_REPLY_INTENT, getWorkItemDetail, type WorkItemDetail } from "@bizdev/db";
 import {
   buildAttachInboundToThreadIdempotencyKey,
   buildWorkItemActionIdempotencyKey
@@ -8,7 +8,7 @@ import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import BlockTitle from "@/components/block-title";
-import { Badge, Button, InfoRow, MetricCard, PageBody, PillLink, textareaClass } from "@/components/ui";
+import { Badge, Button, InfoRow, MetricCard, PageBody, PillLink } from "@/components/ui";
 import { BackLink } from "@/components/back-link";
 
 export const dynamic = "force-dynamic";
@@ -71,60 +71,15 @@ export default async function WorkItemDetailPage({ params }: Props) {
           </div>
         </div>
 
-        {/* Type-specific primary action — what this item actually needs you to
-            do. For a warm reply that's writing the response, so the
-            generate-warm-draft form lives right here instead of being buried on
-            the thread page. The card CTA in the inbox lands the operator here. */}
+        {/* Warm reply: the draft is auto-generated when the reply lands, so this
+            panel leads with the ready draft (review / regenerate / discard /
+            open full editor) — same mechanism as the cold-draft org panel. */}
         {isWarmReply && !isResolved ? (
-          <Card className="border border-[var(--accent)]/30">
-            <BlockTitle title="Reply to this contact" className="mb-2 text-left" />
-            <p className="text-sm font-light opacity-80 mb-4 max-w-2xl">
-              {item.inboundMessage?.fromEmail ? `${item.inboundMessage.fromEmail} replied.` : "This contact replied."}{" "}
-              Say what your reply should accomplish, then generate a warm draft — the agent writes it
-              using the whole thread, this message, and the org&apos;s research. You review and send it
-              after; nothing goes out automatically.
-            </p>
-            {item.inboundMessage?.threadId ? (
-              <form action="/api/commands" method="post" className="space-y-3 max-w-2xl">
-                <input type="hidden" name="commandType" value="generate_warm_draft" />
-                <input type="hidden" name="threadId" value={item.inboundMessage.threadId} />
-                <label className="block">
-                  <span className="text-xs font-semibold tracking-[0.15em] uppercase opacity-70">
-                    What should this reply do?
-                  </span>
-                  <textarea
-                    className={`${textareaClass} mt-2`}
-                    name="replyIntent"
-                    required
-                    rows={4}
-                    placeholder="e.g. Confirm we'd love a call next week and propose Tue or Wed 3pm. Ask what their biggest hiring bottleneck is right now."
-                  />
-                </label>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button type="submit" tone="primary">
-                    Generate warm draft →
-                  </Button>
-                  {item.inboundMessage.threadId ? (
-                    <Link
-                      href={`/threads/${item.inboundMessage.threadId}`}
-                      className="text-xs opacity-60 hover:text-[var(--accent)]"
-                    >
-                      open full thread (pick a different recipient, see history) →
-                    </Link>
-                  ) : null}
-                </div>
-                <p className="text-xs font-light opacity-50">
-                  Default recipient is whoever sent the latest reply. The draft then shows up under
-                  <span className="opacity-80"> Approvals</span> for you to review and send.
-                </p>
-              </form>
-            ) : (
-              <p className="text-sm text-yellow-300">
-                This reply isn&apos;t attached to a thread yet — attach it first (see Triage below),
-                then come back here to generate the draft.
-              </p>
-            )}
-          </Card>
+          <WarmReplyDraftPanel
+            draft={item.latestDraft}
+            threadId={item.inboundMessage?.threadId ?? null}
+            fromEmail={item.inboundMessage?.fromEmail ?? null}
+          />
         ) : null}
 
         {!isResolved ? (
@@ -337,5 +292,164 @@ export default async function WorkItemDetailPage({ params }: Props) {
         </Card>
       </PageBody>
     </>
+  );
+}
+
+// Warm-reply draft panel — mirrors OrgDraftPanel (cold side). The draft is
+// auto-generated when the reply is classified, so the common case shows a ready
+// draft with review / send / discard / regenerate. Falls back to a one-click
+// Generate when none exists yet (old items, post-discard, or auto-gen pending),
+// and to an attach prompt when the reply has no thread.
+function WarmReplyDraftPanel({
+  draft,
+  threadId,
+  fromEmail
+}: {
+  draft: WorkItemDetail["latestDraft"];
+  threadId: string | null;
+  fromEmail: string | null;
+}) {
+  if (!threadId) {
+    return (
+      <Card className="border border-yellow-500/30">
+        <BlockTitle title="Warm reply" className="mb-2 text-left" />
+        <p className="text-sm text-yellow-300">
+          This reply isn&apos;t attached to a thread yet — attach it first (see Triage below), then a
+          warm draft can be generated.
+        </p>
+      </Card>
+    );
+  }
+
+  if (!draft) {
+    return (
+      <Card className="border border-[var(--accent)]/30">
+        <BlockTitle title="Warm reply" className="mb-2 text-left" />
+        <p className="text-sm font-light opacity-75 mb-4 max-w-2xl">
+          {fromEmail ? `${fromEmail} replied.` : "This contact replied."} A warm draft is normally
+          generated automatically — there isn&apos;t one here yet. Generate it now; the agent uses the
+          whole thread, this message, and the org&apos;s research. Nothing sends without your approval.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <form action="/api/commands" method="post">
+            <input type="hidden" name="commandType" value="generate_warm_draft" />
+            <input type="hidden" name="threadId" value={threadId} />
+            <input type="hidden" name="replyIntent" value={DEFAULT_WARM_REPLY_INTENT} />
+            <Button type="submit" tone="primary">
+              Generate warm draft →
+            </Button>
+          </form>
+          <Link href={`/threads/${threadId}`} className="text-xs opacity-60 hover:text-[var(--accent)]">
+            open full thread (custom intent, pick recipient) →
+          </Link>
+        </div>
+      </Card>
+    );
+  }
+
+  const isOpen = draft.status === "draft";
+  const isSent =
+    draft.status === "sent" ||
+    draft.status === "sending" ||
+    draft.status === "approved" ||
+    draft.status === "approved_pending_send";
+  const isFailed = draft.status === "send_failed_post_approve";
+  const statusTone = isSent ? "accent" : isFailed ? "danger" : "default";
+  const statusLabel = isSent ? "✓ Sent / sending" : isFailed ? "⚠ Send failed" : "Ready for review";
+
+  return (
+    <Card className="border border-[var(--accent)]/30">
+      <div className="flex justify-between items-start flex-wrap gap-3 mb-4">
+        <div>
+          <BlockTitle title="Warm reply draft" className="mb-1 text-left" />
+          <p className="text-sm opacity-70 font-light">
+            <Badge tone={statusTone}>{statusLabel}</Badge>
+            {draft.qualityScoreBand ? (
+              <span className="ml-2 text-xs opacity-60">quality: {draft.qualityScoreBand}</span>
+            ) : null}
+          </p>
+        </div>
+      </div>
+
+      <div className="border border-white/10 rounded-xl p-4 bg-black/20 space-y-2">
+        <div className="text-xs opacity-60">
+          To: {draft.contactName ? `${draft.contactName} · ` : ""}
+          <span className="font-mono">{draft.contactEmail ?? fromEmail ?? "latest sender"}</span>
+        </div>
+        <div className="text-sm font-medium">{draft.subject}</div>
+        {draft.body.length > draft.bodyExcerpt.length ? (
+          <details className="group">
+            <summary className="list-none cursor-pointer">
+              <p className="text-sm font-light opacity-70 whitespace-pre-wrap leading-snug group-open:hidden">
+                {draft.bodyExcerpt}…
+              </p>
+              <span className="text-xs text-[var(--accent)] opacity-80 group-open:hidden">More ▾</span>
+              <span className="text-xs text-[var(--accent)] opacity-80 hidden group-open:inline">Less ▴</span>
+            </summary>
+            <p className="text-sm font-light opacity-70 whitespace-pre-wrap leading-snug mt-1">
+              {draft.body}
+            </p>
+          </details>
+        ) : (
+          <p className="text-sm font-light opacity-70 whitespace-pre-wrap leading-snug">{draft.body}</p>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2 mt-4">
+        <Link
+          href={`/drafts/${draft.id}`}
+          className="rounded-lg border border-white/15 px-4 py-2 text-sm hover:bg-white/5"
+        >
+          Open / Edit
+        </Link>
+        {isOpen ? (
+          <>
+            <form action="/api/commands" method="post">
+              <input type="hidden" name="commandType" value="approve_draft_for_send" />
+              <input type="hidden" name="draftId" value={draft.id} />
+              <input type="hidden" name="draftVersion" value={String(draft.version)} />
+              <button
+                type="submit"
+                className="rounded-lg bg-[hsl(var(--primary))] text-black font-bold px-4 py-2 text-sm hover:opacity-90"
+              >
+                Send
+              </button>
+            </form>
+            <form action="/api/commands" method="post">
+              <input type="hidden" name="commandType" value="discard_draft" />
+              <input type="hidden" name="draftId" value={draft.id} />
+              <input type="hidden" name="expectedVersion" value={String(draft.version)} />
+              <input type="hidden" name="reason" value="Discarded from work item" />
+              <button
+                type="submit"
+                className="rounded-lg border border-red-500/40 text-red-300 px-4 py-2 text-sm hover:bg-red-500/10"
+              >
+                Discard
+              </button>
+            </form>
+            <form action="/api/commands" method="post">
+              <input type="hidden" name="commandType" value="generate_warm_draft" />
+              <input type="hidden" name="threadId" value={threadId} />
+              <input type="hidden" name="replaceExisting" value="true" />
+              <input type="hidden" name="replyIntent" value={DEFAULT_WARM_REPLY_INTENT} />
+              <button
+                type="submit"
+                className="rounded-lg border border-white/15 px-4 py-2 text-sm hover:bg-white/5"
+              >
+                Regenerate
+              </button>
+            </form>
+          </>
+        ) : null}
+      </div>
+      <p className="text-xs opacity-50 mt-2">
+        Send re-checks pre-send guardrails. Regenerate rewrites the reply from the thread + research.
+        For a custom intent or a different recipient, open the{" "}
+        <Link href={`/threads/${threadId}`} className="text-[var(--accent)]">
+          thread
+        </Link>
+        .
+      </p>
+    </Card>
   );
 }
