@@ -144,15 +144,19 @@ export function deriveCampaignStage(view: CampaignDiscoveryView): CampaignStageS
   }
 
   if (pendingTriage > 0) {
-    const label = pendingTriage === 1 ? "1 candidate" : `${pendingTriage} candidates`;
+    const label = pendingTriage === 1 ? "1 organisation" : `${pendingTriage} organisations`;
     return {
       key: "triage",
-      label: "Discovery — triage",
-      tone: "warning",
-      description: `${label} waiting for accept/reject. Enrichment only starts on accepted ones.`,
+      // Not urgent: discovery surfaced orgs the system isn't fully confident
+      // about (weak/ambiguous match). They wait for the operator's judgement
+      // whenever they get to it — accepted ones go on to enrichment. Calm
+      // tone + soft CTA so the strip informs without nagging.
+      label: "Discovery — needs your review",
+      tone: "default",
+      description: `The system isn't fully confident about ${label} it found and would like your confirmation before researching them. No rush — review whenever it suits you; accepted orgs move on to enrichment.`,
       nextAction: {
-        title: `Review ${label}`,
-        hint: "Open the candidate triage page and accept the orgs you want to enrich.",
+        title: `Review ${label} when you have a moment`,
+        hint: "Open the candidate page to confirm or skip the orgs the system was unsure about.",
         href: `/campaigns/${view.campaign.id}/candidates`
       }
     };

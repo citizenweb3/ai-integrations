@@ -529,6 +529,13 @@ function ScopeIncompleteCallout({ view }: { view: CampaignDiscoveryViewModel }) 
 function StageStrip({ stage }: { stage: CampaignStageSnapshot }) {
   const action = stage.nextAction;
   const ctaIsAnchor = action?.href.startsWith("#");
+  // Only warning/danger stages get the loud filled CTA. Calm stages
+  // (default/primary — e.g. "needs your review, no rush") get a quiet
+  // outline button so the strip informs without pressuring the operator.
+  const loudCta = stage.tone === "warning" || stage.tone === "danger";
+  const ctaClass = loudCta
+    ? "px-5 py-2 rounded-[10px] text-sm font-semibold tracking-wide bg-[var(--accent)] text-black hover:opacity-90 transition-colors"
+    : "px-5 py-2 rounded-[10px] text-sm font-medium tracking-wide border border-white/15 text-white hover:bg-white/5 transition-colors";
   return (
     <Card>
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -542,17 +549,11 @@ function StageStrip({ stage }: { stage: CampaignStageSnapshot }) {
         {action ? (
           <div className="flex flex-col items-start md:items-end gap-2">
             {ctaIsAnchor ? (
-              <a
-                href={action.href}
-                className="px-5 py-2 rounded-[10px] text-sm font-semibold tracking-wide bg-[var(--accent)] text-black hover:opacity-90 transition-colors"
-              >
+              <a href={action.href} className={ctaClass}>
                 {action.title}
               </a>
             ) : (
-              <Link
-                href={action.href}
-                className="px-5 py-2 rounded-[10px] text-sm font-semibold tracking-wide bg-[var(--accent)] text-black hover:opacity-90 transition-colors"
-              >
+              <Link href={action.href} className={ctaClass}>
                 {action.title}
               </Link>
             )}
