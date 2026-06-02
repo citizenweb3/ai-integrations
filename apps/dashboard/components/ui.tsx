@@ -16,8 +16,11 @@ export const Button: FC<
     tone?: "primary" | "ghost" | "danger" | "muted";
     size?: "sm" | "md";
     className?: string;
+    // Native hover tooltip — used to spell out what a terse action button does
+    // (e.g. "Discard" → "Not relevant — closes and drops it").
+    title?: string;
   }>
-> = ({ children, type = "submit", name, value, tone = "primary", size = "md", className }) => {
+> = ({ children, type = "submit", name, value, tone = "primary", size = "md", className, title }) => {
   const sizes = size === "sm" ? "px-3 py-1.5 text-xs" : "px-4 py-2.5 text-sm";
   const tones = {
     primary: "bg-[var(--accent)] text-black hover:opacity-90",
@@ -30,6 +33,7 @@ export const Button: FC<
       type={type}
       name={name}
       value={value}
+      {...(title ? { title } : {})}
       className={twMerge(
         "rounded-lg font-bold tracking-wide transition-colors hover:no-underline",
         sizes,

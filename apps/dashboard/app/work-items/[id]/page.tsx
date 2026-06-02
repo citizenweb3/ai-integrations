@@ -81,8 +81,15 @@ export default async function WorkItemDetailPage({ params }: Props) {
                   name="idempotencyKey"
                   value={buildWorkItemActionIdempotencyKey(item.id, "resolve", item.updatedAt)}
                 />
-                <Button type="submit" name="action" value="resolve" tone="primary" size="sm">
-                  Resolve
+                <Button
+                  type="submit"
+                  name="action"
+                  value="resolve"
+                  tone="primary"
+                  size="sm"
+                  title="Done — handled this item, closes it for good"
+                >
+                  Done
                 </Button>
               </form>
               <form action="/api/work-items" method="post">
@@ -92,7 +99,14 @@ export default async function WorkItemDetailPage({ params }: Props) {
                   name="idempotencyKey"
                   value={buildWorkItemActionIdempotencyKey(item.id, "block", item.updatedAt)}
                 />
-                <Button type="submit" name="action" value="block" tone="ghost" size="sm">
+                <Button
+                  type="submit"
+                  name="action"
+                  value="block"
+                  tone="ghost"
+                  size="sm"
+                  title="Can't act yet — keeps it open and surfaces it under the Attention tab"
+                >
                   Block
                 </Button>
               </form>
@@ -104,8 +118,15 @@ export default async function WorkItemDetailPage({ params }: Props) {
                   value={buildWorkItemActionIdempotencyKey(item.id, "snooze", item.updatedAt)}
                 />
                 <input type="hidden" name="snoozeMinutes" value="1440" />
-                <Button type="submit" name="action" value="snooze" tone="ghost" size="sm">
-                  Snooze 1d
+                <Button
+                  type="submit"
+                  name="action"
+                  value="snooze"
+                  tone="ghost"
+                  size="sm"
+                  title="Hide for 1 day, then it comes back to the queue automatically"
+                >
+                  Later (1d)
                 </Button>
               </form>
               <form action="/api/work-items" method="post">
@@ -115,11 +136,36 @@ export default async function WorkItemDetailPage({ params }: Props) {
                   name="idempotencyKey"
                   value={buildWorkItemActionIdempotencyKey(item.id, "dismiss", item.updatedAt)}
                 />
-                <Button type="submit" name="action" value="dismiss" tone="danger" size="sm">
-                  Dismiss
+                <Button
+                  type="submit"
+                  name="action"
+                  value="dismiss"
+                  tone="danger"
+                  size="sm"
+                  title="Not relevant — closes and drops it (won't come back)"
+                >
+                  Discard
                 </Button>
               </form>
             </div>
+            <dl className="mt-5 grid gap-x-6 gap-y-1.5 text-xs sm:grid-cols-2">
+              <div className="flex gap-2">
+                <dt className="font-semibold text-[var(--accent)] shrink-0">Done</dt>
+                <dd className="opacity-60">handled — closes it for good</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="font-semibold shrink-0">Block</dt>
+                <dd className="opacity-60">can't act yet — stays open under Attention</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="font-semibold shrink-0">Later (1d)</dt>
+                <dd className="opacity-60">hides for a day, then comes back</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="font-semibold text-red-300 shrink-0">Discard</dt>
+                <dd className="opacity-60">not relevant — closes and drops it</dd>
+              </div>
+            </dl>
           </Card>
         ) : null}
 

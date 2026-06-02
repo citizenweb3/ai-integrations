@@ -348,8 +348,15 @@ function WorkItemCard({ item }: { item: InboxWorkItemRow }) {
               name="idempotencyKey"
               value={buildWorkItemActionIdempotencyKey(item.id, "resolve", item.updatedAt)}
             />
-            <Button type="submit" name="action" value="resolve" tone="ghost" size="sm">
-              Resolve
+            <Button
+              type="submit"
+              name="action"
+              value="resolve"
+              tone="ghost"
+              size="sm"
+              title="Done — handled this item, closes it for good"
+            >
+              Done
             </Button>
           </form>
           <form action="/api/work-items" method="post" className="m-0">
@@ -360,8 +367,15 @@ function WorkItemCard({ item }: { item: InboxWorkItemRow }) {
               value={buildWorkItemActionIdempotencyKey(item.id, "snooze", item.updatedAt)}
             />
             <input type="hidden" name="snoozeMinutes" value="1440" />
-            <Button type="submit" name="action" value="snooze" tone="ghost" size="sm">
-              Snooze 1d
+            <Button
+              type="submit"
+              name="action"
+              value="snooze"
+              tone="ghost"
+              size="sm"
+              title="Hide for 1 day, then it comes back to the queue automatically"
+            >
+              Later (1d)
             </Button>
           </form>
           <form action="/api/work-items" method="post" className="m-0 ml-auto">
@@ -371,8 +385,15 @@ function WorkItemCard({ item }: { item: InboxWorkItemRow }) {
               name="idempotencyKey"
               value={buildWorkItemActionIdempotencyKey(item.id, "dismiss", item.updatedAt)}
             />
-            <Button type="submit" name="action" value="dismiss" tone="danger" size="sm">
-              Dismiss
+            <Button
+              type="submit"
+              name="action"
+              value="dismiss"
+              tone="danger"
+              size="sm"
+              title="Not relevant — closes and drops it (won't come back)"
+            >
+              Discard
             </Button>
           </form>
         </div>
