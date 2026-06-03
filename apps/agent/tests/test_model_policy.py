@@ -23,6 +23,7 @@ _RELEVANT_ENV = (
     "AGENT_DRAFT_EMAIL_MODEL",
     "AGENT_DRAFT_MODEL",
     "AGENT_DRAFT_EMAIL_MODEL_FALLBACK",
+    "AGENT_CAMPAIGN_SITE_STUDY_MODEL",
     "AGENT_DEFAULT_MODEL",
     "AGENT_DEFAULT_MODEL_FALLBACK",
 )
@@ -87,6 +88,21 @@ def test_stage_fallback_takes_precedence_over_global(
     assert model_policy.resolve_model_chain("draft_email") == [
         "gemini-3.1-pro-preview",
         "gemini-2.5-pro",
+    ]
+
+
+def test_campaign_site_study_stage_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    # T-026BO: the grounded site-study sub-call has its own stage.
+    monkeypatch.setenv("AGENT_CAMPAIGN_SITE_STUDY_MODEL", "gemini-3.5-flash")
+    assert model_policy.resolve_model_chain("campaign_site_study") == ["gemini-3.5-flash"]
+
+
+def test_campaign_site_study_appends_global_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_CAMPAIGN_SITE_STUDY_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("AGENT_DEFAULT_MODEL_FALLBACK", "gemini-2.5-flash")
+    assert model_policy.resolve_model_chain("campaign_site_study") == [
+        "gemini-3.5-flash",
+        "gemini-2.5-flash",
     ]
 
 
