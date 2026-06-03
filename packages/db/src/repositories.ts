@@ -9126,6 +9126,10 @@ export type DraftListRow = {
   subject: string;
   contactEmail: string | null;
   campaignId: string | null;
+  // Campaign display name, joined so the /drafts listing can group rows
+  // into per-campaign cards without a second round-trip. Null only for
+  // legacy drafts whose campaign row was deleted.
+  campaignName: string | null;
   threadId: string | null;
   updatedAt: Date;
 };
@@ -9139,12 +9143,14 @@ export async function getDraftsList(): Promise<DraftListRow[]> {
       status: drafts.status,
       subject: drafts.subject,
       campaignId: drafts.campaignId,
+      campaignName: campaigns.name,
       threadId: drafts.threadId,
       contactEmail: contacts.email,
       updatedAt: drafts.updatedAt
     })
     .from(drafts)
     .leftJoin(contacts, eq(contacts.id, drafts.contactId))
+    .leftJoin(campaigns, eq(campaigns.id, drafts.campaignId))
     .orderBy(desc(drafts.updatedAt))
     .limit(100);
 
@@ -9155,9 +9161,98 @@ export async function getDraftsList(): Promise<DraftListRow[]> {
     subject: r.subject,
     contactEmail: r.contactEmail ?? null,
     campaignId: r.campaignId ?? null,
+    campaignName: r.campaignName ?? null,
     threadId: r.threadId ?? null,
     updatedAt: r.updatedAt
   }));
+}
+
+// Drafts scoped to one campaign, newest first. Powers the "Drafts"
+// card embedded on the campaign detail page so the operator can see and
+// open every draft the campaign produced without leaving the page.
+export async function getDraftsForCampaign(
+  campaignId: string
+): Promise<DraftListRow[]> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      id: drafts.id,
+      version: drafts.version,
+      status: drafts.status,
+      subject: drafts.subject,
+      campaignId: drafts.campaignId,
+      campaignName: campaigns.name,
+      threadId: drafts.threadId,
+      contactEmail: contacts.email,
+      updatedAt: drafts.updatedAt
+    })
+    .from(drafts)
+    .leftJoin(contacts, eq(contacts.id, drafts.contactId))
+    .leftJoin(campaigns, eq(campaigns.id, drafts.campaignId))
+    .where(and(eq(drafts.campaignId, campaignId), ne(drafts.status, "discarded")))
+    .orderBy(desc(drafts.updatedAt))
+    .limit(500);
+
+  return rows.map((r) => ({
+    id: r.id,
+    version: r.version,
+    status: r.status,
+    subject: r.subject,
+    contactEmail: r.contactEmail ?? null,
+    campaignId: r.campaignId ?? null,
+    campaignName: r.campaignName ?? null,
+    threadId: r.threadId ?? null,
+    updatedAt: r.updatedAt
+  }));
+}
+
+// Cold drafts ready for a bulk "Send all" pass: scoped to one campaign,
+// not yet attached to a thread (thread_id null = first-contact cold
+// draft), still in 'draft' state, with a contact that carries an email.
+// These are exactly the drafts approve_draft_for_send will accept, so
+// the operator's one-click bulk send does not waste calls on drafts the
+// command would reject.
+export type SendableDraftRow = {
+  id: string;
+  version: number;
+  subject: string;
+  contactEmail: string;
+};
+
+export async function getSendableDraftsForCampaign(
+  campaignId: string
+): Promise<SendableDraftRow[]> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      id: drafts.id,
+      version: drafts.version,
+      subject: drafts.subject,
+      contactEmail: contacts.email
+    })
+    .from(drafts)
+    .innerJoin(contacts, eq(contacts.id, drafts.contactId))
+    .where(
+      and(
+        eq(drafts.campaignId, campaignId),
+        eq(drafts.status, "draft"),
+        isNull(drafts.threadId),
+        isNotNull(contacts.email)
+      )
+    )
+    .orderBy(desc(drafts.updatedAt))
+    .limit(500);
+
+  return rows
+    .filter((r): r is { id: string; version: number; subject: string; contactEmail: string } =>
+      Boolean(r.contactEmail)
+    )
+    .map((r) => ({
+      id: r.id,
+      version: r.version,
+      subject: r.subject,
+      contactEmail: r.contactEmail
+    }));
 }
 
 export type AgentRunStatus =
@@ -20873,6 +20968,10 @@ export type OrganizationListItem = {
   // listing sort so the operator sees orgs with at least one
   // sendable address at the top of the page.
   addressableEmailCount: number;
+  // Number of non-discarded drafts on this org (counted through its
+  // contacts). Powers the "with drafts" filter on the per-campaign
+  // organisations listing.
+  draftCount: number;
   // T-026AN: source campaigns for this org so /organizations rows show
   // which campaign each org came from. An org can be linked to more
   // than one campaign when the same domain is accepted from different
@@ -20925,6 +21024,7 @@ export async function listOrganizationsForDashboard(
       coalesce(w.cnt, 0)::int as open_work_item_count,
       coalesce(pcc.cnt, 0)::int as pending_contact_candidate_count,
       coalesce(ae.cnt, 0)::int as addressable_email_count,
+      coalesce(dr.cnt, 0)::int as draft_count,
       coalesce(cam.campaigns_json, '[]'::jsonb) as campaigns_json,
       s.snapshot_version as latest_snapshot_version,
       s.status as latest_snapshot_status,
@@ -20977,6 +21077,15 @@ export async function listOrganizationsForDashboard(
       group by organization_id
     ) ae on ae.organization_id = o.id
     left join (
+      -- Non-discarded drafts per org, counted through the contact the
+      -- draft targets. Drives the "with drafts" filter on the listing.
+      select ct.organization_id, count(*) as cnt
+      from drafts d
+      join contacts ct on ct.id = d.contact_id
+      where d.status <> 'discarded'
+      group by ct.organization_id
+    ) dr on dr.organization_id = o.id
+    left join (
       -- T-026AN: source campaigns aggregated from discovery_candidates.
       -- An org can have more than one source when the same domain is
       -- accepted in different campaigns; we surface them all so the
@@ -21028,6 +21137,7 @@ export async function listOrganizationsForDashboard(
     open_work_item_count: number;
     pending_contact_candidate_count: number;
     addressable_email_count: number;
+    draft_count: number;
     campaigns_json: Array<{ id: string; name: string }> | string | null;
     latest_snapshot_version: number | null;
     latest_snapshot_status: string | null;
@@ -21044,6 +21154,7 @@ export async function listOrganizationsForDashboard(
     openWorkItemCount: r.open_work_item_count,
     pendingContactCandidateCount: r.pending_contact_candidate_count,
     addressableEmailCount: r.addressable_email_count,
+    draftCount: r.draft_count,
     campaigns: Array.isArray(r.campaigns_json)
       ? r.campaigns_json
       : typeof r.campaigns_json === "string"
