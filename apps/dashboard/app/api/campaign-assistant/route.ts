@@ -20,6 +20,8 @@ interface ChatMessage {
 
 interface AssistRequestBody {
   messages: ChatMessage[];
+  // T-026BO: optional one-turn context after the dashboard fetched the site.
+  siteStudyResult?: string;
 }
 
 const MAX_MESSAGES = 40;
@@ -133,5 +135,13 @@ function validateAssistRequest(
   if (!last || last.role !== "user") {
     return { ok: false, error: "conversation must end with a user message" };
   }
-  return { ok: true, value: { messages: normalized } };
+  const siteStudyRaw = (body as { siteStudyResult?: unknown }).siteStudyResult;
+  if (siteStudyRaw !== undefined && typeof siteStudyRaw !== "string") {
+    return { ok: false, error: "siteStudyResult must be a string" };
+  }
+  const value: AssistRequestBody = { messages: normalized };
+  if (typeof siteStudyRaw === "string" && siteStudyRaw.length > 0) {
+    value.siteStudyResult = siteStudyRaw.slice(0, 8000);
+  }
+  return { ok: true, value };
 }

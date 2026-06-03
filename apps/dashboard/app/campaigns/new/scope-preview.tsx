@@ -25,8 +25,15 @@ type ScopePreviewProps = {
 };
 
 export default function ScopePreview({ turn, onBackToChat }: ScopePreviewProps) {
-  const { scope, inferred } = turn;
+  const { scope, inferred, draftBrief } = turn;
   const inferredFields = new Map(inferred.map((flag) => [flag.field, flag.reason]));
+  const hasBrief = Boolean(
+    draftBrief &&
+      (draftBrief.angle ||
+        draftBrief.tone ||
+        draftBrief.talkingPoints.length > 0 ||
+        draftBrief.ourFacts.length > 0),
+  );
 
   return (
     <div className="flex flex-col gap-5 rounded-xl border border-[var(--accent)]/40 bg-[var(--accent)]/[0.06] p-5">
@@ -92,6 +99,37 @@ export default function ScopePreview({ turn, onBackToChat }: ScopePreviewProps) 
         ) : null}
       </div>
 
+      {hasBrief && draftBrief ? (
+        <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+          <div className="text-xs uppercase tracking-[0.2em] opacity-70 mb-3">
+            Email drafting brief
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {draftBrief.angle ? (
+              <PreviewField label="Angle" value={draftBrief.angle} className="md:col-span-2" />
+            ) : null}
+            {draftBrief.tone ? <PreviewField label="Tone" value={draftBrief.tone} /> : null}
+            {draftBrief.talkingPoints.length > 0 ? (
+              <PreviewField
+                label="Key points"
+                value={draftBrief.talkingPoints.map((p) => `• ${p}`).join("\n")}
+                className="md:col-span-2"
+              />
+            ) : null}
+            {draftBrief.ourFacts.length > 0 ? (
+              <PreviewField
+                label="About us"
+                value={draftBrief.ourFacts.map((f) => `• ${f}`).join("\n")}
+                className="md:col-span-2"
+              />
+            ) : null}
+          </div>
+          <p className="text-[11px] font-light opacity-50 leading-snug mt-3">
+            Every cold draft this campaign produces will follow this brief.
+          </p>
+        </div>
+      ) : null}
+
       <form action="/api/commands" method="post" className="flex flex-wrap items-center gap-3">
         <input type="hidden" name="commandType" value="start_campaign" />
         <input type="hidden" name="name" value={scope.name} />
@@ -134,6 +172,9 @@ export default function ScopePreview({ turn, onBackToChat }: ScopePreviewProps) 
           name="cooldownBetweenDiscoverySeconds"
           value={String(scope.cooldownBetweenDiscoverySeconds)}
         />
+        {hasBrief && draftBrief ? (
+          <input type="hidden" name="draftBrief" value={JSON.stringify(draftBrief)} />
+        ) : null}
 
         <button
           type="submit"

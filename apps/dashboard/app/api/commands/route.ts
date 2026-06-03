@@ -1481,12 +1481,25 @@ function formDataToCommand(formData: FormData) {
     };
   }
 
+  // T-026BO: the chat assistant posts the drafting brief as a JSON blob; the zod
+  // schema (draftBriefSchema) validates the parsed object downstream.
+  let draftBrief: unknown;
+  const draftBriefRaw = String(formData.get("draftBrief") ?? "").trim();
+  if (draftBriefRaw) {
+    try {
+      draftBrief = JSON.parse(draftBriefRaw);
+    } catch {
+      draftBrief = undefined;
+    }
+  }
+
   return {
     commandType: "start_campaign",
     ...base,
     payload: {
       name: String(formData.get("name") ?? ""),
       objective: String(formData.get("objective") ?? ""),
+      ...(draftBrief ? { draftBrief } : {}),
       ...(optionalText(formData, "offerSummary") ? { offerSummary: optionalText(formData, "offerSummary") } : {}),
       ...(optionalText(formData, "desiredCta") ? { desiredCta: optionalText(formData, "desiredCta") } : {}),
       targetSegments: splitFormList(formData, "targetSegments"),

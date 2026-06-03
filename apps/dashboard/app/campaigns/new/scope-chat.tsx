@@ -4,10 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { textareaClass } from "@/components/ui";
 import ScopePreview from "./scope-preview";
 
-// Client-side multi-turn campaign-scope assistant. Each turn posts the full
-// chat history (state lives only here) to /api/campaign-assistant; the agent
-// either asks one follow-up question or returns a ready AssistTurn that the
-// preview card (T5) will render.
+// Client-side multi-turn campaign assistant. Each turn posts the full chat
+// history (state lives only here) to /api/campaign-assistant. The agent runs two
+// phases — scope, then an email drafting brief — and may ask a question, request
+// a site study, show a sample draft to react to, or return a ready turn that the
+// preview card renders.
 
 type ChatRole = "user" | "assistant";
 type Message = { role: ChatRole; content: string };
@@ -29,21 +30,26 @@ export type ScopeDraft = {
   cooldownBetweenDiscoverySeconds: number;
 };
 
+export type DraftBrief = {
+  angle: string;
+  tone: string;
+  talkingPoints: string[];
+  ourFacts: string[];
+};
+
+type SampleDraft = { subject: string; body: string };
+
 export type AssistTurn =
-  | { type: "question"; question: string; scope: null; inferred: InferredFlag[] }
-  | { type: "ready"; question: null; scope: ScopeDraft; inferred: InferredFlag[] };
+  | { type: "question"; question: string }
+  | { type: "study_site"; studyUrl: string }
+  | { type: "sample_draft"; sampleDraft: SampleDraft }
+  | { type: "ready"; scope: ScopeDraft; draftBrief: DraftBrief | null; inferred: InferredFlag[] };
 
-const INITIAL_ASSISTANT_MESSAGE = `Hi — let's build a campaign. The more you tell me up front, the fewer questions I'll need to ask. I'll walk through the rest one at a time.
+const INITIAL_ASSISTANT_MESSAGE = `Hi — let's build a campaign. First I'll collect the targeting scope, then we'll shape how the emails should read (angle, tone, a sample draft you can tweak) — all in this chat.
 
-A complete opening message covers the seven things I have to ask about:
+A complete opening message covers the seven scope things I have to ask about:
 
   "I want to sell <product> to <audience>. The goal is <outcome the email should drive>. The pitch in one sentence: <one-line offer>. The CTA should be <book a call / get demo / reply with intro>. Internal name: <short label>. Targeting <regions or 'global'>; aim for around <N> companies."
-
-You can also pre-set any of these optional fields if you have a preference — otherwise I'll suggest sensible defaults or leave them empty:
-
-  • Forbidden claims — things the cold draft must never say (e.g. "guaranteed ROI", "10x faster", legal/compliance claims).
-  • Discovery source hints — sites or directories I should prefer when searching for companies (e.g. a specific tender platform, an industry directory).
-  • Discovery exclusions — domains or company patterns to skip (e.g. competitors, generic marketplaces).
 
 Start with as much as you have — even just the first sentence is enough to get going.`;
 
@@ -56,7 +62,8 @@ export default function ScopeChat() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [finalTurn, setFinalTurn] = useState<AssistTurn | null>(null);
+  const [finalTurn, setFinalTurn] = useState<Extract<AssistTurn, { type: "ready" }> | null>(null);
+  const [sample, setSample] = useState<SampleDraft | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -64,53 +71,90 @@ export default function ScopeChat() {
   useEffect(() => {
     const node = scrollRef.current;
     if (node) node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
-  }, [messages.length, busy, finalTurn]);
+  }, [messages.length, busy, finalTurn, sample]);
 
-  // Re-focus the input as soon as the assistant turn lands so the operator
-  // can keep typing without reaching for the mouse. Skipped when the chat
-  // moves to the preview card (finalTurn) — there is no input to focus.
   useEffect(() => {
     if (!busy && !finalTurn) {
       textareaRef.current?.focus();
     }
   }, [busy, finalTurn, messages.length]);
 
-  async function send() {
-    const trimmed = input.trim();
-    if (!trimmed || busy) return;
-    const next: Message[] = [...messages, { role: "user", content: trimmed }];
-    setMessages(next);
-    setInput("");
+  // Run one (or, for a site study, two) assist round-trips. `history` is the
+  // canonical chat the agent sees; the "🔍 Studying…" bubble is cosmetic and is
+  // deliberately NOT part of `history`.
+  async function callAssist(history: Message[], siteStudyResult?: string): Promise<void> {
     setBusy(true);
     setError(null);
     try {
       const res = await fetch("/api/campaign-assistant", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify(
+          siteStudyResult ? { messages: history, siteStudyResult } : { messages: history },
+        ),
       });
-      const data = (await res.json()) as
-        | AssistTurn
-        | { error: string; detail?: string };
+      const data = (await res.json()) as AssistTurn | { error: string; detail?: string };
       if (!res.ok) {
         const err = data as { error: string; detail?: string };
         setError(err.detail ? `${err.error}: ${err.detail}` : err.error);
         return;
       }
       const turn = data as AssistTurn;
+
       if (turn.type === "ready") {
+        setSample(null);
         setFinalTurn(turn);
         return;
       }
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: turn.question },
-      ]);
+      if (turn.type === "question") {
+        setSample(null);
+        setMessages((prev) => [...prev, { role: "assistant", content: turn.question }]);
+        return;
+      }
+      if (turn.type === "sample_draft") {
+        setSample(turn.sampleDraft);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "Here's a sample email — does it work? Approve it, or tell me what to change." },
+        ]);
+        return;
+      }
+      if (turn.type === "study_site") {
+        const url = turn.studyUrl;
+        setMessages((prev) => [...prev, { role: "assistant", content: `🔍 Studying ${url} …` }]);
+        let result = "(site study failed — continue from the description)";
+        try {
+          const sres = await fetch("/api/campaign-assistant/study-site", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ url }),
+          });
+          const sdata = (await sres.json()) as { result?: string; error?: string };
+          if (sres.ok && typeof sdata.result === "string" && sdata.result.length > 0) {
+            result = sdata.result;
+          }
+        } catch {
+          /* keep the failure sentinel; the assistant continues gracefully */
+        }
+        // Continue the same conversation, feeding the findings back.
+        await callAssist(history, result);
+        return;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function send(textOverride?: string) {
+    const trimmed = (textOverride ?? input).trim();
+    if (!trimmed || busy) return;
+    const next: Message[] = [...messages, { role: "user", content: trimmed }];
+    setMessages(next);
+    setInput("");
+    setSample(null);
+    await callAssist(next);
   }
 
   function reset() {
@@ -119,15 +163,16 @@ export default function ScopeChat() {
     setBusy(false);
     setError(null);
     setFinalTurn(null);
+    setSample(null);
   }
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-light opacity-60 leading-snug max-w-2xl">
-          Tell the assistant what you want to do. It will ask one short
-          question at a time, then propose a campaign scope you can review
-          before creating.
+          Tell the assistant what you want to do. It collects the targeting scope,
+          then helps shape the email — angle, tone, and a sample draft you can
+          tweak — before you create the campaign.
         </p>
         <button
           type="button"
@@ -145,10 +190,11 @@ export default function ScopeChat() {
         {messages.map((msg, idx) => (
           <ChatBubble key={idx} role={msg.role} content={msg.content} />
         ))}
+        {sample ? <SampleCard sample={sample} disabled={busy} onApprove={() => void send("Looks good — save this brief.")} /> : null}
         {busy ? <ChatBubble role="assistant" content="…" muted /> : null}
       </div>
 
-      {finalTurn && finalTurn.type === "ready" ? (
+      {finalTurn ? (
         <ScopePreview
           turn={finalTurn}
           onBackToChat={() => {
@@ -184,7 +230,7 @@ export default function ScopeChat() {
                 void send();
               }
             }}
-            placeholder="Type your answer — Cmd/Ctrl+Enter sends."
+            placeholder={sample ? "Tell me what to change — or click Approve above." : "Type your answer — Cmd/Ctrl+Enter sends."}
             disabled={busy}
             rows={3}
             className={textareaClass}
@@ -205,6 +251,35 @@ export default function ScopeChat() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function SampleCard({
+  sample,
+  onApprove,
+  disabled,
+}: {
+  sample: SampleDraft;
+  onApprove: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="self-start max-w-[88%] rounded-2xl border border-[var(--accent)]/30 bg-[var(--accent)]/[0.04] p-4">
+      <div className="text-[10px] uppercase tracking-[0.2em] opacity-50 mb-2">Sample email</div>
+      <div className="text-sm font-medium mb-1">{sample.subject}</div>
+      <p className="text-sm font-light opacity-80 whitespace-pre-wrap leading-relaxed">{sample.body}</p>
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onApprove}
+          disabled={disabled}
+          className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-bold tracking-wide text-black hover:opacity-90 disabled:opacity-40 transition-opacity"
+        >
+          Approve
+        </button>
+        <span className="text-[11px] opacity-50">…or type what to change below.</span>
+      </div>
     </div>
   );
 }
@@ -233,4 +308,3 @@ function ChatBubble({
     </div>
   );
 }
-
