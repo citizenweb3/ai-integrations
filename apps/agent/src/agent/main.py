@@ -19,7 +19,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .agents import stage_tool_allowlist, supported_stages
-from .assist import AssistRequest, AssistTurn, run_scope_assistant
+from .assist import (
+    AssistRequest,
+    AssistTurn,
+    SiteStudyRequest,
+    SiteStudyResponse,
+    run_scope_assistant,
+    run_site_study,
+)
 from .runner import stream_stage
 
 # Vertex AI is the only supported runtime: Gemini calls and embeddings both
@@ -118,6 +125,21 @@ async def assist_scope(
         return await run_scope_assistant(request.messages, request.siteStudyResult)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/assist/study-site", response_model=SiteStudyResponse)
+async def assist_study_site(
+    request: SiteStudyRequest,
+    authorization: str | None = Header(default=None),
+) -> SiteStudyResponse:
+    _authorize_agent_run(authorization)
+    url = request.url.strip()
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="url must start with http:// or https://")
+    if len(url) > 2000:
+        raise HTTPException(status_code=400, detail="url too long")
+    result = await run_site_study(url)
+    return SiteStudyResponse(result=result)
 
 
 def _agent_run_secret() -> str | None:

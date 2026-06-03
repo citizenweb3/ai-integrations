@@ -27,6 +27,9 @@ _STAGE_MODEL_ENV_KEYS: dict[str, tuple[str, ...]] = {
     "classify_reply": ("AGENT_CLASSIFY_REPLY_MODEL",),
     "campaign_discovery": ("AGENT_CAMPAIGN_DISCOVERY_MODEL",),
     "campaign_scope_assist": ("AGENT_CAMPAIGN_SCOPE_ASSIST_MODEL",),
+    # T-026BO: grounded one-shot that reads the operator's site via google_search
+    # and returns plain-text facts about us for the drafting brief.
+    "campaign_site_study": ("AGENT_CAMPAIGN_SITE_STUDY_MODEL",),
 }
 
 

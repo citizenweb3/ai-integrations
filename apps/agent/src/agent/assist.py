@@ -32,6 +32,18 @@ logging.basicConfig(level=logging.INFO)
 _STAGE = "campaign_scope_assist"
 _TEMPERATURE = 0.4
 
+# T-026BO: grounded site-study sub-call. Separate from the structured assistant
+# turn because tool use (google_search grounding) and response_schema cannot be
+# combined in one genai call.
+_SITE_STUDY_STAGE = "campaign_site_study"
+_SITE_STUDY_INSTRUCTION = """You research a company's OWN website to extract concrete, \
+outreach-useful facts about that company: what it makes, its value \
+propositions, notable customers, traction or funding, and what makes it \
+different. Read the given URL and closely related pages on the same site. \
+Return 5-10 short factual bullets a salesperson could ground a cold email in \
+— one fact per line, plain text, no preamble, no markdown headings. If the \
+site cannot be read, reply with a single line saying so."""
+
 _SYSTEM_INSTRUCTION = """You are a campaign assistant for a B2B cold-outreach platform.
 You run TWO phases in one short conversation, ONE focused question per
 assistant turn:
@@ -199,6 +211,14 @@ class AssistRequest(BaseModel):
     siteStudyResult: str | None = None
 
 
+class SiteStudyRequest(BaseModel):
+    url: str
+
+
+class SiteStudyResponse(BaseModel):
+    result: str
+
+
 class ScopeDraft(BaseModel):
     name: str
     objective: str
@@ -344,6 +364,41 @@ async def run_scope_assistant(
         len(result.inferred),
     )
     return result
+
+
+async def run_site_study(url: str) -> str:
+    """Read the operator's site via grounding and return plain-text facts.
+
+    A one-shot grounded call (google_search). Returns plain text — the caller
+    (dashboard) feeds it back into the assistant as `siteStudyResult`. No
+    response_schema: grounding tools and structured output do not combine.
+    """
+
+    logger.info("site_study.request url=%s", url[:200])
+    client = _get_client()
+    config = types.GenerateContentConfig(
+        system_instruction=_SITE_STUDY_INSTRUCTION,
+        temperature=0.2,
+        tools=[types.Tool(google_search=types.GoogleSearch())],
+    )
+    contents = [
+        types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(
+                    text=f"Study this company's website and extract facts about the company: {url}"
+                )
+            ],
+        )
+    ]
+    response = await client.aio.models.generate_content(
+        model=resolve_model(_SITE_STUDY_STAGE),
+        contents=contents,
+        config=config,
+    )
+    text = (response.text or "").strip()
+    logger.info("site_study.response url=%s chars=%d", url[:120], len(text))
+    return text or "(no readable content found at the site)"
 
 
 def _scrub_caps(turn: AssistTurn) -> AssistTurn:
