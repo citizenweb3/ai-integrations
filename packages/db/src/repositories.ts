@@ -602,6 +602,7 @@ export async function createStartCampaignCommand(input: {
           desiredCta: input.payload.desiredCta,
           targetSegments: input.payload.targetSegments,
           forbiddenClaims: input.payload.forbiddenClaims ?? [],
+          draftBriefJson: input.payload.draftBrief ?? null,
           senderIdentityId: input.payload.senderIdentityId,
           policyProfileId: input.payload.policyProfileId,
           operatorNotes: input.payload.operatorNotes,

@@ -579,6 +579,18 @@ export const outboundMessageStatuses = [
   "suppressed_after_send"
 ] as const;
 
+// T-026BO: structured email drafting brief produced by the campaign chat
+// assistant's draft-brief phase. Optional — the scope-only form never sends it,
+// and old campaigns predate it. Persisted to campaigns.draft_brief_json and read
+// by the cold-draft context builder.
+export const draftBriefSchema = z.object({
+  angle: z.string().trim().max(2000).default(""),
+  tone: z.string().trim().max(500).default(""),
+  talkingPoints: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
+  ourFacts: z.array(z.string().trim().min(1).max(1000)).max(50).default([])
+});
+export type DraftBrief = z.infer<typeof draftBriefSchema>;
+
 export const startCampaignPayloadSchema = z.object({
   name: z.string().trim().min(1).max(200),
   objective: z.string().trim().min(1).max(2000),
@@ -586,6 +598,7 @@ export const startCampaignPayloadSchema = z.object({
   desiredCta: z.string().trim().max(500).optional(),
   targetSegments: z.array(z.string().trim().min(1).max(200)).default([]),
   forbiddenClaims: z.array(z.string().trim().min(1).max(500)).max(50).default([]),
+  draftBrief: draftBriefSchema.optional(),
   senderIdentityId: z.string().uuid().optional(),
   policyProfileId: z.string().uuid().optional(),
   operatorNotes: z.string().trim().max(4000).optional(),

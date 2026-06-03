@@ -100,6 +100,16 @@ export const campaigns = pgTable("campaigns", {
   // sourced verbatim from a public page. See T-026V + `_CONTACT_DISCOVERY_INSTRUCTION`.
   allowGenericInboxFallback: boolean("allow_generic_inbox_fallback").notNull().default(false),
   discoveryScopeVersion: integer("discovery_scope_version").notNull().default(1),
+  // T-026BO: structured email drafting brief collected by the campaign chat
+  // assistant (angle / tone / talking points / facts about us). NULL for
+  // campaigns created before this feature or via the scope-only form; the
+  // cold-draft context builder omits the brief lines when null.
+  draftBriefJson: jsonb("draft_brief_json").$type<{
+    angle: string;
+    tone: string;
+    talkingPoints: string[];
+    ourFacts: string[];
+  }>(),
   createdAt: createdAt(),
   updatedAt: updatedAt()
 }, (table) => ({
