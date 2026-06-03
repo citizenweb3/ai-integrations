@@ -75,6 +75,31 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
     return NextResponse.redirect(redirect, { status: 303 });
   }
 
+  // T-026BR: distil a pasted example email into the campaign brief before schema
+  // validation. Fail-open — if the agent is unreachable the campaign is still
+  // created, just without a brief. The transient _exampleDraft never reaches zod.
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const b = body as {
+      commandType?: unknown;
+      _exampleDraft?: unknown;
+      payload?: Record<string, unknown>;
+    };
+    if (
+      b.commandType === "start_campaign" &&
+      typeof b._exampleDraft === "string" &&
+      b.payload &&
+      !b.payload.draftBrief
+    ) {
+      const brief = await distillBriefFromExample(
+        b._exampleDraft,
+        typeof b.payload.name === "string" ? b.payload.name : undefined,
+        typeof b.payload.objective === "string" ? b.payload.objective : undefined,
+      );
+      if (brief) b.payload.draftBrief = brief;
+    }
+    if ("_exampleDraft" in b) delete b._exampleDraft;
+  }
+
   const parsed = createCommandRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -877,6 +902,35 @@ function readCommandCorrelationId(result: unknown): string | null {
     : null;
 }
 
+// T-026BR: call the agent to distil a pasted example email into a drafting brief.
+// Fail-open: returns null on any error so campaign creation is never blocked.
+async function distillBriefFromExample(
+  exampleDraft: string,
+  campaignName?: string,
+  objective?: string,
+): Promise<unknown | null> {
+  const baseUrl = process.env.AGENT_BASE_URL?.trim();
+  if (!baseUrl) return null;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const bearer = process.env.AGENT_RUN_SECRET?.trim();
+  if (bearer) headers.authorization = `Bearer ${bearer}`;
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/assist/distill-brief`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        exampleDraft,
+        ...(campaignName ? { campaignName } : {}),
+        ...(objective ? { objective } : {}),
+      }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 function safeRedirectUrl(request: Request): URL {
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
   const proto = request.headers.get("x-forwarded-proto") ?? new URL(request.url).protocol.replace(":", "");
@@ -1493,9 +1547,15 @@ function formDataToCommand(formData: FormData) {
     }
   }
 
+  // T-026BR: the form posts a pasted example email. It is distilled into the
+  // brief in handlePost (before zod), carried here as a transient field that is
+  // deleted before validation. Only used when no explicit draftBrief is present.
+  const exampleDraftRaw = String(formData.get("exampleDraft") ?? "").trim();
+
   return {
     commandType: "start_campaign",
     ...base,
+    ...(exampleDraftRaw && !draftBrief ? { _exampleDraft: exampleDraftRaw } : {}),
     payload: {
       name: String(formData.get("name") ?? ""),
       objective: String(formData.get("objective") ?? ""),

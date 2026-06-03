@@ -303,6 +303,23 @@ export default async function NewCampaignPage({
                from a public page and surfaces it alongside specific
                people, so there is nothing to opt into. */}
 
+            {/* T-026BR: paste an example cold email; on submit it's distilled
+               into the campaign's drafting brief (angle / tone / talking points /
+               our facts) — the same brief the chat builds — so form campaigns
+               aren't second-class. Optional. */}
+            <Field
+              label="Example email (optional)"
+              hint="Paste a sample cold email in the voice you want. It's distilled into a drafting brief that every generated draft for this campaign will follow."
+              className="md:col-span-2"
+            >
+              <textarea
+                name="exampleDraft"
+                rows={8}
+                placeholder={"Hi {name},\n\nSaw you just raised your Series A… we help teams like yours…\n\nOpen to a quick call?"}
+                className={textareaClass}
+              />
+            </Field>
+
             <Button type="submit" className="md:col-span-2">
               Create campaign
             </Button>
