@@ -30,6 +30,8 @@ _STAGE_MODEL_ENV_KEYS: dict[str, tuple[str, ...]] = {
     # T-026BO: grounded one-shot that reads the operator's site via google_search
     # and returns plain-text facts about us for the drafting brief.
     "campaign_site_study": ("AGENT_CAMPAIGN_SITE_STUDY_MODEL",),
+    # T-026BR: distil a pasted example email into a structured drafting brief.
+    "campaign_brief_distill": ("AGENT_CAMPAIGN_BRIEF_DISTILL_MODEL",),
 }
 
 

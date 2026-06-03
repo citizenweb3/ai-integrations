@@ -35,6 +35,21 @@ _TEMPERATURE = 0.4
 # T-026BO: grounded site-study sub-call. Separate from the structured assistant
 # turn because tool use (google_search grounding) and response_schema cannot be
 # combined in one genai call.
+_DISTILL_BRIEF_STAGE = "campaign_brief_distill"
+_DISTILL_BRIEF_INSTRUCTION = """You are given an example cold-outreach email an \
+operator wants to use as the style template for a whole campaign. Extract the \
+reusable drafting brief it demonstrates, as structured fields:
+  - angle: the hook / positioning the email leads with.
+  - tone: the voice (e.g. concise and direct, warm and informal, technical).
+  - talkingPoints: the key points the email makes (the reusable ones, not the
+    target-specific specifics).
+  - ourFacts: concrete facts about the SENDER's own company/product stated in the
+    email (what they offer, proof points) — these ground future emails.
+Only extract what the example actually demonstrates — do NOT invent. Do not copy
+target-specific details (the recipient company's name, their funding, etc.) into
+any field; those are per-recipient, not part of the reusable brief. Output MUST
+conform to the response schema."""
+
 _SITE_STUDY_STAGE = "campaign_site_study"
 _SITE_STUDY_INSTRUCTION = """You research a company's OWN website to extract concrete, \
 outreach-useful facts about that company: what it makes, its value \
@@ -226,6 +241,13 @@ class SiteStudyResponse(BaseModel):
     result: str
 
 
+class DistillBriefRequest(BaseModel):
+    # T-026BR: an example cold email the operator pasted into the campaign form.
+    exampleDraft: str
+    campaignName: str | None = None
+    objective: str | None = None
+
+
 class ScopeDraft(BaseModel):
     name: str
     objective: str
@@ -378,6 +400,55 @@ async def run_scope_assistant(
         len(result.inferred),
     )
     return result
+
+
+async def run_distill_brief(
+    example_draft: str, campaign_name: str | None = None, objective: str | None = None
+) -> DraftBrief:
+    """T-026BR: distil a pasted example email into a structured DraftBrief.
+
+    A single structured-output call (same shape as the scope assistant). Lets the
+    campaign form reach brief parity with the chat without re-implementing the
+    whole conversation — paste an example, get the brief.
+    """
+
+    logger.info("distill_brief.request chars=%d", len(example_draft))
+    client = _get_client()
+    ctx = ""
+    if campaign_name:
+        ctx += f"Campaign: {campaign_name}\n"
+    if objective:
+        ctx += f"Objective: {objective}\n"
+    contents = [
+        types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=f"{ctx}Example email:\n{example_draft}")],
+        )
+    ]
+    config = types.GenerateContentConfig(
+        system_instruction=_DISTILL_BRIEF_INSTRUCTION,
+        temperature=0.2,
+        response_mime_type="application/json",
+        response_schema=DraftBrief,
+    )
+    response = await client.aio.models.generate_content(
+        model=resolve_model(_DISTILL_BRIEF_STAGE),
+        contents=contents,
+        config=config,
+    )
+    parsed = response.parsed
+    if parsed is None:
+        raise RuntimeError("distill_brief returned no parseable structured output")
+    if not isinstance(parsed, DraftBrief):
+        parsed = DraftBrief.model_validate(parsed)
+    logger.info(
+        "distill_brief.response angle=%s tone=%s points=%d facts=%d",
+        (parsed.angle or "")[:80],
+        (parsed.tone or "")[:60],
+        len(parsed.talkingPoints),
+        len(parsed.ourFacts),
+    )
+    return parsed
 
 
 async def run_site_study(url: str) -> str:

@@ -22,8 +22,11 @@ from .agents import stage_tool_allowlist, supported_stages
 from .assist import (
     AssistRequest,
     AssistTurn,
+    DistillBriefRequest,
+    DraftBrief,
     SiteStudyRequest,
     SiteStudyResponse,
+    run_distill_brief,
     run_scope_assistant,
     run_site_study,
 )
@@ -140,6 +143,20 @@ async def assist_study_site(
         raise HTTPException(status_code=400, detail="url too long")
     result = await run_site_study(url)
     return SiteStudyResponse(result=result)
+
+
+@app.post("/assist/distill-brief", response_model=DraftBrief)
+async def assist_distill_brief(
+    request: DistillBriefRequest,
+    authorization: str | None = Header(default=None),
+) -> DraftBrief:
+    _authorize_agent_run(authorization)
+    example = request.exampleDraft.strip()
+    if not example:
+        raise HTTPException(status_code=400, detail="exampleDraft must not be empty")
+    if len(example) > 20000:
+        raise HTTPException(status_code=400, detail="exampleDraft too long")
+    return await run_distill_brief(example, request.campaignName, request.objective)
 
 
 def _agent_run_secret() -> str | None:
