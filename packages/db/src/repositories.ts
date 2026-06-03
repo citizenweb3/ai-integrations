@@ -10166,6 +10166,9 @@ async function maybeEnqueueNextDiscoveryWave(input: {
   }
 
   // Never stack waves — skip if one is already pending/running for this campaign.
+  // Exclude the CURRENT job: this runs inside the just-finished wave's handler,
+  // which is still 'leased'/'running' (it isn't marked succeeded until the
+  // handler returns), so without this it would always match itself and bail.
   const [existing] = await db
     .select({ id: jobs.id })
     .from(jobs)
@@ -10173,7 +10176,8 @@ async function maybeEnqueueNextDiscoveryWave(input: {
       eq(jobs.jobType, "job.run_campaign_discovery"),
       eq(jobs.targetEntityType, "campaign"),
       eq(jobs.targetEntityId, campaign.id),
-      inArray(jobs.status, ["queued", "leased", "running"])
+      inArray(jobs.status, ["queued", "leased", "running"]),
+      ...(input.jobId ? [ne(jobs.id, input.jobId)] : [])
     ))
     .limit(1);
   if (existing) return;
