@@ -17654,7 +17654,7 @@ async function maybeNotifyFirstAddressable(
       `campaign: ${truncateForTelegram(campaign?.name ?? campaignId, 200)}\n` +
       `org: ${truncateForTelegram(org?.name ?? input.organizationId, 200)}\n` +
       `${truncateForTelegram(contact?.email ?? "(email on file)", 200)}\n` +
-      `Generate a draft to start outreach.`,
+      `A draft is generated automatically once research finishes — review it under Approvals.`,
     entityType: "campaign",
     entityId: campaignId,
     notificationKey,
