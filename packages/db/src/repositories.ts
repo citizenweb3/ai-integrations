@@ -10103,6 +10103,92 @@ async function enqueueInitialCampaignDiscoveryJob(
   return { jobId: job.id, runCap };
 }
 
+// T-026BQ: after a discovery wave completes, automatically schedule the next one
+// until the campaign reaches its maxOrganizationsToDiscover cap. Each wave is
+// delayed by cooldownBetweenDiscoverySeconds (the operator-tunable rate limit),
+// so discovery pursues the cap on its own instead of needing manual re-runs.
+// Runs standalone (own db handle) after the discovery router's work commits.
+async function maybeEnqueueNextDiscoveryWave(input: {
+  campaignId: string;
+  correlationId: string;
+  jobId?: string;
+}): Promise<void> {
+  const db = getDb();
+  const [campaign] = await db
+    .select({
+      id: campaigns.id,
+      status: campaigns.status,
+      maxOrganizationsToDiscover: campaigns.maxOrganizationsToDiscover,
+      cooldownBetweenDiscoverySeconds: campaigns.cooldownBetweenDiscoverySeconds,
+      discoveryScopeVersion: campaigns.discoveryScopeVersion
+    })
+    .from(campaigns)
+    .where(eq(campaigns.id, input.campaignId))
+    .limit(1);
+  if (!campaign || campaign.status !== "active") return;
+
+  const [candidateCountRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(discoveryCandidates)
+    .where(and(
+      eq(discoveryCandidates.campaignId, campaign.id),
+      inArray(discoveryCandidates.status, DISCOVERY_NON_TERMINAL_STATUSES)
+    ));
+  const activeCandidateCount = Number(candidateCountRow?.count ?? 0);
+  const remainingCapacity = campaign.maxOrganizationsToDiscover - activeCandidateCount;
+  const runCap = Math.max(0, Math.min(DISCOVERY_CANDIDATES_PER_RUN_CAP, remainingCapacity));
+  if (runCap <= 0) {
+    await appendEvent({
+      eventType: "campaign_discovery_cap_reached",
+      entityType: "campaign",
+      entityId: campaign.id,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      correlationId: input.correlationId,
+      payloadJson: { activeCandidateCount, cap: campaign.maxOrganizationsToDiscover, done: true }
+    });
+    return;
+  }
+
+  // Never stack waves — skip if one is already pending/running for this campaign.
+  const [existing] = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(
+      eq(jobs.jobType, "job.run_campaign_discovery"),
+      eq(jobs.targetEntityType, "campaign"),
+      eq(jobs.targetEntityId, campaign.id),
+      inArray(jobs.status, ["queued", "leased", "running"])
+    ))
+    .limit(1);
+  if (existing) return;
+
+  const availableAt = new Date(Date.now() + campaign.cooldownBetweenDiscoverySeconds * 1000);
+  await db.insert(jobs).values({
+    jobType: "job.run_campaign_discovery",
+    status: "queued",
+    workerPool: "background",
+    targetEntityType: "campaign",
+    targetEntityId: campaign.id,
+    availableAt,
+    payloadJson: {
+      campaignId: campaign.id,
+      runCap,
+      discoveryScopeVersion: campaign.discoveryScopeVersion,
+      cooldownBetweenDiscoverySeconds: campaign.cooldownBetweenDiscoverySeconds
+    },
+    concurrencyKey: `campaign_discovery:${campaign.id}`,
+    correlationId: input.correlationId
+  });
+  await appendEvent({
+    eventType: "campaign_discovery_next_wave_scheduled",
+    entityType: "campaign",
+    entityId: campaign.id,
+    ...(input.jobId ? { jobId: input.jobId } : {}),
+    correlationId: input.correlationId,
+    payloadJson: { runCap, remainingCapacity, availableAt: availableAt.toISOString() }
+  });
+}
+
 export type AgentStreamEvent = {
   eventType: string;
   payloadJson: JsonRecord;
@@ -14255,6 +14341,13 @@ export async function routeCampaignDiscoveryOutcome(input: {
         break;
     }
   }
+
+  // T-026BQ: chain the next discovery wave automatically until the cap is hit.
+  await maybeEnqueueNextDiscoveryWave({
+    campaignId: input.campaignId,
+    correlationId: input.correlationId,
+    ...(input.jobId ? { jobId: input.jobId } : {})
+  });
 
   return { proposalsTotal, inserted, rejected, needsReview, duplicates, autoLinked, novel };
 }
