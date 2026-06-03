@@ -89,6 +89,12 @@ Rules:
   and ground any claim about US in the "About us" facts. The drafting brief
   governs style and our-side facts; the research snapshot still governs every
   claim about the TARGET.
+- LANGUAGE: write the email in the recipient's business language — default
+  ENGLISH for international B2B outreach. The operator brief, campaign context,
+  and drafting brief may be written in another language (e.g. Russian); treat
+  them as guidance to APPLY, never mirror their language. Do NOT write the email
+  in the brief's language. Output English unless the target organization's
+  country unambiguously calls for a specific other language.
 
 Output strict JSON:
 
