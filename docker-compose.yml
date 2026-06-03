@@ -33,7 +33,14 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_TIMEOUT_MS: ${OTEL_EXPORTER_OTLP_TIMEOUT_MS:-250}
     ports:
-      - "3002:3000"
+      - "127.0.0.1:3002:3000"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 512M
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -75,8 +82,17 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_TIMEOUT_MS: ${OTEL_EXPORTER_OTLP_TIMEOUT_MS:-250}
-    volumes:
-      - ${HOST_GCP_SA_JSON:-/dev/null}:/secrets/gcp-sa.json:ro
+    secrets:
+      - source: gcp_sa_key
+        target: /secrets/gcp-sa.json
+        mode: 0444
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 512M
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -110,8 +126,17 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/secrets/gcp-sa.json}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-    volumes:
-      - ${HOST_GCP_SA_JSON:-/dev/null}:/secrets/gcp-sa.json:ro
+    secrets:
+      - source: gcp_sa_key
+        target: /secrets/gcp-sa.json
+        mode: 0444
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 512M
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -153,8 +178,17 @@ services:
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-global}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/secrets/gcp-sa.json}
-    volumes:
-      - ${HOST_GCP_SA_JSON:-/dev/null}:/secrets/gcp-sa.json:ro
+    secrets:
+      - source: gcp_sa_key
+        target: /secrets/gcp-sa.json
+        mode: 0444
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: 1G
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -179,3 +213,7 @@ services:
 volumes:
   bizdev_postgres:
   bizdev_artifacts:
+
+secrets:
+  gcp_sa_key:
+    file: ${HOST_GCP_SA_JSON:-/dev/null}
