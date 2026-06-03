@@ -11535,6 +11535,15 @@ type DraftCampaignContext = {
   objective: string;
   targetSegments: string[];
   operatorNotes: string | null;
+  // T-026BO: the campaign's email drafting brief (angle / tone / talking points /
+  // facts about us). Null for campaigns created before the feature or via the
+  // scope-only form — the prompt then omits the brief block.
+  draftBrief: {
+    angle: string;
+    tone: string;
+    talkingPoints: string[];
+    ourFacts: string[];
+  } | null;
 };
 
 const DRAFT_CLAIM_SUPPORT_TYPES = new Set<NonNullable<DraftAgentClaim["supportType"]>>([
@@ -14774,6 +14783,30 @@ function buildDraftPrompt(input: {
     lines.push(`Operator notes: ${truncatePromptField(input.campaignContext.operatorNotes, 4000) || "(none)"}`);
     lines.push("</campaign_context>");
     lines.push("");
+    // T-026BO: the campaign's drafting brief — angle/tone/talking points the
+    // operator settled in the chat, plus facts about us to ground claims. The
+    // agent is told (in agents.py) to honour these.
+    const brief = input.campaignContext.draftBrief;
+    if (brief && (brief.angle || brief.tone || brief.talkingPoints.length > 0 || brief.ourFacts.length > 0)) {
+      lines.push("Drafting brief (operator-trusted — follow it):");
+      lines.push("<drafting_brief>");
+      if (brief.angle) lines.push(`Angle: ${truncatePromptField(brief.angle, 2000)}`);
+      if (brief.tone) lines.push(`Tone: ${truncatePromptField(brief.tone, 500)}`);
+      if (brief.talkingPoints.length > 0) {
+        lines.push("Key points to hit:");
+        for (const point of brief.talkingPoints) {
+          lines.push(`  - ${truncatePromptField(point, 500)}`);
+        }
+      }
+      if (brief.ourFacts.length > 0) {
+        lines.push("About us (ground claims about ourselves in these, treat as trusted):");
+        for (const fact of brief.ourFacts) {
+          lines.push(`  - ${truncatePromptField(fact, 1000)}`);
+        }
+      }
+      lines.push("</drafting_brief>");
+      lines.push("");
+    }
   }
   if (input.snapshot && input.snapshot.facts.length > 0) {
     lines.push(
@@ -14958,7 +14991,8 @@ export async function completeGenerateDraftJob(input: {
         name: campaigns.name,
         objective: campaigns.objective,
         targetSegments: campaigns.targetSegments,
-        operatorNotes: campaigns.operatorNotes
+        operatorNotes: campaigns.operatorNotes,
+        draftBriefJson: campaigns.draftBriefJson
       })
       .from(campaigns)
       .where(eq(campaigns.id, input.campaignId))
@@ -14970,7 +15004,8 @@ export async function completeGenerateDraftJob(input: {
       name: campaign.name,
       objective: campaign.objective,
       targetSegments: Array.isArray(campaign.targetSegments) ? campaign.targetSegments : [],
-      operatorNotes: campaign.operatorNotes
+      operatorNotes: campaign.operatorNotes,
+      draftBrief: campaign.draftBriefJson ?? null
     };
   }
 

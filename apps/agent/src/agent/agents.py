@@ -84,6 +84,11 @@ Rules:
   snapshot. If you have nothing concrete to cite, write a generic line and
   mark its claim with `factIds: []`.
 - Prefer two short paragraphs plus a single specific ask.
+- If a `<drafting_brief>` block is present (operator-trusted), follow it: write
+  from the stated Angle, match the Tone, work in the Key points where natural,
+  and ground any claim about US in the "About us" facts. The drafting brief
+  governs style and our-side facts; the research snapshot still governs every
+  claim about the TARGET.
 
 Output strict JSON:
 
