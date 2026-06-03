@@ -10,6 +10,7 @@ import Card from "@/components/card";
 import { Badge, PageBody } from "@/components/ui";
 import { OrgListingCard } from "@/components/org-listing-card";
 import { SendAllDraftsDrawer } from "@/components/send-all-drafts-drawer";
+import { Pagination } from "@/components/pagination";
 import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
 import {
   BackgroundActivityStrip,
@@ -22,14 +23,52 @@ import {
 
 export const dynamic = "force-dynamic";
 
-// T-026BS: filter the per-campaign org list. "contacts" = org has at
-// least one person attached (approved contact or pending candidate);
-// "drafts" = org has at least one non-discarded draft. Default "all".
-type OrgFilter = "all" | "contacts" | "drafts";
+// T-026BS: filter the per-campaign org list.
+//   contacts   — org has a person attached (approved contact or pending candidate)
+//   emails     — org has at least one addressable email
+//   drafts     — org has at least one non-discarded draft
+//   needreview — org has NO draft: contact missing, email missing, research
+//                stalled, etc. — i.e. drafting did not work out for some reason
+// Default "all".
+type OrgFilter = "all" | "contacts" | "emails" | "drafts" | "needreview";
+
+const ORG_FILTERS: readonly OrgFilter[] = [
+  "all",
+  "contacts",
+  "emails",
+  "drafts",
+  "needreview"
+];
 
 function parseFilter(raw: string | string[] | undefined): OrgFilter {
   const value = Array.isArray(raw) ? raw[0] : raw;
-  return value === "contacts" || value === "drafts" ? value : "all";
+  return (ORG_FILTERS as readonly string[]).includes(value ?? "")
+    ? (value as OrgFilter)
+    : "all";
+}
+
+type OrgRow = Awaited<ReturnType<typeof listOrganizationsForDashboard>>[number];
+
+const ORG_PREDICATES: Record<OrgFilter, (o: OrgRow) => boolean> = {
+  all: () => true,
+  contacts: (o) => o.contactCount > 0 || o.pendingContactCandidateCount > 0,
+  emails: (o) => o.addressableEmailCount > 0,
+  drafts: (o) => o.draftCount > 0,
+  needreview: (o) => o.draftCount === 0
+};
+
+const ORGS_PAGE_SIZE = 24;
+
+const ORG_FILTER_LABELS: Record<OrgFilter, string> = {
+  all: "All organisations",
+  contacts: "With contacts",
+  emails: "With emails",
+  drafts: "With drafts",
+  needreview: "Need review"
+};
+
+function filterLabel(filter: OrgFilter): string {
+  return ORG_FILTER_LABELS[filter].toLowerCase();
 }
 
 export default async function CampaignOrganizationsPage({
@@ -47,19 +86,32 @@ export default async function CampaignOrganizationsPage({
     notFound();
   }
   const allOrgs = await listOrganizationsForDashboard({ campaignId: id });
-  const hasContacts = (o: (typeof allOrgs)[number]) =>
-    o.contactCount > 0 || o.pendingContactCandidateCount > 0;
   const counts = {
     all: allOrgs.length,
-    contacts: allOrgs.filter(hasContacts).length,
-    drafts: allOrgs.filter((o) => o.draftCount > 0).length
+    contacts: allOrgs.filter(ORG_PREDICATES.contacts).length,
+    emails: allOrgs.filter(ORG_PREDICATES.emails).length,
+    drafts: allOrgs.filter(ORG_PREDICATES.drafts).length,
+    needreview: allOrgs.filter(ORG_PREDICATES.needreview).length
   };
-  const orgs =
-    filter === "contacts"
-      ? allOrgs.filter(hasContacts)
-      : filter === "drafts"
-        ? allOrgs.filter((o) => o.draftCount > 0)
-        : allOrgs;
+  const filteredOrgs = allOrgs.filter(ORG_PREDICATES[filter]);
+
+  // Pagination over the filtered set (allOrgs is already loaded, so the
+  // slice is in-memory). hrefFor keeps the active filter in the URL.
+  const totalPages = Math.max(1, Math.ceil(filteredOrgs.length / ORGS_PAGE_SIZE));
+  const rawPage = Array.isArray(query["page"]) ? query["page"][0] : query["page"];
+  const parsedPage = Number.parseInt(rawPage ?? "1", 10);
+  const page = Number.isNaN(parsedPage)
+    ? 1
+    : Math.min(Math.max(1, parsedPage), totalPages);
+  const orgs = filteredOrgs.slice((page - 1) * ORGS_PAGE_SIZE, page * ORGS_PAGE_SIZE);
+  const orgHref = (f: OrgFilter, p: number) => {
+    const params = new URLSearchParams();
+    if (f !== "all") params.set("filter", f);
+    if (p > 1) params.set("page", String(p));
+    const qs = params.toString();
+    return `/campaigns/${id}/organizations${qs ? `?${qs}` : ""}`;
+  };
+
   const sendableDrafts = await getSendableDraftsForCampaign(id);
 
   return (
@@ -85,7 +137,7 @@ export default async function CampaignOrganizationsPage({
           </>
         }
         title={`Organisations · ${view.campaign.name}`}
-        subtitle={`${orgs.length} organisation${orgs.length === 1 ? "" : "s"} accepted from this campaign. Open one to review research, approve contacts, and generate drafts.`}
+        subtitle={`${counts.all} organisation${counts.all === 1 ? "" : "s"} accepted from this campaign. Filter, then open one to review research, approve contacts, and generate drafts.`}
       />
 
       <PageBody>
@@ -108,28 +160,36 @@ export default async function CampaignOrganizationsPage({
         {allOrgs.length > 0 ? (
           <div className="flex flex-wrap items-center justify-between gap-4">
             <OrgFilterTabs
-              campaignId={view.campaign.id}
               active={filter}
               counts={counts}
+              hrefFor={(f) => orgHref(f, 1)}
             />
             <SendAllDraftsDrawer drafts={sendableDrafts} />
           </div>
         ) : null}
 
-        {allOrgs.length > 0 && orgs.length === 0 ? (
+        {filteredOrgs.length === 0 && allOrgs.length > 0 ? (
           <Card>
-            <p className="text-sm font-light opacity-80">
-              No organisations match this filter. Switch back to{" "}
-              <Link
-                href={`/campaigns/${view.campaign.id}/organizations`}
-                className="text-[hsl(var(--primary))]"
-              >
-                All
-              </Link>{" "}
-              to see every accepted organisation.
-            </p>
+            {filter === "needreview" ? (
+              <p className="text-sm font-light opacity-80">
+                Nothing to review — every organisation in this campaign already
+                has a draft. Switch to{" "}
+                <Link href={orgHref("all", 1)} className="text-[hsl(var(--primary))]">
+                  All
+                </Link>{" "}
+                to see them.
+              </p>
+            ) : (
+              <p className="text-sm font-light opacity-80">
+                No organisations match this filter. Switch back to{" "}
+                <Link href={orgHref("all", 1)} className="text-[hsl(var(--primary))]">
+                  All
+                </Link>{" "}
+                to see every accepted organisation.
+              </p>
+            )}
           </Card>
-        ) : orgs.length === 0 ? (
+        ) : allOrgs.length === 0 ? (
           <Card>
             {liveActivityTotal(view.liveActivity) > 0 ? (
               <p className="text-sm font-light opacity-80">
@@ -151,70 +211,30 @@ export default async function CampaignOrganizationsPage({
               </p>
             )}
           </Card>
-        ) : (() => {
-          // T-026AR: orgs are sorted by addressability — those with at
-          // least one approved-with-email or pending-with-email contact
-          // sit at the top, the rest below. Splitting into two labelled
-          // groups + an explainer makes the contract visible so
-          // operators do not have to infer it from card order alone.
-          const addressable = orgs.filter((o) => o.addressableEmailCount > 0);
-          const inert = orgs.filter((o) => o.addressableEmailCount === 0);
-          return (
-            <div className="space-y-10">
-              <section>
-                <div className="flex items-center gap-3 mb-2">
-                  <span className="text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)]">
-                    Addressable ({addressable.length})
-                  </span>
-                  <span className="flex-1 h-px bg-[var(--accent)]/20" />
-                </div>
-                <p className="text-xs font-light opacity-65 leading-snug max-w-3xl mb-4">
-                  These organisations have at least one contact with an email
-                  address — approved by you, auto-approved from a verbatim agent
-                  find, or still pending with the email already on file. Ordered
-                  by how many sendable addresses are attached, most first. Pick
-                  one to generate a draft against.
-                </p>
-                {addressable.length === 0 ? (
-                  <p className="text-sm font-light opacity-60 italic">
-                    None yet. Either approve a pending candidate with an email
-                    on one of the orgs below, or add an email to an approved
-                    contact, and the org will move up to this group.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {addressable.map((org) => (
-                      <OrgListingCard key={org.id} org={org} />
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              {inert.length > 0 ? (
-                <section>
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="text-xs font-semibold tracking-[0.18em] uppercase text-yellow-400">
-                      Waiting on an email ({inert.length})
-                    </span>
-                    <span className="flex-1 h-px bg-yellow-500/20" />
-                  </div>
-                  <p className="text-xs font-light opacity-65 leading-snug max-w-3xl mb-4">
-                    These organisations were accepted by discovery and may
-                    have approved contacts attached, but none of them carry an
-                    email yet. Drafts cannot target them. Open one to look at
-                    the Pending or Approved-but-no-email contacts and add an
-                    address — the org will then jump to the group above.
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {inert.map((org) => (
-                      <OrgListingCard key={org.id} org={org} />
-                    ))}
-                  </div>
-                </section>
-              ) : null}
+        ) : (
+          <div className="space-y-6">
+            {/* Orgs come back addressability-first from the query, so the
+                flat grid already surfaces sendable orgs at the top; the
+                per-card "Addressable" pill carries what the old section
+                headers used to say, and the filter tabs do the slicing. */}
+            <p className="text-xs font-light opacity-60">
+              Showing {orgs.length} of {filteredOrgs.length}
+              {filter === "needreview"
+                ? " organisation(s) with no draft yet — contact, email, or research is missing."
+                : ` ${filterLabel(filter)} organisation(s).`}
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {orgs.map((org) => (
+                <OrgListingCard key={org.id} org={org} />
+              ))}
             </div>
-          );
-        })()}
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              hrefFor={(p) => orgHref(filter, p)}
+            />
+          </div>
+        )}
       </PageBody>
     </>
   );
@@ -225,20 +245,20 @@ export default async function CampaignOrganizationsPage({
 // state needed, and the choice survives the auto-refresh that runs while
 // background work is in flight.
 function OrgFilterTabs({
-  campaignId,
   active,
-  counts
+  counts,
+  hrefFor
 }: {
-  campaignId: string;
   active: OrgFilter;
-  counts: { all: number; contacts: number; drafts: number };
+  counts: Record<OrgFilter, number>;
+  hrefFor: (filter: OrgFilter) => string;
 }) {
-  const base = `/campaigns/${campaignId}/organizations`;
-  const tabs: Array<{ key: OrgFilter; label: string; count: number; href: string }> = [
-    { key: "all", label: "All organisations", count: counts.all, href: base },
-    { key: "contacts", label: "With contacts", count: counts.contacts, href: `${base}?filter=contacts` },
-    { key: "drafts", label: "With drafts", count: counts.drafts, href: `${base}?filter=drafts` }
-  ];
+  const tabs = ORG_FILTERS.map((key) => ({
+    key,
+    label: ORG_FILTER_LABELS[key],
+    count: counts[key],
+    href: hrefFor(key)
+  }));
   return (
     <div className="flex flex-wrap gap-2">
       {tabs.map((tab) => {
