@@ -32,11 +32,13 @@ logging.basicConfig(level=logging.INFO)
 _STAGE = "campaign_scope_assist"
 _TEMPERATURE = 0.4
 
-_SYSTEM_INSTRUCTION = """You are a campaign-scope assistant for a B2B cold-outreach platform.
-Your goal is to collect a complete campaign scope through a short
-conversation: ONE focused question per assistant turn until every
-required field below has a direct user-supplied answer, then emit
-type="ready" with the full scope.
+_SYSTEM_INSTRUCTION = """You are a campaign assistant for a B2B cold-outreach platform.
+You run TWO phases in one short conversation, ONE focused question per
+assistant turn:
+  PHASE 1 — campaign scope (the required questions below).
+  PHASE 2 — the email drafting brief (angle, tone, sample, our facts).
+Only after BOTH phases are complete do you emit type="ready" with the
+full scope AND the draft brief.
 
 REQUIRED QUESTIONS — you MUST ask each of these as its own turn
 unless the operator has already volunteered a clear, self-contained
@@ -86,7 +88,41 @@ about each of those explicitly.
                            use it.
 
 After all seven required questions have direct user-supplied
-answers, emit type="ready" with the scope populated.
+answers, DO NOT emit type="ready" yet — continue into PHASE 2 in the
+same conversation.
+
+PHASE 2 — DRAFTING BRIEF. Collect how the cold emails should read.
+Still ONE focused turn at a time. Steps, in order:
+
+  B1. Product / company description — ask the operator to describe
+      their product or company in their own words. This enriches the
+      offer and grounds emails in our own facts. Distil what they say
+      into draftBrief.ourFacts.
+  B2. Site study (OPTIONAL) — after B1, OFFER EXACTLY ONCE: ask if
+      they want you to study their website to pull in concrete facts.
+        - If the operator agrees AND gives a URL, emit type="study_site"
+          with studyUrl set to that exact URL. Do not ask anything else
+          in that turn. The host fetches the page and replays the
+          findings to you as a "[SITE STUDY RESULT]" user message; fold
+          the useful facts into draftBrief.ourFacts and continue to B3.
+          Never re-offer the study once done or declined.
+        - If the operator declines or has no site, skip to B3.
+  B3. Angle — ask what angle / hook the cold emails should take.
+  B4. Tone — ask the desired tone / voice (concise, warm, technical…).
+  B5. Sample — emit type="sample_draft" with sampleDraft={subject, body}:
+      a short example cold email written in the chosen angle and tone,
+      grounded in the offer and ourFacts. The host shows it with an
+      approve / change control.
+        - If the next user message asks for changes, update the brief and
+          emit a NEW type="sample_draft" with a revised example. Loop
+          until the operator approves.
+        - When the operator approves (e.g. "looks good", "подходит",
+          "ок"), emit type="ready".
+
+READY condition: emit type="ready" ONLY when the seven scope fields are
+answered AND the drafting brief is settled (angle, tone, ourFacts at
+least from the product description) AND the operator approved a sample
+draft. Populate BOTH scope and draftBrief.
 
 Optional fields you SHOULD infer from the answers above and report
 in `inferred[]` with a one-line reason for each:
@@ -157,6 +193,10 @@ class ChatMessage(BaseModel):
 
 class AssistRequest(BaseModel):
     messages: list[ChatMessage]
+    # T-026BO: one-turn context injected by the dashboard after it fetched the
+    # operator's site (in response to a prior type="study_site" turn). The
+    # assistant folds the relevant facts into draftBrief.ourFacts and continues.
+    siteStudyResult: str | None = None
 
 
 class ScopeDraft(BaseModel):
@@ -179,17 +219,40 @@ class InferredFlag(BaseModel):
     reason: str
 
 
+class DraftBrief(BaseModel):
+    """T-026BO: the email drafting brief collected in phase 2."""
+
+    angle: str = ""
+    tone: str = ""
+    talkingPoints: list[str] = Field(default_factory=list)
+    ourFacts: list[str] = Field(default_factory=list)
+
+
+class SampleDraft(BaseModel):
+    """An example cold email shown in chat for the operator to react to."""
+
+    subject: str
+    body: str
+
+
 class AssistTurn(BaseModel):
     """One assistant response.
 
-    When `type == "question"`, the assistant is asking for more info and
-    `question` is set. When `type == "ready"`, the assistant has enough
-    information and `scope` + `inferred` are populated.
+    - `type == "question"` — asking for more info; `question` is set.
+    - `type == "study_site"` — the operator agreed to a site study; `studyUrl`
+      is the URL. The host fetches it and replays via `siteStudyResult`.
+    - `type == "sample_draft"` — an example email for the operator to approve or
+      change; `sampleDraft` is set.
+    - `type == "ready"` — scope AND draft brief are settled; `scope`,
+      `draftBrief`, and `inferred` are populated.
     """
 
-    type: Literal["question", "ready"]
+    type: Literal["question", "study_site", "sample_draft", "ready"]
     question: str | None = None
+    studyUrl: str | None = None
+    sampleDraft: SampleDraft | None = None
     scope: ScopeDraft | None = None
+    draftBrief: DraftBrief | None = None
     inferred: list[InferredFlag] = Field(default_factory=list)
 
 
@@ -215,25 +278,44 @@ def _to_genai_contents(messages: list[ChatMessage]) -> list[types.Content]:
     return out
 
 
-async def run_scope_assistant(messages: list[ChatMessage]) -> AssistTurn:
-    """Run one chat turn against the scope assistant.
+async def run_scope_assistant(
+    messages: list[ChatMessage], site_study_result: str | None = None
+) -> AssistTurn:
+    """Run one chat turn against the assistant.
 
     Raises `ValueError` if `messages` does not end with a user message
     (the LLM should always be responding to a user, not appending to
     its own prior turn).
+
+    `site_study_result` (T-026BO) is injected as a trailing user message
+    when the host has just fetched the operator's site in response to a
+    prior type="study_site" turn — the model folds it into ourFacts and
+    continues the brief.
     """
 
     if not messages or messages[-1].role != "user":
         raise ValueError("conversation must end with a user message")
 
     logger.info(
-        "scope_assist.request count=%d last=%s",
+        "scope_assist.request count=%d last=%s study=%s",
         len(messages),
         json.dumps(messages[-1].model_dump(), ensure_ascii=False)[:200],
+        bool(site_study_result),
     )
 
     client = _get_client()
     contents = _to_genai_contents(messages)
+    if site_study_result:
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(
+                        text=f"[SITE STUDY RESULT — trusted facts about us, fold into draftBrief.ourFacts]\n{site_study_result}"
+                    )
+                ],
+            )
+        )
     config = types.GenerateContentConfig(
         system_instruction=_SYSTEM_INSTRUCTION,
         temperature=_TEMPERATURE,

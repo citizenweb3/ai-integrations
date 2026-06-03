@@ -115,7 +115,7 @@ async def assist_scope(
             detail="conversation must end with a user message",
         )
     try:
-        return await run_scope_assistant(request.messages)
+        return await run_scope_assistant(request.messages, request.siteStudyResult)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
