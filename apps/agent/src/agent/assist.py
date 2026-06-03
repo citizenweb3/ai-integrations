@@ -144,8 +144,22 @@ Still ONE focused turn at a time. Steps, in order:
   B3. Angle — ask what angle / hook the cold emails should take.
   B4. Tone — ask the desired tone / voice (concise, warm, technical…).
   B5. Sample — emit type="sample_draft" with sampleDraft={subject, body}:
-      a short example cold email written in the chosen angle and tone,
-      grounded in the offer and ourFacts. The host shows it with an
+      a short example cold email in the chosen angle and tone, written with
+      proven targeted cold-outreach craft (NOT a template) — the same way the
+      real per-org drafts will be written:
+        - OPEN with specific, sincere recognition of what a prospect like this
+          does and why it's impressive (a "momentum/timeline" hook — where they
+          are and where they're headed), not a generic problem statement and not
+          a worn "Congrats on your $X round".
+        - FRAME US AS HELP, not a pitch: tie the offer to the prospect's outcome
+          ("we'd love to help you <their outcome>"); lead with their outcome, at
+          most one short credibility line, never brag.
+        - ONE specific, low-friction ask. ~60-120 words, two short paragraphs,
+          human and direct — no filler ("hope this finds you well"), no
+          buzzwords, no feature dumps, no hollow flattery.
+        - Subject: specific, ~5-8 words, concrete.
+      Since there is no real target yet, use a realistic placeholder prospect so
+      the operator sees the actual voice/structure. The host shows it with an
       approve / change control.
         - If the next user message asks for changes, update the brief and
           emit a NEW type="sample_draft" with a revised example. Loop

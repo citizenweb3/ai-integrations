@@ -158,8 +158,10 @@ services:
       # google_search built-in tool requires Gemini 2.x. ADK 1.33 + gemini-3
       # routes the call as a function_call which has no user-tool match and
       # fails. Pin search-stages to 2.5-flash until ADK lands gemini-3 grounding.
-      AGENT_RESEARCH_SNAPSHOT_MODEL: ${AGENT_RESEARCH_SNAPSHOT_MODEL:-gemini-2.5-flash}
-      AGENT_RESEARCH_MORE_MODEL: ${AGENT_RESEARCH_MORE_MODEL:-gemini-2.5-flash}
+      AGENT_RESEARCH_SNAPSHOT_MODEL: ${AGENT_RESEARCH_SNAPSHOT_MODEL:-gemini-3.5-flash}
+      AGENT_RESEARCH_SNAPSHOT_MODEL_FALLBACK: ${AGENT_RESEARCH_SNAPSHOT_MODEL_FALLBACK:-gemini-2.5-flash}
+      AGENT_RESEARCH_MORE_MODEL: ${AGENT_RESEARCH_MORE_MODEL:-gemini-3.5-flash}
+      AGENT_RESEARCH_MORE_MODEL_FALLBACK: ${AGENT_RESEARCH_MORE_MODEL_FALLBACK:-gemini-2.5-flash}
       AGENT_CAMPAIGN_DISCOVERY_MODEL: ${AGENT_CAMPAIGN_DISCOVERY_MODEL:-gemini-2.5-pro}
       AGENT_RESEARCH_QUALITY_GATE_MODEL: ${AGENT_RESEARCH_QUALITY_GATE_MODEL:-gemini-3.5-flash}
       AGENT_VALIDATE_CLAIMS_MODEL: ${AGENT_VALIDATE_CLAIMS_MODEL:-gemini-3.5-flash}
