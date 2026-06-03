@@ -17,17 +17,44 @@ import {
 
 export const dynamic = "force-dynamic";
 
+// T-026BS: filter the per-campaign org list. "contacts" = org has at
+// least one person attached (approved contact or pending candidate);
+// "drafts" = org has at least one non-discarded draft. Default "all".
+type OrgFilter = "all" | "contacts" | "drafts";
+
+function parseFilter(raw: string | string[] | undefined): OrgFilter {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value === "contacts" || value === "drafts" ? value : "all";
+}
+
 export default async function CampaignOrganizationsPage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  const query = await searchParams;
+  const filter = parseFilter(query["filter"]);
   const view = await getCampaignDiscoveryView(id);
   if (!view) {
     notFound();
   }
-  const orgs = await listOrganizationsForDashboard({ campaignId: id });
+  const allOrgs = await listOrganizationsForDashboard({ campaignId: id });
+  const hasContacts = (o: (typeof allOrgs)[number]) =>
+    o.contactCount > 0 || o.pendingContactCandidateCount > 0;
+  const counts = {
+    all: allOrgs.length,
+    contacts: allOrgs.filter(hasContacts).length,
+    drafts: allOrgs.filter((o) => o.draftCount > 0).length
+  };
+  const orgs =
+    filter === "contacts"
+      ? allOrgs.filter(hasContacts)
+      : filter === "drafts"
+        ? allOrgs.filter((o) => o.draftCount > 0)
+        : allOrgs;
 
   return (
     <>
@@ -72,7 +99,28 @@ export default async function CampaignOrganizationsPage({
         <BackgroundActivityStrip activity={view.liveActivity} />
         <AutoRefreshWhenActive active={liveActivityTotal(view.liveActivity) > 0} />
 
-        {orgs.length === 0 ? (
+        {allOrgs.length > 0 ? (
+          <OrgFilterTabs
+            campaignId={view.campaign.id}
+            active={filter}
+            counts={counts}
+          />
+        ) : null}
+
+        {allOrgs.length > 0 && orgs.length === 0 ? (
+          <Card>
+            <p className="text-sm font-light opacity-80">
+              No organisations match this filter. Switch back to{" "}
+              <Link
+                href={`/campaigns/${view.campaign.id}/organizations`}
+                className="text-[hsl(var(--primary))]"
+              >
+                All
+              </Link>{" "}
+              to see every accepted organisation.
+            </p>
+          </Card>
+        ) : orgs.length === 0 ? (
           <Card>
             {liveActivityTotal(view.liveActivity) > 0 ? (
               <p className="text-sm font-light opacity-80">
@@ -160,5 +208,55 @@ export default async function CampaignOrganizationsPage({
         })()}
       </PageBody>
     </>
+  );
+}
+
+// T-026BS: filter tabs for the per-campaign org list. Plain links that
+// set ?filter= so the server re-renders the filtered set — no client
+// state needed, and the choice survives the auto-refresh that runs while
+// background work is in flight.
+function OrgFilterTabs({
+  campaignId,
+  active,
+  counts
+}: {
+  campaignId: string;
+  active: OrgFilter;
+  counts: { all: number; contacts: number; drafts: number };
+}) {
+  const base = `/campaigns/${campaignId}/organizations`;
+  const tabs: Array<{ key: OrgFilter; label: string; count: number; href: string }> = [
+    { key: "all", label: "All organisations", count: counts.all, href: base },
+    { key: "contacts", label: "With contacts", count: counts.contacts, href: `${base}?filter=contacts` },
+    { key: "drafts", label: "With drafts", count: counts.drafts, href: `${base}?filter=drafts` }
+  ];
+  return (
+    <div className="flex flex-wrap gap-2">
+      {tabs.map((tab) => {
+        const isActive = tab.key === active;
+        return (
+          <Link
+            key={tab.key}
+            href={tab.href}
+            className={
+              isActive
+                ? "inline-flex items-center gap-2 rounded-full border border-[var(--accent)] bg-[var(--accent)]/10 px-4 py-1.5 text-sm font-semibold text-[var(--accent)] hover:no-underline"
+                : "inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-1.5 text-sm font-light opacity-75 hover:opacity-100 hover:bg-white/5 hover:no-underline transition-colors"
+            }
+          >
+            {tab.label}
+            <span
+              className={
+                isActive
+                  ? "text-xs font-bold"
+                  : "text-xs font-bold opacity-60"
+              }
+            >
+              {tab.count}
+            </span>
+          </Link>
+        );
+      })}
+    </div>
   );
 }
