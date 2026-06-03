@@ -1,4 +1,8 @@
-import { getCampaignDiscoveryView } from "@bizdev/db";
+import {
+  getCampaignDiscoveryView,
+  getDraftsForCampaign,
+  type DraftListRow
+} from "@bizdev/db";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
@@ -42,6 +46,7 @@ export default async function CampaignDetailPage({
   if (!view) {
     notFound();
   }
+  const campaignDrafts = await getDraftsForCampaign(id);
 
   const totals = Object.values(view.candidatesByStatus).reduce(
     (sum, list) => sum + list.length,
@@ -399,6 +404,8 @@ export default async function CampaignDetailPage({
 
         <AcceptedOrganisationsCard view={view} />
 
+        <CampaignDraftsCard drafts={campaignDrafts} />
+
       </PageBody>
     </>
   );
@@ -406,6 +413,57 @@ export default async function CampaignDetailPage({
 
 function formatListValue(values: string[]) {
   return values.length > 0 ? values.join(", ") : <span className="opacity-50">none</span>;
+}
+
+// Drafts this campaign has produced, embedded on the campaign page so the
+// operator can review and open them without hopping to the global /drafts
+// listing. Mirrors the row layout used on /drafts for consistency.
+function CampaignDraftsCard({ drafts }: { drafts: DraftListRow[] }) {
+  return (
+    <Card>
+      <div className="flex items-center gap-3 mb-4">
+        <BlockTitle title="Drafts" className="text-left" />
+        <Badge tone="accent">{drafts.length}</Badge>
+        <Link
+          href="/drafts"
+          className="ml-auto text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)] hover:opacity-80 transition-opacity"
+        >
+          All drafts →
+        </Link>
+      </div>
+      {drafts.length === 0 ? (
+        <p className="text-sm font-light opacity-70">
+          No drafts yet. Drafts generate automatically once an organisation has a
+          published research snapshot and an addressable contact.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {drafts.map((d) => (
+            <li key={d.id} className="border border-white/10 rounded-xl p-4 bg-black/30">
+              <div className="flex justify-between items-start gap-3 mb-2">
+                <Link
+                  href={`/drafts/${d.id}`}
+                  className="text-base font-medium hover:text-[var(--accent)] hover:no-underline flex-1 min-w-0 break-words"
+                >
+                  {d.subject}
+                </Link>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <Badge tone="accent">v{d.version}</Badge>
+                  <Badge>{d.status}</Badge>
+                </div>
+              </div>
+              <div className="text-xs opacity-60">
+                {d.contactEmail ?? "no contact"}
+                {d.threadId ? ` · thread ${d.threadId}` : ""}
+                {" · updated "}
+                {d.updatedAt.toISOString()}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
 }
 
 // T-026AH/A: surface the organisations the campaign has already produced
