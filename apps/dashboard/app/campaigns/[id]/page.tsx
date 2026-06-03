@@ -1,4 +1,5 @@
 import {
+  countDraftsForCampaign,
   getCampaignDiscoveryView,
   getDraftsForCampaign,
   getSendableDraftsForCampaign,
@@ -49,7 +50,8 @@ export default async function CampaignDetailPage({
   if (!view) {
     notFound();
   }
-  const campaignDrafts = await getDraftsForCampaign(id);
+  const campaignDraftsPreview = await getDraftsForCampaign(id, { limit: 5 });
+  const campaignDraftTotal = await countDraftsForCampaign(id);
   const sendableDrafts = await getSendableDraftsForCampaign(id);
 
   const totals = Object.values(view.candidatesByStatus).reduce(
@@ -408,7 +410,12 @@ export default async function CampaignDetailPage({
 
         <AcceptedOrganisationsCard view={view} />
 
-        <CampaignDraftsCard drafts={campaignDrafts} sendableDrafts={sendableDrafts} />
+        <CampaignDraftsCard
+          campaignId={view.campaign.id}
+          drafts={campaignDraftsPreview}
+          total={campaignDraftTotal}
+          sendableDrafts={sendableDrafts}
+        />
 
       </PageBody>
     </>
@@ -423,28 +430,32 @@ function formatListValue(values: string[]) {
 // operator can review and open them without hopping to the global /drafts
 // listing. Mirrors the row layout used on /drafts for consistency.
 function CampaignDraftsCard({
+  campaignId,
   drafts,
+  total,
   sendableDrafts
 }: {
+  campaignId: string;
   drafts: DraftListRow[];
+  total: number;
   sendableDrafts: SendableDraftRow[];
 }) {
   return (
     <Card>
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <BlockTitle title="Drafts" className="text-left" />
-        <Badge tone="accent">{drafts.length}</Badge>
+        <Badge tone="accent">{total}</Badge>
         <Link
-          href="/drafts"
+          href={`/campaigns/${campaignId}/drafts`}
           className="text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)] hover:opacity-80 transition-opacity"
         >
-          All drafts →
+          Open all drafts →
         </Link>
         <div className="ml-auto">
           <SendAllDraftsDrawer drafts={sendableDrafts} />
         </div>
       </div>
-      {drafts.length === 0 ? (
+      {total === 0 ? (
         <p className="text-sm font-light opacity-70">
           No drafts yet. Drafts generate automatically once an organisation has a
           published research snapshot and an addressable contact.
@@ -475,6 +486,14 @@ function CampaignDraftsCard({
           ))}
         </ul>
       )}
+      {total > drafts.length ? (
+        <Link
+          href={`/campaigns/${campaignId}/drafts`}
+          className="block text-center text-sm font-semibold tracking-[0.02em] text-[var(--accent)] hover:opacity-80 mt-4"
+        >
+          Showing {drafts.length} of {total} — open all drafts →
+        </Link>
+      ) : null}
     </Card>
   );
 }

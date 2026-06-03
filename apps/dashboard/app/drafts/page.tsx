@@ -1,54 +1,19 @@
-import { getDraftsList, type DraftListRow } from "@bizdev/db";
+import { getCampaignsWithDraftCounts } from "@bizdev/db";
 import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
-import BlockTitle from "@/components/block-title";
 import { Badge, Button, PageBody, inputClass, textareaClass } from "@/components/ui";
 import { SideDrawer } from "@/components/side-drawer";
+import { formatRelativeTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-// Group the flat draft list into one bucket per campaign, preserving the
-// newest-first order getDraftsList already returns: the first draft seen
-// for a campaign fixes that campaign's position, so the campaign with the
-// most-recently-touched draft sorts to the top. Drafts with no campaign
-// (legacy / deleted campaign row) collect into a trailing "No campaign"
-// bucket.
-type DraftGroup = {
-  campaignId: string | null;
-  campaignName: string | null;
-  drafts: DraftListRow[];
-};
-
-function groupDraftsByCampaign(rows: DraftListRow[]): DraftGroup[] {
-  const byCampaign = new Map<string, DraftGroup>();
-  const orphans: DraftListRow[] = [];
-  for (const row of rows) {
-    if (!row.campaignId) {
-      orphans.push(row);
-      continue;
-    }
-    const existing = byCampaign.get(row.campaignId);
-    if (existing) {
-      existing.drafts.push(row);
-    } else {
-      byCampaign.set(row.campaignId, {
-        campaignId: row.campaignId,
-        campaignName: row.campaignName,
-        drafts: [row]
-      });
-    }
-  }
-  const groups = [...byCampaign.values()];
-  if (orphans.length > 0) {
-    groups.push({ campaignId: null, campaignName: null, drafts: orphans });
-  }
-  return groups;
-}
-
+// The /drafts page is an index of campaigns that have produced drafts.
+// Each card drills into /campaigns/[id]/drafts, where the operator sees
+// the drafts for that campaign only, paginated. This keeps the surface
+// readable once campaigns produce dozens of drafts each.
 export default async function DraftsListPage() {
-  const drafts = await getDraftsList();
-  const groups = groupDraftsByCampaign(drafts);
+  const campaigns = await getCampaignsWithDraftCounts();
 
   return (
     <>
@@ -62,13 +27,12 @@ export default async function DraftsListPage() {
           </>
         }
         title="Drafts"
-        subtitle="All operator and agent drafts. Approve before send."
+        subtitle="Drafts grouped by campaign. Open a campaign to review and send its drafts."
       />
 
       <PageBody>
-        {/* T-026BI: manual draft creation moved off the top of the list into
-            a drawer. Most drafts auto-generate now; the by-hand form is a
-            fallback, one click away, so the list stays the focus. */}
+        {/* T-026BI: manual draft creation lives in a drawer; most drafts
+            auto-generate, the by-hand form is a one-click fallback. */}
         <div>
           <SideDrawer
             triggerLabel="Create manual draft"
@@ -90,59 +54,47 @@ export default async function DraftsListPage() {
           </SideDrawer>
         </div>
 
-        {/* Drafts grouped into one card per campaign so the operator sees
-            them organised by the campaign that produced them, and can jump
-            straight to a campaign's page. */}
-        {groups.length === 0 ? (
+        {campaigns.length === 0 ? (
           <Card>
-            <p className="text-sm font-light opacity-60">No drafts yet.</p>
+            <p className="text-sm font-light opacity-60">
+              No drafts yet. Drafts generate automatically once a campaign has an
+              organisation with a published research snapshot and an addressable
+              contact.
+            </p>
           </Card>
         ) : (
-          groups.map((group) => (
-            <Card key={group.campaignId ?? "__none"}>
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <BlockTitle
-                    title={group.campaignName ?? "No campaign"}
-                    className="text-left"
-                  />
-                  <Badge tone="accent">{group.drafts.length}</Badge>
-                </div>
-                {group.campaignId ? (
-                  <Link
-                    href={`/campaigns/${group.campaignId}`}
-                    className="shrink-0 text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)] hover:opacity-80 transition-opacity"
-                  >
-                    Open campaign →
-                  </Link>
-                ) : null}
-              </div>
-              <ul className="space-y-3">
-                {group.drafts.map((d) => (
-                  <li key={d.id} className="border border-white/10 rounded-xl p-4 bg-black/30">
-                    <div className="flex justify-between items-start gap-3 mb-2">
-                      <Link
-                        href={`/drafts/${d.id}`}
-                        className="text-base font-medium hover:text-[var(--accent)] hover:no-underline flex-1 min-w-0 break-words"
-                      >
-                        {d.subject}
-                      </Link>
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        <Badge tone="accent">v{d.version}</Badge>
-                        <Badge>{d.status}</Badge>
-                      </div>
-                    </div>
-                    <div className="text-xs opacity-60">
-                      {d.contactEmail ?? "no contact"}
-                      {d.threadId ? ` · thread ${d.threadId}` : ""}
-                      {" · updated "}
-                      {d.updatedAt.toISOString()}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          ))
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {campaigns.map((c) => (
+              <Link
+                key={c.id}
+                href={`/campaigns/${c.id}/drafts`}
+                className="block hover:no-underline"
+              >
+                <Card className="h-full hover:bg-white/10 transition-colors">
+                  <div className="flex items-start justify-between gap-4 mb-6">
+                    <h3 className="text-xl font-bold tracking-[0.02em] min-w-0 break-words">
+                      {c.name}
+                    </h3>
+                    <Badge tone="accent">{c.draftCount}</Badge>
+                  </div>
+                  <div className="text-3xl font-bold">{c.draftCount}</div>
+                  <div className="text-xs uppercase tracking-[0.2em] opacity-60 mt-1">
+                    {c.draftCount === 1 ? "draft" : "drafts"}
+                  </div>
+                  <div className="flex items-center justify-between mt-6 text-xs">
+                    <span className="opacity-50">
+                      {c.lastDraftAt
+                        ? `updated ${formatRelativeTime(c.lastDraftAt)}`
+                        : ""}
+                    </span>
+                    <span className="font-semibold tracking-[0.18em] uppercase text-[var(--accent)]">
+                      Open →
+                    </span>
+                  </div>
+                </Card>
+              </Link>
+            ))}
+          </div>
         )}
       </PageBody>
     </>
