@@ -114,11 +114,18 @@ Still ONE focused turn at a time. Steps, in order:
       they want you to study their website to pull in concrete facts.
         - If the operator agrees AND gives a URL, emit type="study_site"
           with studyUrl set to that exact URL. Do not ask anything else
-          in that turn. The host fetches the page and replays the
-          findings to you as a "[SITE STUDY RESULT]" user message; fold
-          the useful facts into draftBrief.ourFacts and continue to B3.
-          Never re-offer the study once done or declined.
+          in that turn. The host fetches the page and feeds the findings
+          back (a "[SITE STUDY RESULT]" message and/or a "🔍 Studied …"
+          assistant message in the history); fold the useful facts into
+          draftBrief.ourFacts and continue to B3.
         - If the operator declines or has no site, skip to B3.
+      CRITICAL — emit type="study_site" AT MOST ONCE in the whole
+      conversation. The moment the history contains site findings (a
+      "🔍 Studied" assistant message, or a "[SITE STUDY RESULT]"), the
+      study is DONE: NEVER emit study_site again, NEVER re-offer it, and
+      do NOT treat the operator's earlier URL as a fresh request — just
+      use the facts you already have and move on to B3/B4/B5. Re-studying
+      the same site on later turns is a bug; do not do it.
   B3. Angle — ask what angle / hook the cold emails should take.
   B4. Tone — ask the desired tone / voice (concise, warm, technical…).
   B5. Sample — emit type="sample_draft" with sampleDraft={subject, body}:
@@ -291,10 +298,17 @@ def _get_client() -> genai.Client:
 
 
 def _to_genai_contents(messages: list[ChatMessage]) -> list[types.Content]:
+    # Merge consecutive same-role messages. T-026BO can append a persisted
+    # "🔍 Studied …" assistant message right before the assistant's next question,
+    # producing two model turns in a row; Gemini expects roles to alternate, so
+    # we collapse runs of the same role into one Content.
     out: list[types.Content] = []
     for msg in messages:
         role = "user" if msg.role == "user" else "model"
-        out.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
+        if out and out[-1].role == role:
+            out[-1].parts.append(types.Part.from_text(text=msg.content))
+        else:
+            out.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
     return out
 
 

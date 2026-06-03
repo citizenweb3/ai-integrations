@@ -121,7 +121,8 @@ export default function ScopeChat() {
       }
       if (turn.type === "study_site") {
         const url = turn.studyUrl;
-        setMessages((prev) => [...prev, { role: "assistant", content: `🔍 Studying ${url} …` }]);
+        const progress = `🔍 Studying ${url} …`;
+        setMessages((prev) => [...prev, { role: "assistant", content: progress }]);
         let result = "(site study failed — continue from the description)";
         try {
           const sres = await fetch("/api/campaign-assistant/study-site", {
@@ -136,7 +137,19 @@ export default function ScopeChat() {
         } catch {
           /* keep the failure sentinel; the assistant continues gracefully */
         }
-        // Continue the same conversation, feeding the findings back.
+        // Persist the findings into the history (replacing the in-progress
+        // bubble) so later turns see the study is DONE and keep the facts for
+        // the sample/brief — without this the assistant re-studies every turn.
+        const studied = `🔍 Studied ${url}:\n${result}`;
+        setMessages((prev) => {
+          const idx = prev.map((m) => m.content).lastIndexOf(progress);
+          if (idx === -1) return [...prev, { role: "assistant", content: studied }];
+          const copy = [...prev];
+          copy[idx] = { role: "assistant", content: studied };
+          return copy;
+        });
+        // Continue this turn with the findings; the persisted message covers
+        // every later turn.
         await callAssist(history, result);
         return;
       }
