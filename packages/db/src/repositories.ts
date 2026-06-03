@@ -10111,9 +10111,25 @@ async function enqueueInitialCampaignDiscoveryJob(
 async function maybeEnqueueNextDiscoveryWave(input: {
   campaignId: string;
   correlationId: string;
+  insertedThisWave: number;
   jobId?: string;
 }): Promise<void> {
   const db = getDb();
+  // Dry-well guard: if the wave that just ran added no NEW candidates (the agent
+  // returned only duplicates of already-known orgs, or genuinely found nothing
+  // more that fits), do NOT chain another wave — otherwise auto-discovery would
+  // spin forever burning agent calls without making progress.
+  if (input.insertedThisWave <= 0) {
+    await appendEvent({
+      eventType: "campaign_discovery_dry",
+      entityType: "campaign",
+      entityId: input.campaignId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      correlationId: input.correlationId,
+      payloadJson: { reason: "no new candidates this wave; stopping auto-chain" }
+    });
+    return;
+  }
   const [campaign] = await db
     .select({
       id: campaigns.id,
@@ -13816,6 +13832,24 @@ async function buildCampaignDiscoveryPrompt(input: {
   sections.push(
     `<persistent_hints>\nDiscovery source hints:\n${sourceHints || "  - (none)"}\nDiscovery exclusions:\n${exclusions || "  - (none)"}\nAllowed regions:\n${allowedRegions || "  - (none)"}\n</persistent_hints>`
   );
+  // T-026BQ: tell the agent which companies were already proposed in earlier
+  // waves so it returns NEW ones instead of re-proposing duplicates (which are
+  // detected + dropped downstream, but waste a whole wave). Capped to keep the
+  // prompt bounded; the dedup in the router is still the correctness backstop.
+  const alreadyProposed = await db
+    .select({ name: discoveryCandidates.proposedName, domain: discoveryCandidates.domain })
+    .from(discoveryCandidates)
+    .where(eq(discoveryCandidates.campaignId, input.campaignId))
+    .orderBy(desc(discoveryCandidates.createdAt))
+    .limit(120);
+  const alreadyList = alreadyProposed
+    .map((e) => (e.domain ? `  - ${truncate(e.name, 200)} (${truncate(e.domain, 253)})` : `  - ${truncate(e.name, 200)}`))
+    .join("\n");
+  if (alreadyList) {
+    sections.push(
+      `<already_proposed_do_not_repeat>\nThese companies were already surfaced in earlier discovery waves. Do NOT propose any of them again — find DIFFERENT companies that still fit the brief:\n${alreadyList}\n</already_proposed_do_not_repeat>`
+    );
+  }
   sections.push(
     "Propose candidate prospect organizations grounded on web search per the system schema. Output strict JSON only. An empty `candidates` array is acceptable when no good fit is found."
   );
@@ -14342,10 +14376,12 @@ export async function routeCampaignDiscoveryOutcome(input: {
     }
   }
 
-  // T-026BQ: chain the next discovery wave automatically until the cap is hit.
+  // T-026BQ: chain the next discovery wave automatically until the cap is hit —
+  // but only while waves keep finding NEW companies (inserted > 0).
   await maybeEnqueueNextDiscoveryWave({
     campaignId: input.campaignId,
     correlationId: input.correlationId,
+    insertedThisWave: inserted,
     ...(input.jobId ? { jobId: input.jobId } : {})
   });
 
