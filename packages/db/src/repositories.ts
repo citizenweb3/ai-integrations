@@ -9167,13 +9167,17 @@ export async function getDraftsList(): Promise<DraftListRow[]> {
   }));
 }
 
-// Drafts scoped to one campaign, newest first. Powers the "Drafts"
-// card embedded on the campaign detail page so the operator can see and
-// open every draft the campaign produced without leaving the page.
+// Drafts scoped to one campaign, newest first. Powers the "Drafts" card
+// preview on the campaign detail page and the dedicated, paginated
+// per-campaign drafts page. Pass {limit, offset} for pagination; without
+// them it returns up to 500 (effectively all) of the campaign's drafts.
 export async function getDraftsForCampaign(
-  campaignId: string
+  campaignId: string,
+  opts?: { limit?: number; offset?: number }
 ): Promise<DraftListRow[]> {
   const db = getDb();
+  const limit = opts?.limit ?? 500;
+  const offset = opts?.offset ?? 0;
   const rows = await db
     .select({
       id: drafts.id,
@@ -9191,7 +9195,8 @@ export async function getDraftsForCampaign(
     .leftJoin(campaigns, eq(campaigns.id, drafts.campaignId))
     .where(and(eq(drafts.campaignId, campaignId), ne(drafts.status, "discarded")))
     .orderBy(desc(drafts.updatedAt))
-    .limit(500);
+    .limit(limit)
+    .offset(offset);
 
   return rows.map((r) => ({
     id: r.id,
@@ -9203,6 +9208,58 @@ export async function getDraftsForCampaign(
     campaignName: r.campaignName ?? null,
     threadId: r.threadId ?? null,
     updatedAt: r.updatedAt
+  }));
+}
+
+// Total non-discarded drafts for a campaign, for pagination controls.
+export async function countDraftsForCampaign(campaignId: string): Promise<number> {
+  const db = getDb();
+  const [row] = await db
+    .select({ cnt: sql<number>`count(*)::int` })
+    .from(drafts)
+    .where(and(eq(drafts.campaignId, campaignId), ne(drafts.status, "discarded")));
+  return Number(row?.cnt ?? 0);
+}
+
+// Campaigns that have produced at least one non-discarded draft, with the
+// draft count and the most recent draft timestamp. Powers the /drafts
+// index, which is now a list of campaign cards the operator drills into
+// to see that campaign's drafts.
+export type CampaignDraftRollupRow = {
+  id: string;
+  name: string;
+  draftCount: number;
+  lastDraftAt: Date | null;
+};
+
+export async function getCampaignsWithDraftCounts(): Promise<CampaignDraftRollupRow[]> {
+  const db = getDb();
+  const rows = await db.execute(sql`
+    select
+      c.id,
+      c.name,
+      count(*)::int as draft_count,
+      max(d.updated_at) as last_draft_at
+    from campaigns c
+    join drafts d on d.campaign_id = c.id and d.status <> 'discarded'
+    group by c.id, c.name
+    order by max(d.updated_at) desc
+  `);
+  return (rows as unknown as Array<{
+    id: string;
+    name: string;
+    draft_count: number;
+    last_draft_at: Date | string | null;
+  }>).map((r) => ({
+    id: r.id,
+    name: r.name,
+    draftCount: Number(r.draft_count),
+    lastDraftAt:
+      r.last_draft_at === null
+        ? null
+        : r.last_draft_at instanceof Date
+          ? r.last_draft_at
+          : new Date(r.last_draft_at)
   }));
 }
 
