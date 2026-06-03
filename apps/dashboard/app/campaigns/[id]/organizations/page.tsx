@@ -1,10 +1,15 @@
-import { getCampaignDiscoveryView, listOrganizationsForDashboard } from "@bizdev/db";
+import {
+  getCampaignDiscoveryView,
+  getSendableDraftsForCampaign,
+  listOrganizationsForDashboard
+} from "@bizdev/db";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import { Badge, PageBody } from "@/components/ui";
 import { OrgListingCard } from "@/components/org-listing-card";
+import { SendAllDraftsDrawer } from "@/components/send-all-drafts-drawer";
 import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
 import {
   BackgroundActivityStrip,
@@ -55,6 +60,7 @@ export default async function CampaignOrganizationsPage({
       : filter === "drafts"
         ? allOrgs.filter((o) => o.draftCount > 0)
         : allOrgs;
+  const sendableDrafts = await getSendableDraftsForCampaign(id);
 
   return (
     <>
@@ -100,11 +106,14 @@ export default async function CampaignOrganizationsPage({
         <AutoRefreshWhenActive active={liveActivityTotal(view.liveActivity) > 0} />
 
         {allOrgs.length > 0 ? (
-          <OrgFilterTabs
-            campaignId={view.campaign.id}
-            active={filter}
-            counts={counts}
-          />
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <OrgFilterTabs
+              campaignId={view.campaign.id}
+              active={filter}
+              counts={counts}
+            />
+            <SendAllDraftsDrawer drafts={sendableDrafts} />
+          </div>
         ) : null}
 
         {allOrgs.length > 0 && orgs.length === 0 ? (

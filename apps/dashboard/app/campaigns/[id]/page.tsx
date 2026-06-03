@@ -1,9 +1,12 @@
 import {
   getCampaignDiscoveryView,
   getDraftsForCampaign,
-  type DraftListRow
+  getSendableDraftsForCampaign,
+  type DraftListRow,
+  type SendableDraftRow
 } from "@bizdev/db";
 import Link from "next/link";
+import { SendAllDraftsDrawer } from "@/components/send-all-drafts-drawer";
 import { notFound } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
@@ -47,6 +50,7 @@ export default async function CampaignDetailPage({
     notFound();
   }
   const campaignDrafts = await getDraftsForCampaign(id);
+  const sendableDrafts = await getSendableDraftsForCampaign(id);
 
   const totals = Object.values(view.candidatesByStatus).reduce(
     (sum, list) => sum + list.length,
@@ -404,7 +408,7 @@ export default async function CampaignDetailPage({
 
         <AcceptedOrganisationsCard view={view} />
 
-        <CampaignDraftsCard drafts={campaignDrafts} />
+        <CampaignDraftsCard drafts={campaignDrafts} sendableDrafts={sendableDrafts} />
 
       </PageBody>
     </>
@@ -418,18 +422,27 @@ function formatListValue(values: string[]) {
 // Drafts this campaign has produced, embedded on the campaign page so the
 // operator can review and open them without hopping to the global /drafts
 // listing. Mirrors the row layout used on /drafts for consistency.
-function CampaignDraftsCard({ drafts }: { drafts: DraftListRow[] }) {
+function CampaignDraftsCard({
+  drafts,
+  sendableDrafts
+}: {
+  drafts: DraftListRow[];
+  sendableDrafts: SendableDraftRow[];
+}) {
   return (
     <Card>
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
         <BlockTitle title="Drafts" className="text-left" />
         <Badge tone="accent">{drafts.length}</Badge>
         <Link
           href="/drafts"
-          className="ml-auto text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)] hover:opacity-80 transition-opacity"
+          className="text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)] hover:opacity-80 transition-opacity"
         >
           All drafts →
         </Link>
+        <div className="ml-auto">
+          <SendAllDraftsDrawer drafts={sendableDrafts} />
+        </div>
       </div>
       {drafts.length === 0 ? (
         <p className="text-sm font-light opacity-70">
