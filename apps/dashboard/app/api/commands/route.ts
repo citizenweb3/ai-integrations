@@ -1060,6 +1060,30 @@ function formDataToCommand(formData: FormData) {
         maxOpenDraftReviews: optionalPositiveInteger(formData, "maxOpenDraftReviews") ?? 25,
         cooldownBetweenDiscoverySeconds: optionalPositiveInteger(formData, "cooldownBetweenDiscoverySeconds") ?? 3600,
         allowGenericInboxFallback: formData.get("allowGenericInboxFallback") != null,
+        // T-026BT: "Repeat discovery" select. undefined (Off / 0) keeps the
+        // campaign one-shot; a positive value enables recurring discovery.
+        discoveryRecurrenceSeconds: optionalPositiveInteger(formData, "discoveryRecurrenceSeconds"),
+        ...(idempotencyKey ? { idempotencyKey } : {})
+      }
+    };
+  }
+
+  if (commandType === "set_campaign_recurrence") {
+    const campaignId = String(formData.get("campaignId") ?? "").trim();
+    const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
+    const maxOrg = optionalPositiveInteger(formData, "maxOrganizationsToDiscover");
+    // Three-state: field absent -> omit (preserve, cap-only update); "0" -> stop;
+    // positive -> enable/change. optionalPositiveInteger drops "0", so read raw.
+    const hasRecur = formData.get("recurrenceSeconds") != null;
+    const recurRaw = Number.parseInt(String(formData.get("recurrenceSeconds") ?? ""), 10);
+    const recurrenceSeconds = Number.isFinite(recurRaw) ? recurRaw : 0;
+    return {
+      commandType,
+      ...base,
+      payload: {
+        campaignId,
+        ...(hasRecur ? { recurrenceSeconds } : {}),
+        ...(maxOrg ? { maxOrganizationsToDiscover: maxOrg } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
     };

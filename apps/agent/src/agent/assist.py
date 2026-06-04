@@ -197,6 +197,15 @@ Rules:
    `cooldownBetweenDiscoverySeconds` is operator-tuned post-creation
    — leave it at the default 3600. `maxOrganizationsToDiscover`
    comes from Q7 and is operator-supplied when they give a number.
+5a. Recurring discovery: after the seven required scope questions are
+   answered (and before/with the drafting-brief phase), ask ONE more
+   question — whether discovery should repeat on a schedule or run once,
+   offering examples (every 6 hours / 12 hours / 24 hours / 2 days /
+   7 days). Map the answer to `discoveryRecurrenceSeconds`: once/no = 0
+   (the default), 6h=21600, 12h=43200, 24h=86400, 2 days=172800,
+   7 days=604800. If the operator is unsure or says run once, leave it 0.
+   This is an explicit question, not an inferred field; do not silently set
+   a non-zero value without the operator choosing one.
 6. If the user replies with something contradictory or off-topic,
    gently steer them back with one clarifying question rather than
    guessing.
@@ -275,6 +284,9 @@ class ScopeDraft(BaseModel):
     allowedRegions: list[str] = Field(default_factory=list)
     maxOrganizationsToDiscover: int = 25
     cooldownBetweenDiscoverySeconds: int = 3600
+    # T-026BT: recurring discovery interval in seconds. 0 = one-shot (default);
+    # 21600=6h, 43200=12h, 86400=24h, 172800=2 days, 604800=7 days.
+    discoveryRecurrenceSeconds: int = 0
 
 
 class InferredFlag(BaseModel):

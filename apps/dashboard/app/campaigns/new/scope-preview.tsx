@@ -172,6 +172,12 @@ export default function ScopePreview({ turn, onBackToChat }: ScopePreviewProps) 
           name="cooldownBetweenDiscoverySeconds"
           value={String(scope.cooldownBetweenDiscoverySeconds)}
         />
+        {/* T-026BT: recurring discovery interval the assistant collected. 0 = off. */}
+        <input
+          type="hidden"
+          name="discoveryRecurrenceSeconds"
+          value={String(scope.discoveryRecurrenceSeconds ?? 0)}
+        />
         {hasBrief && draftBrief ? (
           <input type="hidden" name="draftBrief" value={JSON.stringify(draftBrief)} />
         ) : null}

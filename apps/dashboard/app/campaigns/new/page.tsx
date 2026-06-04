@@ -285,7 +285,6 @@ export default async function NewCampaignPage({
             <Field
               label="Cooldown between discovery runs (seconds)"
               hint="Minimum wait between consecutive discovery passes. 3600 = one hour."
-              className="md:col-span-2"
             >
               <input
                 name="cooldownBetweenDiscoverySeconds"
@@ -295,6 +294,24 @@ export default async function NewCampaignPage({
                 defaultValue={3600}
                 className={inputClass}
               />
+            </Field>
+
+            {/* T-026BT: optional recurring discovery. Off keeps the campaign
+                one-shot; a positive interval re-runs discovery on a schedule,
+                skipping organisations already found. Manageable later from the
+                campaign page. */}
+            <Field
+              label="Repeat discovery"
+              hint="Re-run discovery automatically on a schedule to catch newly-appeared prospects. You can change or stop this later from the campaign page."
+            >
+              <select name="discoveryRecurrenceSeconds" defaultValue="0" className={inputClass}>
+                <option value="0">Off (one-shot)</option>
+                <option value="21600">Every 6 hours</option>
+                <option value="43200">Every 12 hours</option>
+                <option value="86400">Every 24 hours</option>
+                <option value="172800">Every 2 days</option>
+                <option value="604800">Every 7 days</option>
+              </select>
             </Field>
 
             {/* T-026AI: the "Allow generic-inbox fallback" checkbox is gone.

@@ -23091,6 +23091,10 @@ export type CampaignDiscoveryView = {
     maxOpenDraftReviews: number;
     cooldownBetweenDiscoverySeconds: number;
     discoveryScopeVersion: number;
+    // T-026BT: recurring discovery schedule.
+    discoveryRecurrenceSeconds: number | null;
+    discoveryRecurrenceActive: boolean;
+    discoveryRecurrenceVersion: number;
     createdAt: Date;
     updatedAt: Date;
   };
@@ -23428,6 +23432,9 @@ export async function getCampaignDiscoveryView(
       maxOpenDraftReviews: campaign.maxOpenDraftReviews,
       cooldownBetweenDiscoverySeconds: campaign.cooldownBetweenDiscoverySeconds,
       discoveryScopeVersion: campaign.discoveryScopeVersion,
+      discoveryRecurrenceSeconds: campaign.discoveryRecurrenceSeconds ?? null,
+      discoveryRecurrenceActive: campaign.discoveryRecurrenceActive,
+      discoveryRecurrenceVersion: campaign.discoveryRecurrenceVersion,
       createdAt: campaign.createdAt,
       updatedAt: campaign.updatedAt
     },

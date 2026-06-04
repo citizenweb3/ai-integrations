@@ -28,6 +28,8 @@ export type ScopeDraft = {
   allowedRegions: string[];
   maxOrganizationsToDiscover: number;
   cooldownBetweenDiscoverySeconds: number;
+  // T-026BT: recurring discovery interval in seconds (0 = one-shot).
+  discoveryRecurrenceSeconds?: number;
 };
 
 export type DraftBrief = {
