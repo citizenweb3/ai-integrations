@@ -401,6 +401,8 @@ async function runJobWithinTrace(job: LeasedJob) {
           job.payload_json,
           "cooldownBetweenDiscoverySeconds"
         );
+        // T-026BT: recurring per-pass run — router must not auto-chain.
+        const recurringPass = job.payload_json["recurringPass"] === true;
         await completeRunCampaignDiscoveryJob({
           job,
           runId: run.id,
@@ -408,6 +410,7 @@ async function runJobWithinTrace(job: LeasedJob) {
           campaignId,
           ...(runCap !== undefined ? { runCap } : {}),
           ...(cooldownBetweenDiscoverySeconds !== undefined ? { cooldownBetweenDiscoverySeconds } : {}),
+          ...(recurringPass ? { recurringPass: true } : {}),
           dispatcher: agentDispatcher
         });
         break;

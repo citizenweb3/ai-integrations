@@ -10293,18 +10293,31 @@ async function enqueueInitialCampaignDiscoveryJob(
   input: {
     campaign: CampaignScopeReadinessRow;
     correlationId: string;
+    // T-026BT: per-pass recurring discovery. When true, this is one tick of a
+    // recurring schedule — find up to maxOrganizationsToDiscover NEW orgs THIS
+    // pass, ignoring the lifetime count (the already-proposed exclusion keeps
+    // them new), and tag the job so the router does not auto-chain another wave
+    // (the next pass is the next cron tick, not an in-run chain).
+    recurringPass?: boolean;
   }
 ): Promise<{ jobId: string; runCap: number } | null> {
-  const [candidateCountRow] = await tx
-    .select({ count: sql<number>`count(*)::int` })
-    .from(discoveryCandidates)
-    .where(and(
-      eq(discoveryCandidates.campaignId, input.campaign.id),
-      inArray(discoveryCandidates.status, DISCOVERY_NON_TERMINAL_STATUSES)
-    ));
-  const activeCandidateCount = Number(candidateCountRow?.count ?? 0);
-  const remainingCapacity = input.campaign.maxOrganizationsToDiscover - activeCandidateCount;
-  const runCap = Math.max(0, Math.min(DISCOVERY_CANDIDATES_PER_RUN_CAP, remainingCapacity));
+  let runCap: number;
+  if (input.recurringPass) {
+    // Per-pass target: how many new orgs to surface this tick. No lifetime gate.
+    runCap = Math.max(0, Math.min(DISCOVERY_CANDIDATES_PER_RUN_CAP, input.campaign.maxOrganizationsToDiscover));
+  } else {
+    // Lifetime cap: remaining headroom across the campaign's whole life.
+    const [candidateCountRow] = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(discoveryCandidates)
+      .where(and(
+        eq(discoveryCandidates.campaignId, input.campaign.id),
+        inArray(discoveryCandidates.status, DISCOVERY_NON_TERMINAL_STATUSES)
+      ));
+    const activeCandidateCount = Number(candidateCountRow?.count ?? 0);
+    const remainingCapacity = input.campaign.maxOrganizationsToDiscover - activeCandidateCount;
+    runCap = Math.max(0, Math.min(DISCOVERY_CANDIDATES_PER_RUN_CAP, remainingCapacity));
+  }
   if (runCap <= 0) return null;
 
   const [existingDiscoveryJob] = await tx
@@ -10333,7 +10346,8 @@ async function enqueueInitialCampaignDiscoveryJob(
         campaignId: input.campaign.id,
         runCap,
         discoveryScopeVersion: input.campaign.discoveryScopeVersion,
-        cooldownBetweenDiscoverySeconds: input.campaign.cooldownBetweenDiscoverySeconds
+        cooldownBetweenDiscoverySeconds: input.campaign.cooldownBetweenDiscoverySeconds,
+        ...(input.recurringPass ? { recurringPass: true } : {})
       },
       concurrencyKey: `campaign_discovery:${input.campaign.id}`,
       correlationId: input.correlationId
@@ -10609,7 +10623,8 @@ export async function completeCampaignDiscoveryCronJob(input: {
       ) {
         const seeded = await enqueueInitialCampaignDiscoveryJob(tx, {
           campaign,
-          correlationId: input.job.correlation_id
+          correlationId: input.job.correlation_id,
+          recurringPass: true
         });
         triggered = seeded !== null;
       }
@@ -14599,6 +14614,9 @@ export async function routeCampaignDiscoveryOutcome(input: {
   correlationId: string;
   jobId?: string;
   runCap?: number;
+  // T-026BT: this run is one tick of a recurring schedule — do NOT auto-chain
+  // the next wave (the next pass is the next cron tick).
+  recurringPass?: boolean;
 }): Promise<{
   proposalsTotal: number;
   inserted: number;
@@ -15022,12 +15040,16 @@ export async function routeCampaignDiscoveryOutcome(input: {
 
   // T-026BQ: chain the next discovery wave automatically until the cap is hit —
   // but only while waves keep finding NEW companies (inserted > 0).
-  await maybeEnqueueNextDiscoveryWave({
-    campaignId: input.campaignId,
-    correlationId: input.correlationId,
-    insertedThisWave: inserted,
-    ...(input.jobId ? { jobId: input.jobId } : {})
-  });
+  // T-026BT: recurring passes do NOT chain — each cron tick is one pass of up to
+  // maxOrganizationsToDiscover new orgs; the next pass is the next tick.
+  if (!input.recurringPass) {
+    await maybeEnqueueNextDiscoveryWave({
+      campaignId: input.campaignId,
+      correlationId: input.correlationId,
+      insertedThisWave: inserted,
+      ...(input.jobId ? { jobId: input.jobId } : {})
+    });
+  }
 
   return { proposalsTotal, inserted, rejected, needsReview, duplicates, autoLinked, novel };
 }
@@ -15079,6 +15101,8 @@ export async function completeRunCampaignDiscoveryJob(input: {
   campaignId: string;
   runCap?: number;
   cooldownBetweenDiscoverySeconds?: number;
+  // T-026BT: one tick of a recurring schedule — the router must not auto-chain.
+  recurringPass?: boolean;
   dispatcher: AgentStageDispatcher;
 }): Promise<void> {
   const built = await buildCampaignDiscoveryPrompt({
@@ -15187,7 +15211,8 @@ export async function completeRunCampaignDiscoveryJob(input: {
       finalText,
       correlationId: input.job.correlation_id,
       jobId: input.job.id,
-      ...(input.runCap !== undefined ? { runCap: input.runCap } : {})
+      ...(input.runCap !== undefined ? { runCap: input.runCap } : {}),
+      ...(input.recurringPass ? { recurringPass: true } : {})
     });
   }
 

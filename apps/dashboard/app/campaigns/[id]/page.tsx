@@ -455,7 +455,7 @@ export default async function CampaignDetailPage({
         </Card>
 
         {isActiveCampaign ? (
-          <RecurringDiscoveryCard view={view} capReached={remainingDiscoveryCapacity <= 0} />
+          <RecurringDiscoveryCard view={view} />
         ) : null}
 
         <AcceptedOrganisationsCard
@@ -512,15 +512,14 @@ const RECURRENCE_OPTIONS: Array<{ value: number; label: string }> = [
 // The cap-raise form sends only maxOrganizationsToDiscover (no recurrenceSeconds)
 // so it preserves the current schedule.
 function RecurringDiscoveryCard({
-  view,
-  capReached
+  view
 }: {
   view: CampaignDiscoveryViewModel;
-  capReached: boolean;
 }) {
   const active = view.campaign.discoveryRecurrenceActive;
   const seconds = view.campaign.discoveryRecurrenceSeconds ?? 0;
   const current = active && seconds > 0 ? seconds : 0;
+  const perRun = view.campaign.maxOrganizationsToDiscover;
   return (
     <Card>
       <div className="flex items-center gap-3 mb-2">
@@ -530,59 +529,59 @@ function RecurringDiscoveryCard({
         </Badge>
       </div>
       <p className="text-sm font-light opacity-80 mb-4">
-        Re-run discovery automatically on a schedule. Each pass skips
-        organisations already found and stops at the discovery cap. Changing the
-        interval applies from the next run; choose &ldquo;Off&rdquo; to stop.
-        Recurrence only runs while the campaign is active.
+        Re-run discovery automatically on a schedule. Each run finds up to{" "}
+        <strong>{perRun}</strong> new organisation{perRun === 1 ? "" : "s"} —
+        skipping any already found — so the campaign keeps surfacing fresh
+        prospects over time (no lifetime cap while recurring). Changing the
+        interval or the per-run count applies from the next run; choose
+        &ldquo;Off&rdquo; to stop. Recurrence only runs while the campaign is
+        active.
       </p>
-      <form action="/api/commands" method="post" className="flex flex-wrap items-end gap-3">
-        <input type="hidden" name="commandType" value="set_campaign_recurrence" />
-        <input type="hidden" name="campaignId" value={view.campaign.id} />
-        <div>
-          <label className="block text-xs uppercase tracking-[0.2em] opacity-60 mb-1">
-            Interval
-          </label>
-          <select
-            name="recurrenceSeconds"
-            defaultValue={String(current)}
-            className={inputClass}
-          >
-            {RECURRENCE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <Button type="submit">Update schedule</Button>
-      </form>
+      <div className="flex flex-wrap items-end gap-6">
+        <form action="/api/commands" method="post" className="flex flex-wrap items-end gap-3">
+          <input type="hidden" name="commandType" value="set_campaign_recurrence" />
+          <input type="hidden" name="campaignId" value={view.campaign.id} />
+          <div>
+            <label className="block text-xs uppercase tracking-[0.2em] opacity-60 mb-1">
+              Interval
+            </label>
+            <select
+              name="recurrenceSeconds"
+              defaultValue={String(current)}
+              className={inputClass}
+            >
+              {RECURRENCE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button type="submit">Update schedule</Button>
+        </form>
 
-      {capReached ? (
-        <div className="mt-5 border-t border-white/10 pt-4">
-          <p className="text-xs font-light opacity-75 mb-2">
-            Discovery is full at the cap of {view.campaign.maxOrganizationsToDiscover}.
-            Raise it so recurring passes can keep finding new organisations.
-          </p>
-          <form action="/api/commands" method="post" className="flex flex-wrap items-end gap-3">
-            <input type="hidden" name="commandType" value="set_campaign_recurrence" />
-            <input type="hidden" name="campaignId" value={view.campaign.id} />
-            <div>
-              <label className="block text-xs uppercase tracking-[0.2em] opacity-60 mb-1">
-                New cap
-              </label>
-              <input
-                name="maxOrganizationsToDiscover"
-                type="number"
-                min={view.campaign.maxOrganizationsToDiscover + 1}
-                max={500}
-                defaultValue={Math.min(500, view.campaign.maxOrganizationsToDiscover + 25)}
-                className={inputClass}
-              />
-            </div>
-            <Button type="submit">Raise cap</Button>
-          </form>
-        </div>
-      ) : null}
+        {/* New organisations per run. Posts set_campaign_recurrence with only
+            maxOrganizationsToDiscover, which preserves the current schedule
+            (recurrenceSeconds omitted = preserve). */}
+        <form action="/api/commands" method="post" className="flex flex-wrap items-end gap-3">
+          <input type="hidden" name="commandType" value="set_campaign_recurrence" />
+          <input type="hidden" name="campaignId" value={view.campaign.id} />
+          <div>
+            <label className="block text-xs uppercase tracking-[0.2em] opacity-60 mb-1">
+              Organisations per run
+            </label>
+            <input
+              name="maxOrganizationsToDiscover"
+              type="number"
+              min={1}
+              max={500}
+              defaultValue={perRun}
+              className={inputClass}
+            />
+          </div>
+          <Button type="submit">Update count</Button>
+        </form>
+      </div>
     </Card>
   );
 }
