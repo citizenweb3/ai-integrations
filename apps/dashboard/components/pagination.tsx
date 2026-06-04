@@ -3,7 +3,11 @@ import Link from "next/link";
 // Server-rendered pagination control. Plain links so it works without
 // client JS and survives the auto-refresh that runs while background work
 // is in flight. The caller supplies `hrefFor(page)` so the control can
-// preserve whatever other query params the page uses (filters, etc.).
+// preserve whatever other query params the page uses (filters, other
+// paginated lists on the same page, etc.).
+//
+// Links use scroll={false} so paging keeps the viewport in place instead
+// of jumping to the top — the operator stays where the list is.
 //
 // Renders nothing when there is at most one page.
 export function Pagination({
@@ -38,7 +42,7 @@ export function Pagination({
           ‹ Prev
         </span>
       ) : (
-        <Link href={hrefFor(prev)} className={navClass} rel="prev">
+        <Link href={hrefFor(prev)} className={navClass} rel="prev" scroll={false}>
           ‹ Prev
         </Link>
       )}
@@ -50,7 +54,7 @@ export function Pagination({
           Next ›
         </span>
       ) : (
-        <Link href={hrefFor(next)} className={navClass} rel="next">
+        <Link href={hrefFor(next)} className={navClass} rel="next" scroll={false}>
           Next ›
         </Link>
       )}

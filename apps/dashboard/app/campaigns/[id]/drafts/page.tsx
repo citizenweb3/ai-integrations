@@ -17,7 +17,7 @@ import { SendAllDraftsDrawer } from "@/components/send-all-drafts-drawer";
 // drafts plus the bulk "Send all" action.
 export const dynamic = "force-dynamic";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 export default async function CampaignDraftsPage({
   params,

@@ -57,7 +57,7 @@ const ORG_PREDICATES: Record<OrgFilter, (o: OrgRow) => boolean> = {
   needreview: (o) => o.draftCount === 0
 };
 
-const ORGS_PAGE_SIZE = 24;
+const ORGS_PAGE_SIZE = 9;
 
 const ORG_FILTER_LABELS: Record<OrgFilter, string> = {
   all: "All organisations",
