@@ -2439,7 +2439,26 @@ export async function approveDraftForSendCommand(input: {
         contactId: draft.contactId
       };
 
+      // Retry-after-failure guard. The outbound idempotency key is derived
+      // from the approve key (draftId + version), so a fresh approval of a
+      // draft whose previous send failed computes the SAME key. The duplicate
+      // check above intentionally ignores `send_failed` rows so the send can be
+      // retried, but the unique index on outbound_messages.idempotency_key does
+      // not — without this the retry insert raises a unique violation and the
+      // command 500s. Supersede any stale failed row's key in-transaction so
+      // the retry inserts cleanly. (The happy path matches nothing.)
       const outboundIdempotencyKey = `outbound:${idempotencyKey}`;
+      await tx
+        .update(outboundMessages)
+        .set({
+          idempotencyKey: sql`${outboundMessages.idempotencyKey} || ':superseded-' || ${outboundMessages.id}::text`,
+          updatedAt: new Date()
+        })
+        .where(and(
+          eq(outboundMessages.draftId, payload.draftId),
+          eq(outboundMessages.status, "send_failed"),
+          eq(outboundMessages.idempotencyKey, outboundIdempotencyKey)
+        ));
       await tx
         .insert(outboundMessages)
         .values({
@@ -2460,6 +2479,24 @@ export async function approveDraftForSendCommand(input: {
         .update(drafts)
         .set({ status: "approved_pending_send", updatedAt: new Date() })
         .where(eq(drafts.id, payload.draftId));
+
+      // Approving the draft for send completes its review, so resolve the open
+      // "Approve AI draft" task (draft_review_pending). Without this the inbox
+      // item lingers forever after a send — only discard / AI-revise resolved it
+      // before. Mirrors the discard path.
+      await tx
+        .update(workItems)
+        .set({
+          status: "resolved",
+          resolvedAt: new Date(),
+          resolvedByOperatorId: input.actorId ?? null,
+          updatedAt: new Date()
+        })
+        .where(and(
+          eq(workItems.draftId, payload.draftId),
+          eq(workItems.type, "draft_review_pending"),
+          eq(workItems.status, "open")
+        ));
 
       await tx
         .insert(jobs)
@@ -9196,13 +9233,35 @@ export async function getDraftsList(): Promise<DraftListRow[]> {
   }));
 }
 
+// T-026BT: a draft counts as "sent" once its outbound was dispatched — the
+// approve handler flips the draft to 'approved' after the outbound reports
+// sent (markDraftApprovedAfterOutboundSent); 'sent' is the legacy equivalent.
+// Everything else non-discarded is still "to send" (draft / queued /
+// send_failed). The /campaigns/[id]/drafts page splits on this.
+export const SENT_DRAFT_STATUSES = ["approved", "sent"] as const;
+
+export type DraftSendMode = "all" | "to_send" | "sent";
+
+function draftCampaignWhere(campaignId: string, mode: DraftSendMode) {
+  if (mode === "sent") {
+    return and(eq(drafts.campaignId, campaignId), inArray(drafts.status, [...SENT_DRAFT_STATUSES]));
+  }
+  if (mode === "to_send") {
+    return and(
+      eq(drafts.campaignId, campaignId),
+      sql`${drafts.status} not in ('approved', 'sent', 'discarded')`
+    );
+  }
+  return and(eq(drafts.campaignId, campaignId), ne(drafts.status, "discarded"));
+}
+
 // Drafts scoped to one campaign, newest first. Powers the "Drafts" card
 // preview on the campaign detail page and the dedicated, paginated
-// per-campaign drafts page. Pass {limit, offset} for pagination; without
-// them it returns up to 500 (effectively all) of the campaign's drafts.
+// per-campaign drafts page. Pass {limit, offset} for pagination and {mode}
+// to split into the To-send / Sent tabs; default returns all non-discarded.
 export async function getDraftsForCampaign(
   campaignId: string,
-  opts?: { limit?: number; offset?: number }
+  opts?: { limit?: number; offset?: number; mode?: DraftSendMode }
 ): Promise<DraftListRow[]> {
   const db = getDb();
   const limit = opts?.limit ?? 500;
@@ -9222,7 +9281,7 @@ export async function getDraftsForCampaign(
     .from(drafts)
     .leftJoin(contacts, eq(contacts.id, drafts.contactId))
     .leftJoin(campaigns, eq(campaigns.id, drafts.campaignId))
-    .where(and(eq(drafts.campaignId, campaignId), ne(drafts.status, "discarded")))
+    .where(draftCampaignWhere(campaignId, opts?.mode ?? "all"))
     .orderBy(desc(drafts.updatedAt))
     .limit(limit)
     .offset(offset);
@@ -9240,13 +9299,17 @@ export async function getDraftsForCampaign(
   }));
 }
 
-// Total non-discarded drafts for a campaign, for pagination controls.
-export async function countDraftsForCampaign(campaignId: string): Promise<number> {
+// Draft count for a campaign, for pagination + tab counts. Default counts all
+// non-discarded; pass {mode} for the To-send / Sent split.
+export async function countDraftsForCampaign(
+  campaignId: string,
+  opts?: { mode?: DraftSendMode }
+): Promise<number> {
   const db = getDb();
   const [row] = await db
     .select({ cnt: sql<number>`count(*)::int` })
     .from(drafts)
-    .where(and(eq(drafts.campaignId, campaignId), ne(drafts.status, "discarded")));
+    .where(draftCampaignWhere(campaignId, opts?.mode ?? "all"));
   return Number(row?.cnt ?? 0);
 }
 
