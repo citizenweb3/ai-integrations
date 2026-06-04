@@ -27,11 +27,25 @@ import {
   liveActivityTotal,
 } from "@/components/background-activity-strip";
 import { BackLink } from "@/components/back-link";
+import { Pagination } from "@/components/pagination";
 import { formatRelativeTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
+// In-place pagination for the two long lists on the campaign page. Both
+// live here (no navigating to the org/drafts subpages); each uses its own
+// query param so they page independently.
+const CAMPAIGN_ORGS_PER_PAGE = 9;
+const CAMPAIGN_DRAFTS_PER_PAGE = 10;
+
 type CampaignDiscoveryViewModel = NonNullable<Awaited<ReturnType<typeof getCampaignDiscoveryView>>>;
+
+function clampPage(raw: string | string[] | undefined, totalPages: number): number {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const parsed = Number.parseInt(value ?? "1", 10);
+  if (Number.isNaN(parsed)) return 1;
+  return Math.min(Math.max(1, parsed), Math.max(1, totalPages));
+}
 
 export default async function CampaignDetailPage({
   params,
@@ -50,9 +64,35 @@ export default async function CampaignDetailPage({
   if (!view) {
     notFound();
   }
-  const campaignDraftsPreview = await getDraftsForCampaign(id, { limit: 5 });
-  const campaignDraftTotal = await countDraftsForCampaign(id);
   const sendableDrafts = await getSendableDraftsForCampaign(id);
+
+  // Drafts list — paginated in place via ?draftsPage.
+  const campaignDraftTotal = await countDraftsForCampaign(id);
+  const draftsTotalPages = Math.max(1, Math.ceil(campaignDraftTotal / CAMPAIGN_DRAFTS_PER_PAGE));
+  const draftsPage = clampPage(query["draftsPage"], draftsTotalPages);
+  const campaignDrafts = await getDraftsForCampaign(id, {
+    limit: CAMPAIGN_DRAFTS_PER_PAGE,
+    offset: (draftsPage - 1) * CAMPAIGN_DRAFTS_PER_PAGE
+  });
+
+  // Accepted organisations list — paginated in place via ?orgsPage.
+  const acceptedOrgRows = [
+    ...view.candidatesByStatus.enriched,
+    ...view.candidatesByStatus.queued_for_enrichment,
+    ...view.candidatesByStatus.accepted
+  ].filter((c) => c.matchedOrganizationId !== null);
+  const orgsTotalPages = Math.max(1, Math.ceil(acceptedOrgRows.length / CAMPAIGN_ORGS_PER_PAGE));
+  const orgsPage = clampPage(query["orgsPage"], orgsTotalPages);
+
+  // Pagination links keep the other list's page so paging one does not
+  // reset the other.
+  const campaignHref = (o: number, d: number) => {
+    const params = new URLSearchParams();
+    if (o > 1) params.set("orgsPage", String(o));
+    if (d > 1) params.set("draftsPage", String(d));
+    const qs = params.toString();
+    return `/campaigns/${id}${qs ? `?${qs}` : ""}`;
+  };
 
   const totals = Object.values(view.candidatesByStatus).reduce(
     (sum, list) => sum + list.length,
@@ -408,13 +448,23 @@ export default async function CampaignDetailPage({
           ) : null}
         </Card>
 
-        <AcceptedOrganisationsCard view={view} />
+        <AcceptedOrganisationsCard
+          view={view}
+          rows={acceptedOrgRows}
+          page={orgsPage}
+          totalPages={orgsTotalPages}
+          perPage={CAMPAIGN_ORGS_PER_PAGE}
+          hrefFor={(o) => campaignHref(o, draftsPage)}
+        />
 
         <CampaignDraftsCard
           campaignId={view.campaign.id}
-          drafts={campaignDraftsPreview}
+          drafts={campaignDrafts}
           total={campaignDraftTotal}
+          page={draftsPage}
+          totalPages={draftsTotalPages}
           sendableDrafts={sendableDrafts}
+          hrefFor={(d) => campaignHref(orgsPage, d)}
         />
 
       </PageBody>
@@ -433,12 +483,18 @@ function CampaignDraftsCard({
   campaignId,
   drafts,
   total,
-  sendableDrafts
+  page,
+  totalPages,
+  sendableDrafts,
+  hrefFor
 }: {
   campaignId: string;
   drafts: DraftListRow[];
   total: number;
+  page: number;
+  totalPages: number;
   sendableDrafts: SendableDraftRow[];
+  hrefFor: (page: number) => string;
 }) {
   return (
     <Card>
@@ -449,7 +505,7 @@ function CampaignDraftsCard({
           href={`/campaigns/${campaignId}/drafts`}
           className="text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)] hover:opacity-80 transition-opacity"
         >
-          Open all drafts →
+          Full page →
         </Link>
         <div className="ml-auto">
           <SendAllDraftsDrawer drafts={sendableDrafts} />
@@ -461,39 +517,36 @@ function CampaignDraftsCard({
           published research snapshot and an addressable contact.
         </p>
       ) : (
-        <ul className="space-y-3">
-          {drafts.map((d) => (
-            <li key={d.id} className="border border-white/10 rounded-xl p-4 bg-black/30">
-              <div className="flex justify-between items-start gap-3 mb-2">
-                <Link
-                  href={`/drafts/${d.id}`}
-                  className="text-base font-medium hover:text-[var(--accent)] hover:no-underline flex-1 min-w-0 break-words"
-                >
-                  {d.subject}
-                </Link>
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <Badge tone="accent">v{d.version}</Badge>
-                  <Badge>{d.status}</Badge>
+        <>
+          <ul className="space-y-3">
+            {drafts.map((d) => (
+              <li key={d.id} className="border border-white/10 rounded-xl p-4 bg-black/30">
+                <div className="flex justify-between items-start gap-3 mb-2">
+                  <Link
+                    href={`/drafts/${d.id}`}
+                    className="text-base font-medium hover:text-[var(--accent)] hover:no-underline flex-1 min-w-0 break-words"
+                  >
+                    {d.subject}
+                  </Link>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <Badge tone="accent">v{d.version}</Badge>
+                    <Badge>{d.status}</Badge>
+                  </div>
                 </div>
-              </div>
-              <div className="text-xs opacity-60">
-                {d.contactEmail ?? "no contact"}
-                {d.threadId ? ` · thread ${d.threadId}` : ""}
-                {" · updated "}
-                {d.updatedAt.toISOString()}
-              </div>
-            </li>
-          ))}
-        </ul>
+                <div className="text-xs opacity-60">
+                  {d.contactEmail ?? "no contact"}
+                  {d.threadId ? ` · thread ${d.threadId}` : ""}
+                  {" · updated "}
+                  {d.updatedAt.toISOString()}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-5">
+            <Pagination page={page} totalPages={totalPages} hrefFor={hrefFor} />
+          </div>
+        </>
       )}
-      {total > drafts.length ? (
-        <Link
-          href={`/campaigns/${campaignId}/drafts`}
-          className="block text-center text-sm font-semibold tracking-[0.02em] text-[var(--accent)] hover:opacity-80 mt-4"
-        >
-          Showing {drafts.length} of {total} — open all drafts →
-        </Link>
-      ) : null}
     </Card>
   );
 }
@@ -503,16 +556,25 @@ function CampaignDraftsCard({
 // hunting through the unrelated cross-campaign /organizations listing.
 // "Accepted" here means the candidate is past triage and lives as an
 // organisation — i.e. accepted, queued_for_enrichment, or enriched.
-function AcceptedOrganisationsCard({ view }: { view: CampaignDiscoveryViewModel }) {
-  const rows = [
-    ...view.candidatesByStatus.enriched,
-    ...view.candidatesByStatus.queued_for_enrichment,
-    ...view.candidatesByStatus.accepted
-  ].filter((c) => c.matchedOrganizationId !== null);
-
+function AcceptedOrganisationsCard({
+  view,
+  rows,
+  page,
+  totalPages,
+  perPage,
+  hrefFor
+}: {
+  view: CampaignDiscoveryViewModel;
+  rows: CampaignDiscoveryViewModel["candidatesByStatus"]["accepted"];
+  page: number;
+  totalPages: number;
+  perPage: number;
+  hrefFor: (page: number) => string;
+}) {
   if (rows.length === 0) {
     return null;
   }
+  const pageRows = rows.slice((page - 1) * perPage, page * perPage);
 
   return (
     <Card>
@@ -523,7 +585,7 @@ function AcceptedOrganisationsCard({ view }: { view: CampaignDiscoveryViewModel 
           href={`/campaigns/${view.campaign.id}/organizations`}
           className="ml-auto text-xs font-semibold tracking-[0.18em] uppercase text-[var(--accent)] hover:opacity-80 transition-opacity"
         >
-          View all →
+          Full page →
         </Link>
       </div>
       <p className="text-sm font-light opacity-70 mb-4">
@@ -531,7 +593,7 @@ function AcceptedOrganisationsCard({ view }: { view: CampaignDiscoveryViewModel 
         drafts.
       </p>
       <ul className="space-y-2">
-        {rows.map((c) => {
+        {pageRows.map((c) => {
           const display = c.matchedOrganizationName ?? c.proposedName;
           const subtitle = [
             c.matchedOrganizationDomain ?? c.domain ?? "no domain",
@@ -566,6 +628,9 @@ function AcceptedOrganisationsCard({ view }: { view: CampaignDiscoveryViewModel 
           );
         })}
       </ul>
+      <div className="mt-5">
+        <Pagination page={page} totalPages={totalPages} hrefFor={hrefFor} />
+      </div>
     </Card>
   );
 }
