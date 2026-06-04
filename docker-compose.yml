@@ -25,6 +25,12 @@ services:
       DASHBOARD_PORT: 3000
       DASHBOARD_BASIC_AUTH_USERNAME: ${DASHBOARD_BASIC_AUTH_USERNAME:-}
       DASHBOARD_BASIC_AUTH_PASSWORD: ${DASHBOARD_BASIC_AUTH_PASSWORD:-}
+      # The dashboard calls the agent for the campaign chat assistant and the
+      # draft/research command actions, with the same Bearer the worker uses.
+      # Without these the chat assistant fails with "AGENT_BASE_URL is not
+      # configured".
+      AGENT_BASE_URL: http://agent:8000
+      AGENT_RUN_SECRET: ${AGENT_RUN_SECRET:-}
       RESEND_WEBHOOK_SECRET_DELIVERY: ${RESEND_WEBHOOK_SECRET_DELIVERY:-whsec_bG9jYWxfcmVzZW5kX2RlbGl2ZXJ5X3NlY3JldA==}
       RESEND_WEBHOOK_SECRET_INBOUND: ${RESEND_WEBHOOK_SECRET_INBOUND:-whsec_bG9jYWxfcmVzZW5kX2luYm91bmRfc2VjcmV0}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
@@ -72,6 +78,11 @@ services:
       WORKER_POOLS: urgent,drafting,background
       AGENT_BASE_URL: http://agent:8000
       AGENT_RUN_SECRET: ${AGENT_RUN_SECRET:-}
+      # The worker runs job.send_email via Resend, so it needs the API key.
+      # The from-address is carried on the outbound message (set by the
+      # dashboard at approve time); RESEND_FROM_EMAIL is a fallback.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
       RAG_EMBED_PROVIDER: ${RAG_EMBED_PROVIDER:-stub}
       VERTEX_PROJECT_ID: ${GOOGLE_CLOUD_PROJECT:-}
       VERTEX_RAG_EMBED_LOCATION: ${VERTEX_RAG_EMBED_LOCATION:-global}
