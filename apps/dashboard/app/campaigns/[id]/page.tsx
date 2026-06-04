@@ -487,11 +487,13 @@ function formatRecurrenceLabel(seconds: number): string {
     const days = seconds / 86400;
     return days === 1 ? "24 hours" : `${days} days`;
   }
-  return `${Math.round(seconds / 3600)} hours`;
+  const hours = Math.round(seconds / 3600);
+  return hours === 1 ? "1 hour" : `${hours} hours`;
 }
 
 const RECURRENCE_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 0, label: "Off (one-shot)" },
+  { value: 3600, label: "Every 1 hour" },
   { value: 21600, label: "Every 6 hours" },
   { value: 43200, label: "Every 12 hours" },
   { value: 86400, label: "Every 24 hours" },
@@ -634,7 +636,11 @@ function CampaignDraftsCard({
                   </Link>
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     <Badge tone="accent">v{d.version}</Badge>
-                    <Badge>{d.status}</Badge>
+                    {d.status === "approved" || d.status === "sent" ? (
+                      <Badge tone="accent">Sent</Badge>
+                    ) : (
+                      <Badge>{d.status}</Badge>
+                    )}
                   </div>
                 </div>
                 <div className="text-xs opacity-60">

@@ -197,15 +197,19 @@ Rules:
    `cooldownBetweenDiscoverySeconds` is operator-tuned post-creation
    — leave it at the default 3600. `maxOrganizationsToDiscover`
    comes from Q7 and is operator-supplied when they give a number.
-5a. Recurring discovery: after the seven required scope questions are
-   answered (and before/with the drafting-brief phase), ask ONE more
-   question — whether discovery should repeat on a schedule or run once,
-   offering examples (every 6 hours / 12 hours / 24 hours / 2 days /
-   7 days). Map the answer to `discoveryRecurrenceSeconds`: once/no = 0
-   (the default), 6h=21600, 12h=43200, 24h=86400, 2 days=172800,
-   7 days=604800. If the operator is unsure or says run once, leave it 0.
-   This is an explicit question, not an inferred field; do not silently set
-   a non-zero value without the operator choosing one.
+5a. Recurring discovery (REQUIRED question — you MUST ask it before
+   emitting type="ready"): after the seven required scope questions are
+   answered, ask ONE more question — whether discovery should repeat on a
+   schedule or run once, offering examples (every 1 hour / 6 hours /
+   12 hours / 24 hours / 2 days / 7 days). Convert WHATEVER interval the
+   operator names into `discoveryRecurrenceSeconds` (seconds): once/no = 0
+   (default), 1h=3600, 6h=21600, 12h=43200, 24h=86400, 2 days=172800,
+   7 days=604800; for any other stated interval multiply out the seconds
+   yourself (e.g. "every 3 hours" -> 10800, "every 30 minutes" -> 1800).
+   If the operator already stated a cadence anywhere in the conversation
+   (e.g. "run it every hour"), capture THAT into the field — do not lose
+   it. Only leave 0 when the operator chose one-shot / run once. Always
+   set `discoveryRecurrenceSeconds` explicitly in the final scope.
 6. If the user replies with something contradictory or off-topic,
    gently steer them back with one clarifying question rather than
    guessing.

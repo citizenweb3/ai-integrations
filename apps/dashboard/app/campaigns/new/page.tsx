@@ -306,6 +306,7 @@ export default async function NewCampaignPage({
             >
               <select name="discoveryRecurrenceSeconds" defaultValue="0" className={inputClass}>
                 <option value="0">Off (one-shot)</option>
+                <option value="3600">Every 1 hour</option>
                 <option value="21600">Every 6 hours</option>
                 <option value="43200">Every 12 hours</option>
                 <option value="86400">Every 24 hours</option>
