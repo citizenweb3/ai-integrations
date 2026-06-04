@@ -68,7 +68,8 @@ export const operatorCommandTypes = [
   "reject_contact_candidate",
   "run_campaign_discovery",
   "accept_discovery_candidate",
-  "reject_discovery_candidate"
+  "reject_discovery_candidate",
+  "set_campaign_recurrence"
 ] as const;
 
 // Canonical §11.644-684 reply-class taxonomy. The `classify_reply` ADK
@@ -197,7 +198,9 @@ export const jobTypes = [
   "job.cron_queue_depth_watchdog",
   "job.cron_rotate_event_log",
   "job.cron_rollup_agent_costs",
-  "job.run_campaign_discovery"
+  "job.run_campaign_discovery",
+  "job.cron_campaign_discovery",
+  "job.cron_reconcile_campaign_discovery"
 ] as const;
 
 // System / housekeeping job types — cron ticks and policy-state resurfacing
@@ -210,7 +213,9 @@ export const systemJobTypes = [
   "job.cron_worker_heartbeat_watchdog",
   "job.cron_queue_depth_watchdog",
   "job.cron_rotate_event_log",
-  "job.cron_rollup_agent_costs"
+  "job.cron_rollup_agent_costs",
+  "job.cron_campaign_discovery",
+  "job.cron_reconcile_campaign_discovery"
 ] as const satisfies ReadonlyArray<(typeof jobTypes)[number]>;
 
 export type SystemJobType = (typeof systemJobTypes)[number];
@@ -611,6 +616,26 @@ export const startCampaignPayloadSchema = z.object({
   maxOpenDraftReviews: z.number().int().min(1).max(500).default(25),
   cooldownBetweenDiscoverySeconds: z.number().int().min(0).max(604800).default(3600),
   allowGenericInboxFallback: z.boolean().default(false),
+  // T-026BT: optional recurring discovery. null/0 = one-shot (default); >0 =
+  // interval in seconds between automatic discovery passes (≤30 days).
+  discoveryRecurrenceSeconds: z.number().int().min(0).max(2_592_000).nullable().optional(),
+  idempotencyKey: z.string().trim().min(1).max(200).optional()
+});
+
+// T-026BT: enable / change interval / stop recurring discovery on an existing
+// campaign.
+//   recurrenceSeconds > 0       -> enable / change interval
+//   recurrenceSeconds null | 0  -> stop (keeps the last interval on the row,
+//                                  just flips active off)
+//   recurrenceSeconds omitted   -> preserve current recurrence state (used by
+//                                  the cap-only update path, review F8)
+// maxOrganizationsToDiscover is the one scope field editable on a live campaign
+// (scoped cap raise — review F4). idempotencyKey lets a retry/double-submit
+// dedupe to the first result instead of bumping the version twice (review F7).
+export const setCampaignRecurrencePayloadSchema = z.object({
+  campaignId: z.string().uuid(),
+  recurrenceSeconds: z.number().int().min(0).max(2_592_000).nullable().optional(),
+  maxOrganizationsToDiscover: z.number().int().min(1).max(500).optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 
@@ -1146,6 +1171,11 @@ export const createCommandRequestSchema = z.discriminatedUnion("commandType", [
     payload: updateCampaignScopePayloadSchema
   }),
   z.object({
+    commandType: z.literal("set_campaign_recurrence"),
+    actorId: z.string().uuid().optional(),
+    payload: setCampaignRecurrencePayloadSchema
+  }),
+  z.object({
     commandType: z.literal("pause_all_sends"),
     actorId: z.string().uuid().optional(),
     payload: pauseAllSendsPayloadSchema
@@ -1322,6 +1352,7 @@ export type WorkItemAction = (typeof workItemActions)[number];
 export type OutboundMessageStatus = (typeof outboundMessageStatuses)[number];
 export type SuppressionReason = (typeof suppressionReasons)[number];
 export type StartCampaignPayload = z.infer<typeof startCampaignPayloadSchema>;
+export type SetCampaignRecurrencePayload = z.infer<typeof setCampaignRecurrencePayloadSchema>;
 export type UpdateCampaignScopePayload = z.infer<typeof updateCampaignScopePayloadSchema>;
 export type PauseAllSendsPayload = z.infer<typeof pauseAllSendsPayloadSchema>;
 export type ResumeAllSendsPayload = z.infer<typeof resumeAllSendsPayloadSchema>;
@@ -1673,7 +1704,9 @@ const jobTypeToClass: Record<string, JobClass> = {
   "job.cron_rotate_event_log": "C_internal",
   "job.cron_rollup_agent_costs": "C_internal",
   "job.resurface_policy_states": "C_internal",
-  "job.run_campaign_discovery": "B_external_compute"
+  "job.run_campaign_discovery": "B_external_compute",
+  "job.cron_campaign_discovery": "C_internal",
+  "job.cron_reconcile_campaign_discovery": "C_internal"
 };
 
 const jobTypeOverrides: Record<string, Partial<JobRetryPolicy>> = {

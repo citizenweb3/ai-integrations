@@ -24,6 +24,7 @@ import {
   resumeAllSendsCommand,
   resolvePolicyStateCommand,
   runCampaignDiscoveryCommand,
+  setCampaignRecurrenceCommand,
   setContactEmailCommand,
   setPrimaryContactCommand,
   suppressContactCommand,
@@ -789,6 +790,39 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
       }
       const target = safeRedirectUrl(request);
       target.searchParams.set("notice", "Discovery queued. Refresh in a moment to see new candidates.");
+      return NextResponse.redirect(target, { status: 303 });
+    }
+
+    case "set_campaign_recurrence": {
+      const result = await setCampaignRecurrenceCommand({
+        ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
+        payload: parsed.data.payload
+      });
+      if (!result.ok) {
+        if (isJson) {
+          return NextResponse.json({ error: result.failure }, { status: 409 });
+        }
+        const redirect = safeRedirectUrl(request);
+        redirect.searchParams.set("error", `${result.failure.code}: ${result.failure.message}`);
+        return NextResponse.redirect(redirect, { status: 303 });
+      }
+      if (isJson) {
+        return NextResponse.json({
+          commandId: result.commandId,
+          campaignId: result.campaignId,
+          recurrenceActive: result.recurrenceActive,
+          recurrenceSeconds: result.recurrenceSeconds
+        });
+      }
+      const target = safeRedirectUrl(request);
+      const secs = result.recurrenceSeconds ?? 0;
+      const label = secs > 0 && secs % 86400 === 0 ? `${secs / 86400}d` : `${Math.round(secs / 3600)}h`;
+      target.searchParams.set(
+        "notice",
+        result.recurrenceActive
+          ? `Recurring discovery enabled (every ${label}).`
+          : "Recurring discovery stopped."
+      );
       return NextResponse.redirect(target, { status: 303 });
     }
 

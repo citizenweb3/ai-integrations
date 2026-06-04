@@ -55,6 +55,7 @@ import {
   type ResolvePolicyStatePayload,
   type SetPrimaryContactPayload,
   type StartCampaignPayload,
+  type SetCampaignRecurrencePayload,
   type SuppressContactPayload,
   type UpdateCampaignScopePayload,
   type WorkItemAction,
@@ -615,9 +616,37 @@ export async function createStartCampaignCommand(input: {
           maxOpenDraftReviews: input.payload.maxOpenDraftReviews ?? 25,
           cooldownBetweenDiscoverySeconds: input.payload.cooldownBetweenDiscoverySeconds ?? 3600,
           allowGenericInboxFallback: input.payload.allowGenericInboxFallback ?? false,
+          // T-026BT: optional recurring discovery configured at creation. The
+          // first tick is armed below at now+interval; by then scope validation
+          // + initial discovery (driven by the expansion job) have run and the
+          // campaign is active.
+          discoveryRecurrenceSeconds:
+            typeof input.payload.discoveryRecurrenceSeconds === "number" &&
+            input.payload.discoveryRecurrenceSeconds > 0
+              ? input.payload.discoveryRecurrenceSeconds
+              : null,
+          discoveryRecurrenceActive:
+            typeof input.payload.discoveryRecurrenceSeconds === "number" &&
+            input.payload.discoveryRecurrenceSeconds > 0,
+          discoveryRecurrenceVersion: 0,
           status: "drafting_scope"
         })
         .returning(), "campaign");
+
+      // T-026BT: arm the first recurring-discovery tick if configured. The
+      // campaign row was just inserted in this tx, so no concurrent writer
+      // exists; the tick handler gates the actual discovery on status==='active'.
+      if (
+        typeof input.payload.discoveryRecurrenceSeconds === "number" &&
+        input.payload.discoveryRecurrenceSeconds > 0
+      ) {
+        await ensureCampaignDiscoveryCronScheduledTx(tx, {
+          campaignId,
+          intervalSeconds: input.payload.discoveryRecurrenceSeconds,
+          recurrenceVersion: 0,
+          availableAt: new Date(Date.now() + input.payload.discoveryRecurrenceSeconds * 1000)
+        });
+      }
 
       const command = expectOne(await tx
         .insert(commands)
@@ -10356,6 +10385,407 @@ async function maybeEnqueueNextDiscoveryWave(input: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// T-026BT: recurring (cron) campaign discovery
+// ---------------------------------------------------------------------------
+// A per-campaign self-rescheduling cron re-triggers the existing guarded
+// discovery enqueue on a schedule. All schedule mutations for one campaign run
+// under a `campaigns ... FOR UPDATE` lock so enable/stop/re-arm cannot race
+// (review F2); a recurrence-version token carried in the cron payload makes a
+// stop or interval change invalidate an in-flight tick (review F1); the tick
+// triggers discovery through enqueueInitialCampaignDiscoveryJob, which already
+// skips when a discovery job is active and respects the cap (review F3).
+
+const CAMPAIGN_DISCOVERY_CRON_TYPE = "job.cron_campaign_discovery";
+
+function campaignDiscoveryCronConcurrencyKey(campaignId: string): string {
+  return `cron_campaign_discovery:${campaignId}`;
+}
+
+// Insert a single pending cron tick. Caller MUST hold a FOR UPDATE lock on the
+// campaign row. Idempotent: returns false without inserting when a live tick
+// already exists (the cron-scoped partial unique index is the hard backstop).
+async function ensureCampaignDiscoveryCronScheduledTx(
+  tx: DbTransaction,
+  input: {
+    campaignId: string;
+    intervalSeconds: number;
+    recurrenceVersion: number;
+    availableAt?: Date;
+  }
+): Promise<boolean> {
+  const availableAt = input.availableAt ?? new Date(Date.now() + input.intervalSeconds * 1000);
+  const [existing] = await tx
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(
+      eq(jobs.jobType, CAMPAIGN_DISCOVERY_CRON_TYPE),
+      eq(jobs.concurrencyKey, campaignDiscoveryCronConcurrencyKey(input.campaignId)),
+      inArray(jobs.status, ["queued", "leased", "running"])
+    ))
+    .limit(1);
+  if (existing) return false;
+  await tx.insert(jobs).values({
+    jobType: CAMPAIGN_DISCOVERY_CRON_TYPE,
+    status: "queued",
+    workerPool: "background",
+    targetEntityType: "campaign",
+    targetEntityId: input.campaignId,
+    priority: 500,
+    payloadJson: {
+      campaignId: input.campaignId,
+      intervalSeconds: input.intervalSeconds,
+      recurrenceVersion: input.recurrenceVersion
+    },
+    concurrencyKey: campaignDiscoveryCronConcurrencyKey(input.campaignId),
+    correlationId: randomUUID(),
+    availableAt
+  });
+  return true;
+}
+
+// Cancel any queued cron tick for a campaign. Caller holds the campaign lock.
+// leased/running ticks are drained by the active + version re-check in
+// completeCampaignDiscoveryCronJob.
+async function cancelCampaignDiscoveryCronTx(
+  tx: DbTransaction,
+  campaignId: string
+): Promise<number> {
+  const cancelled = await tx
+    .update(jobs)
+    .set({ status: "cancelled", leasedBy: null, leasedUntil: null, updatedAt: new Date() })
+    .where(and(
+      eq(jobs.jobType, CAMPAIGN_DISCOVERY_CRON_TYPE),
+      eq(jobs.concurrencyKey, campaignDiscoveryCronConcurrencyKey(campaignId)),
+      eq(jobs.status, "queued")
+    ))
+    .returning({ id: jobs.id });
+  return cancelled.length;
+}
+
+// Worker boot: re-arm a pending tick for every campaign whose recurrence is
+// active, so schedules survive a worker restart. Idempotent.
+export async function ensureActiveCampaignDiscoveryCronsScheduled(): Promise<{ armed: number }> {
+  const db = getDb();
+  const rows = await db
+    .select({ id: campaigns.id })
+    .from(campaigns)
+    .where(and(
+      eq(campaigns.discoveryRecurrenceActive, true),
+      gte(campaigns.discoveryRecurrenceSeconds, 1),
+      // Do not arm a terminal campaign (review F3); paused/drafting keep their
+      // schedule so it resumes / starts once active.
+      ne(campaigns.status, "closed")
+    ));
+  let armed = 0;
+  for (const row of rows) {
+    await db.transaction(async (tx) => {
+      const [c] = await tx
+        .select({
+          seconds: campaigns.discoveryRecurrenceSeconds,
+          active: campaigns.discoveryRecurrenceActive,
+          version: campaigns.discoveryRecurrenceVersion
+        })
+        .from(campaigns)
+        .where(eq(campaigns.id, row.id))
+        .for("update")
+        .limit(1);
+      if (!c || !c.active || !c.seconds || c.seconds <= 0) return;
+      const did = await ensureCampaignDiscoveryCronScheduledTx(tx, {
+        campaignId: row.id,
+        intervalSeconds: c.seconds,
+        recurrenceVersion: c.version ?? 0,
+        availableAt: new Date(Date.now() + c.seconds * 1000)
+      });
+      if (did) armed += 1;
+    });
+  }
+  return { armed };
+}
+
+// Cron handler: trigger one discovery pass (guarded, under the campaign lock),
+// complete the tick, then re-arm the next one.
+export async function completeCampaignDiscoveryCronJob(input: {
+  job: LeasedJob;
+  runId: string;
+  workerId: string;
+}): Promise<{ triggered: boolean; rearmed: boolean }> {
+  const db = getDb();
+  const payload = (input.job.payload_json ?? {}) as {
+    campaignId?: string;
+    intervalSeconds?: number;
+    recurrenceVersion?: number;
+  };
+  const campaignId = payload.campaignId;
+  const armedVersion = payload.recurrenceVersion ?? 0;
+
+  // 1. Trigger one discovery pass UNDER the campaign-row lock so a stop or
+  //    interval change that commits after this tick was leased cannot slip a
+  //    stale discovery job through (review F2). Only when the campaign is
+  //    active, recurrence is still active, and this tick is the current version.
+  //    The guarded enqueue also skips an in-flight discovery job and no-ops at
+  //    the cap (review F3 guard / cap).
+  let triggered = false;
+  if (campaignId) {
+    await db.transaction(async (tx) => {
+      const [campaign] = await tx
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, campaignId))
+        .for("update")
+        .limit(1);
+      if (!campaign) return;
+      const recurrenceActive =
+        campaign.discoveryRecurrenceActive &&
+        !!campaign.discoveryRecurrenceSeconds &&
+        campaign.discoveryRecurrenceSeconds > 0;
+      if (
+        campaign.status === "active" &&
+        recurrenceActive &&
+        (campaign.discoveryRecurrenceVersion ?? 0) === armedVersion
+      ) {
+        const seeded = await enqueueInitialCampaignDiscoveryJob(tx, {
+          campaign,
+          correlationId: input.job.correlation_id
+        });
+        triggered = seeded !== null;
+      }
+    });
+  }
+
+  await completeJob({
+    job: input.job,
+    runId: input.runId,
+    workerId: input.workerId,
+    eventType: "campaign_discovery_cron_completed",
+    eventEntityType: "campaign",
+    ...(campaignId ? { eventEntityId: campaignId } : {}),
+    eventPayload: { triggered, armedVersion }
+  });
+
+  // 2. Re-arm the next tick. The current cron row is now 'succeeded', so its
+  //    slot in the cron-scoped unique index is free. Re-arm whenever recurrence
+  //    is active and the campaign is NOT closed, using the CURRENT interval +
+  //    version (not the payload's) — so an interval change made while this tick
+  //    was in flight continues the schedule rather than silently stopping it
+  //    (review F1). Skipping closed campaigns stops a terminal campaign from
+  //    looping forever (review F3). ensure…Tx dedups, so this never doubles a
+  //    tick the command path already armed. If this transaction throws after
+  //    completion, the reconciler cron re-arms within its interval (review F5).
+  let rearmed = false;
+  if (campaignId) {
+    await db.transaction(async (tx) => {
+      const [c] = await tx
+        .select({
+          status: campaigns.status,
+          seconds: campaigns.discoveryRecurrenceSeconds,
+          active: campaigns.discoveryRecurrenceActive,
+          version: campaigns.discoveryRecurrenceVersion
+        })
+        .from(campaigns)
+        .where(eq(campaigns.id, campaignId))
+        .for("update")
+        .limit(1);
+      if (!c || !c.active || !c.seconds || c.seconds <= 0 || c.status === "closed") return;
+      rearmed = await ensureCampaignDiscoveryCronScheduledTx(tx, {
+        campaignId,
+        intervalSeconds: c.seconds,
+        recurrenceVersion: c.version ?? 0,
+        availableAt: new Date(Date.now() + c.seconds * 1000)
+      });
+    });
+  }
+  return { triggered, rearmed };
+}
+
+// Operator command: enable / change interval / stop recurring discovery, with an
+// optional scoped cap raise (the one scope field editable on a live campaign —
+// review F4). Runs under the campaign-row lock; bumps the recurrence version on
+// every change so an in-flight tick cannot re-arm against a stale schedule.
+export async function setCampaignRecurrenceCommand(input: {
+  actorId?: string;
+  payload: SetCampaignRecurrencePayload;
+}): Promise<
+  | {
+      ok: true;
+      campaignId: string;
+      recurrenceActive: boolean;
+      recurrenceSeconds: number | null;
+      commandId: string;
+      deduplicated: boolean;
+    }
+  | { ok: false; failure: { code: string; message: string } }
+> {
+  const db = getDb();
+  const { campaignId } = input.payload;
+  const seconds = input.payload.recurrenceSeconds;
+  // F8 three-state: omitted (undefined) = preserve current recurrence (used by
+  // the cap-only update path); null/0 = stop; >0 = enable / change interval.
+  const mode: "preserve" | "stop" | "enable" =
+    seconds === undefined ? "preserve" : seconds && seconds > 0 ? "enable" : "stop";
+
+  const deriveResult = (
+    active: boolean,
+    secs: number | null,
+    commandId: string,
+    deduplicated: boolean
+  ) => ({ ok: true as const, campaignId, recurrenceActive: active, recurrenceSeconds: secs, commandId, deduplicated });
+
+  // F7 replay idempotency: with an explicit key, a retry/double-submit returns
+  // the first result instead of bumping the version + re-arming again.
+  if (input.payload.idempotencyKey) {
+    const [prior] = await db
+      .select()
+      .from(commands)
+      .where(and(
+        eq(commands.idempotencyKey, input.payload.idempotencyKey),
+        eq(commands.commandType, "set_campaign_recurrence")
+      ))
+      .limit(1);
+    if (prior) {
+      const [c] = await db
+        .select({
+          active: campaigns.discoveryRecurrenceActive,
+          secs: campaigns.discoveryRecurrenceSeconds
+        })
+        .from(campaigns)
+        .where(eq(campaigns.id, campaignId))
+        .limit(1);
+      return deriveResult(c?.active ?? false, c?.secs ?? null, prior.id, true);
+    }
+  }
+
+  const commandId = randomUUID();
+  const correlationId = randomUUID();
+  const idempotencyKey =
+    input.payload.idempotencyKey ?? `set_campaign_recurrence:${campaignId}:${commandId}`;
+
+  try {
+    return await db.transaction(async (tx) => {
+      const [campaign] = await tx
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, campaignId))
+        .for("update")
+        .limit(1);
+      if (!campaign) {
+        return {
+          ok: false as const,
+          failure: { code: "campaign_not_found", message: `Campaign ${campaignId} not found` }
+        };
+      }
+      // F3: recurrence cannot be enabled on a terminal campaign.
+      if (mode === "enable" && campaign.status === "closed") {
+        return {
+          ok: false as const,
+          failure: {
+            code: "campaign_closed",
+            message: `Campaign ${campaignId} is closed; cannot enable recurring discovery`
+          }
+        };
+      }
+
+      const updates: Partial<typeof campaigns.$inferInsert> = { updatedAt: new Date() };
+      if (typeof input.payload.maxOrganizationsToDiscover === "number") {
+        updates.maxOrganizationsToDiscover = input.payload.maxOrganizationsToDiscover;
+      }
+
+      let resultActive: boolean;
+      let resultSeconds: number | null;
+
+      if (mode === "preserve") {
+        // F8 cap-only update: leave recurrence flags, version, and ticks alone.
+        resultActive = campaign.discoveryRecurrenceActive;
+        resultSeconds = campaign.discoveryRecurrenceSeconds ?? null;
+      } else {
+        const newVersion = (campaign.discoveryRecurrenceVersion ?? 0) + 1;
+        updates.discoveryRecurrenceVersion = newVersion;
+        updates.discoveryRecurrenceActive = mode === "enable";
+        if (mode === "enable") {
+          updates.discoveryRecurrenceSeconds = seconds as number;
+        }
+        // Cancel the queued tick, then (if enabling) arm a fresh one with the new
+        // version + interval so interval changes take effect. A leased/running
+        // tick drains + re-arms with the current state in
+        // completeCampaignDiscoveryCronJob (review F1).
+        await cancelCampaignDiscoveryCronTx(tx, campaignId);
+        if (mode === "enable") {
+          await ensureCampaignDiscoveryCronScheduledTx(tx, {
+            campaignId,
+            intervalSeconds: seconds as number,
+            recurrenceVersion: newVersion,
+            availableAt: new Date(Date.now() + (seconds as number) * 1000)
+          });
+        }
+        resultActive = mode === "enable";
+        resultSeconds =
+          mode === "enable" ? (seconds as number) : campaign.discoveryRecurrenceSeconds ?? null;
+      }
+
+      await tx.update(campaigns).set(updates).where(eq(campaigns.id, campaignId));
+
+      const command = expectOne(
+        await tx
+          .insert(commands)
+          .values({
+            id: commandId,
+            source: "operator",
+            commandType: "set_campaign_recurrence",
+            status: "accepted",
+            actorId: input.actorId,
+            targetEntityType: "campaign",
+            targetEntityId: campaignId,
+            payloadJson: input.payload,
+            idempotencyKey,
+            correlationId
+          })
+          .returning(),
+        "set_campaign_recurrence command"
+      );
+
+      await tx.insert(eventLog).values({
+        eventType: "campaign_recurrence_set",
+        entityType: "campaign",
+        entityId: campaignId,
+        commandId,
+        correlationId,
+        payloadJson: {
+          mode,
+          recurrenceActive: resultActive,
+          recurrenceSeconds: resultSeconds,
+          ...(typeof input.payload.maxOrganizationsToDiscover === "number"
+            ? { maxOrganizationsToDiscover: input.payload.maxOrganizationsToDiscover }
+            : {})
+        }
+      });
+
+      return deriveResult(resultActive, resultSeconds, command.id, false);
+    });
+  } catch (error) {
+    // Concurrent replay with the same explicit key: the unique idempotencyKey
+    // insert lost the race. Return the winner's result.
+    if (input.payload.idempotencyKey && isUniqueViolation(error)) {
+      const [prior] = await db
+        .select()
+        .from(commands)
+        .where(eq(commands.idempotencyKey, input.payload.idempotencyKey))
+        .limit(1);
+      const [c] = await db
+        .select({
+          active: campaigns.discoveryRecurrenceActive,
+          secs: campaigns.discoveryRecurrenceSeconds
+        })
+        .from(campaigns)
+        .where(eq(campaigns.id, campaignId))
+        .limit(1);
+      if (prior) {
+        return deriveResult(c?.active ?? false, c?.secs ?? null, prior.id, true);
+      }
+    }
+    throw error;
+  }
+}
+
 export type AgentStreamEvent = {
   eventType: string;
   payloadJson: JsonRecord;
@@ -19661,6 +20091,71 @@ export async function completeRollupAgentCostsCronJob(input: {
   return result;
 }
 
+// T-026BT/F5: periodic reconciler. A re-arm that throws after the cron tick was
+// already marked succeeded would otherwise leave an active-recurrence campaign
+// with no live tick until the next worker restart. This singleton cron re-runs
+// ensureActiveCampaignDiscoveryCronsScheduled on a schedule, so a lost tick is
+// re-armed within one interval. ensure…Tx dedups, so a healthy schedule is
+// untouched.
+const RECONCILE_CAMPAIGN_DISCOVERY_CRON_TYPE = "job.cron_reconcile_campaign_discovery";
+const RECONCILE_CAMPAIGN_DISCOVERY_CONCURRENCY_KEY = "cron_reconcile_campaign_discovery:singleton";
+const RECONCILE_CAMPAIGN_DISCOVERY_DEFAULT_INTERVAL_SECONDS = 300;
+
+export async function ensureReconcileCampaignDiscoveryCronScheduled(input: {
+  availableAt?: Date;
+  intervalSeconds?: number;
+} = {}): Promise<{ enqueued: boolean; jobId: string | null }> {
+  const db = getDb();
+  const intervalSeconds = input.intervalSeconds ?? RECONCILE_CAMPAIGN_DISCOVERY_DEFAULT_INTERVAL_SECONDS;
+  const availableAt = input.availableAt ?? new Date(Date.now() + intervalSeconds * 1000);
+  const bucket = minuteBucketRange(availableAt);
+  return db.transaction(async (tx) => {
+    const existingRows = await tx
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(
+        eq(jobs.jobType, RECONCILE_CAMPAIGN_DISCOVERY_CRON_TYPE),
+        inArray(jobs.status, ["queued", "leased", "running"]),
+        gte(jobs.availableAt, bucket.start),
+        lt(jobs.availableAt, bucket.end)
+      ))
+      .limit(1);
+    if (existingRows.length > 0) {
+      return { enqueued: false, jobId: null };
+    }
+    const jobId = randomUUID();
+    await tx.insert(jobs).values({
+      id: jobId,
+      jobType: RECONCILE_CAMPAIGN_DISCOVERY_CRON_TYPE,
+      status: "queued",
+      workerPool: "background",
+      priority: 900,
+      payloadJson: { intervalSeconds },
+      concurrencyKey: RECONCILE_CAMPAIGN_DISCOVERY_CONCURRENCY_KEY,
+      correlationId: randomUUID(),
+      availableAt
+    });
+    return { enqueued: true, jobId };
+  });
+}
+
+export async function completeReconcileCampaignDiscoveryCronJob(input: {
+  job: LeasedJob;
+  runId: string;
+  workerId: string;
+}): Promise<{ armed: number }> {
+  const result = await ensureActiveCampaignDiscoveryCronsScheduled();
+  const intervalSeconds =
+    (input.job.payload_json as { intervalSeconds?: number } | null)?.intervalSeconds
+    ?? RECONCILE_CAMPAIGN_DISCOVERY_DEFAULT_INTERVAL_SECONDS;
+  await completeJob({ job: input.job, runId: input.runId, workerId: input.workerId });
+  await ensureReconcileCampaignDiscoveryCronScheduled({
+    intervalSeconds,
+    availableAt: new Date(Date.now() + intervalSeconds * 1000)
+  });
+  return result;
+}
+
 export async function ensureBackgroundCronsScheduled(input: {
   availableAt?: Date;
 } = {}): Promise<{
@@ -19670,6 +20165,7 @@ export async function ensureBackgroundCronsScheduled(input: {
   queueDepthWatchdog: { enqueued: boolean; jobId: string | null };
   rotateEventLog: { enqueued: boolean; jobId: string | null };
   rollupAgentCosts: { enqueued: boolean; jobId: string | null };
+  reconcileCampaignDiscovery: { enqueued: boolean; jobId: string | null };
 }> {
   const availableAt = input.availableAt ?? new Date();
   const resurfacePolicyStates = await ensureResurfacePolicyStatesJobScheduled({ availableAt });
@@ -19678,13 +20174,15 @@ export async function ensureBackgroundCronsScheduled(input: {
   const queueDepthWatchdog = await ensureQueueDepthWatchdogScheduled({ availableAt });
   const rotateEventLog = await ensureRotateEventLogCronScheduled({ availableAt });
   const rollupAgentCosts = await ensureRollupAgentCostsCronScheduled({ availableAt });
+  const reconcileCampaignDiscovery = await ensureReconcileCampaignDiscoveryCronScheduled({ availableAt });
   return {
     resurfacePolicyStates,
     recoverStaleJobs,
     workerHeartbeatWatchdog,
     queueDepthWatchdog,
     rotateEventLog,
-    rollupAgentCosts
+    rollupAgentCosts,
+    reconcileCampaignDiscovery
   };
 }
 
@@ -21891,7 +22389,14 @@ function buildStartCampaignIdempotencyKey(payload: StartCampaignPayload): string
     maxConcurrentEnrichments: payload.maxConcurrentEnrichments ?? 3,
     maxConcurrentDrafts: payload.maxConcurrentDrafts ?? 5,
     maxOpenDraftReviews: payload.maxOpenDraftReviews ?? 25,
-    cooldownBetweenDiscoverySeconds: payload.cooldownBetweenDiscoverySeconds ?? 3600
+    cooldownBetweenDiscoverySeconds: payload.cooldownBetweenDiscoverySeconds ?? 3600,
+    // T-026BT/F6: include recurrence so the same scope submitted once with
+    // recurrence off and once enabled does not dedupe to the first command.
+    // Normalized so omitted/null/0 all collapse to 0 (the back-compat "off").
+    discoveryRecurrenceSeconds:
+      typeof payload.discoveryRecurrenceSeconds === "number" && payload.discoveryRecurrenceSeconds > 0
+        ? payload.discoveryRecurrenceSeconds
+        : 0
   });
   return `start_campaign:${createHash("sha256").update(normalized).digest("hex")}`;
 }

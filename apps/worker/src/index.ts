@@ -22,6 +22,9 @@ import {
   completeSendTelegramNotificationJob,
   completeWebhookProcessingJob,
   completeWorkerHeartbeatWatchdogJob,
+  completeCampaignDiscoveryCronJob,
+  completeReconcileCampaignDiscoveryCronJob,
+  ensureActiveCampaignDiscoveryCronsScheduled,
   ensureBackgroundCronsScheduled,
   failJob,
   leaseNextJob,
@@ -184,6 +187,10 @@ async function main() {
       availableAt: new Date()
     });
     log("info", "background_crons_bootstrap", scheduled);
+    // T-026BT: re-arm recurring discovery ticks for campaigns whose recurrence
+    // is active, so schedules survive a worker restart.
+    const recurrence = await ensureActiveCampaignDiscoveryCronsScheduled();
+    log("info", "campaign_discovery_crons_bootstrap", recurrence);
   }
 
   while (!shuttingDown) {
@@ -580,6 +587,33 @@ async function runJobWithinTrace(job: LeasedJob) {
           rolledUpRows: result.rolledUpRows,
           totalEstimatedUsd: result.totalEstimatedUsd,
           spikeAlerts: result.spikeAlerts
+        });
+        break;
+      }
+
+      case "job.cron_campaign_discovery": {
+        const result = await completeCampaignDiscoveryCronJob({
+          job,
+          runId: run.id,
+          workerId
+        });
+        log("info", "campaign_discovery_cron_completed", {
+          jobId: job.id,
+          triggered: result.triggered,
+          rearmed: result.rearmed
+        });
+        break;
+      }
+
+      case "job.cron_reconcile_campaign_discovery": {
+        const result = await completeReconcileCampaignDiscoveryCronJob({
+          job,
+          runId: run.id,
+          workerId
+        });
+        log("info", "campaign_discovery_reconcile_completed", {
+          jobId: job.id,
+          armed: result.armed
         });
         break;
       }

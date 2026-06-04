@@ -99,6 +99,15 @@ export const campaigns = pgTable("campaigns", {
   // outreach inbox (partners@ / bd@ / sales@ / hello@ / contact@), strictly
   // sourced verbatim from a public page. See T-026V + `_CONTACT_DISCOVERY_INSTRUCTION`.
   allowGenericInboxFallback: boolean("allow_generic_inbox_fallback").notNull().default(false),
+  // T-026BT: recurring (cron) discovery. `seconds` null/0 = one-shot (default);
+  // >0 = interval between automatic discovery passes. `active` toggles the
+  // scheduler without losing the interval. `version` is bumped on every
+  // set_campaign_recurrence change; the cron payload carries the version it was
+  // armed with and only re-arms on a match, so a stop or interval change
+  // invalidates any in-flight tick.
+  discoveryRecurrenceSeconds: integer("discovery_recurrence_seconds"),
+  discoveryRecurrenceActive: boolean("discovery_recurrence_active").notNull().default(false),
+  discoveryRecurrenceVersion: integer("discovery_recurrence_version").notNull().default(0),
   discoveryScopeVersion: integer("discovery_scope_version").notNull().default(1),
   // T-026BO: structured email drafting brief collected by the campaign chat
   // assistant (angle / tone / talking points / facts about us). NULL for
@@ -430,7 +439,13 @@ export const jobs = pgTable("jobs", {
 }, (table) => ({
   leaseIdx: index("jobs_lease_idx").on(table.status, table.availableAt, table.priority),
   workerPoolStatusIdx: index("jobs_worker_pool_status_idx").on(table.workerPool, table.status, table.availableAt, table.priority),
-  concurrencyIdx: index("jobs_concurrency_idx").on(table.concurrencyKey)
+  concurrencyIdx: index("jobs_concurrency_idx").on(table.concurrencyKey),
+  // T-026BT: at most one live cron tick per campaign. Scoped to the cron job
+  // type so it never touches the `campaign_discovery:*` wave keys, which keep a
+  // leased+queued pair during maybeEnqueueNextDiscoveryWave chaining (F5).
+  cronCampaignDiscoveryActiveIdx: uniqueIndex("jobs_cron_campaign_discovery_active_idx")
+    .on(table.concurrencyKey)
+    .where(sql`${table.status} in ('queued','leased','running') and ${table.jobType} = 'job.cron_campaign_discovery'`)
 }));
 
 export const jobRuns = pgTable("job_runs", {
