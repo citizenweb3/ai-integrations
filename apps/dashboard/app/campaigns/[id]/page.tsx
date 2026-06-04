@@ -217,27 +217,32 @@ export default async function CampaignDetailPage({
           <MetricCard
             label="Contacts accepted"
             value={view.progress.contactsAccepted}
+            href={`/campaigns/${view.campaign.id}/organizations?filter=contacts`}
             hint="People you have approved into addressable contacts across all orgs in this campaign."
           />
           <MetricCard
             label="Drafts generated"
             value={view.progress.draftsGenerated}
+            href={`/campaigns/${view.campaign.id}/drafts`}
             hint="Cold drafts the agent has produced. Each one needs your review before send."
           />
           <MetricCard
             label="Drafts approved"
             value={view.progress.draftsApproved}
+            href={`/campaigns/${view.campaign.id}/drafts?tab=sent`}
             hint="Drafts you have signed off for sending. They sit in the send queue until the worker dispatches them."
           />
           <MetricCard
             label="Sent"
             value={view.progress.sent}
+            href={`/campaigns/${view.campaign.id}/drafts?tab=sent`}
             hint="Messages dispatched through Resend. Awaiting delivery webhook + reply."
           />
           <MetricCard
             label="Replies"
             value={view.progress.replied}
             accent={view.progress.replied > 0}
+            href="/threads"
             hint="Inbound replies attached to threads in this campaign."
           />
         </div>
