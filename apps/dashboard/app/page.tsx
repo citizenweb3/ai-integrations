@@ -15,6 +15,11 @@ import {
 
 export const dynamic = "force-dynamic";
 
+// The home page is a digest, not the full queue: cap the Operator inbox
+// preview and link the rest to /inbox so the page does not become one
+// long scroll once the queue grows.
+const INBOX_PREVIEW_LIMIT = 10;
+
 async function loadSnapshot() {
   try {
     return { data: await getDashboardSnapshot(), error: null };
@@ -165,7 +170,7 @@ export default async function DashboardHome() {
               Operator inbox
             </SectionLabel>
             <ul className="space-y-3">
-              {workItems.map((item) => (
+              {workItems.slice(0, INBOX_PREVIEW_LIMIT).map((item) => (
                 <li
                   key={item.id}
                   className="rounded-2xl border border-white/10 bg-white/[0.04] p-5"
@@ -205,6 +210,14 @@ export default async function DashboardHome() {
                 </li>
               ))}
             </ul>
+            {workItems.length > INBOX_PREVIEW_LIMIT ? (
+              <Link
+                href="/inbox"
+                className="mt-4 inline-flex items-center gap-2 text-sm font-semibold tracking-[0.02em] text-[var(--accent)] hover:opacity-80 hover:no-underline"
+              >
+                Show {workItems.length - INBOX_PREVIEW_LIMIT} more in Operator inbox →
+              </Link>
+            ) : null}
           </section>
         ) : null}
 
