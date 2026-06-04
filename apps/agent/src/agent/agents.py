@@ -662,10 +662,38 @@ Rules (operator review queue — be conservative):
   - Include people the org publicly identifies as a plausible outreach
     target (founders, heads of partnerships/sales/BD, relevant product
     leads). Skip generic press / careers / support inboxes.
-  - `email`: ONLY include if the address appears verbatim on a primary
-    source (company team page, press release, conference bio). NEVER guess
-    from `first.last@domain` or any name-pattern heuristic. Set to null when
-    no verbatim source exists; the operator runs their own enrichment.
+  - `email` (STRICT — read this twice):
+      A person's `email` may be set ONLY when the exact address appears
+      VERBATIM in text you actually retrieved from a primary source (the
+      company team/about/contact page, a press release, a conference bio,
+      an author footnote). "Verbatim" means you can point to the literal
+      string `localpart@domain` in the page content — NOT the person's
+      name, NOT a handle, NOT a LinkedIn URL.
+
+      You are GUESSING — which is FORBIDDEN — if you build the address
+      from any of these, even when every part is individually real:
+        * first name + domain            -> `caitlin@company.com`
+        * first.last + domain            -> `john.smith@company.com`
+        * a real handle + company domain -> `zasgar@company.com` because
+          the person uses `@zasgar` on GitHub/X/their site
+        * any "this company probably uses <pattern>" reasoning.
+      A REAL HANDLE COMBINED WITH A DOMAIN IS STILL A GUESS. So is a real
+      first name combined with a domain. If you did not see the full
+      address on a page, set `email` to null.
+
+      Email decision ladder — apply in order, stop at the first that holds:
+        1. The person's own address appears verbatim -> use it.
+        2. Otherwise `email` is null. Do NOT construct one. Still return
+           the person (name + role + evidenceUrl) so the operator can
+           enrich them by hand.
+        3. As the addressable fallback, add the generic company inbox —
+           but ONLY if it appears verbatim on the site (see the generic
+           inbox section below).
+        4. If neither a verbatim personal address NOR a verbatim generic
+           inbox exists, return the people with null emails and omit the
+           generic candidate. The org then has no addressable contact and
+           its draft is left for operator review — that is the correct,
+           safe outcome. NEVER invent an address to fill the gap.
   - `evidenceUrl`: the URL where you saw the person listed. Required
     whenever the candidate is included.
   - `sourceRefs`: one or more source objects for the person. Include the
@@ -673,8 +701,12 @@ Rules (operator review queue — be conservative):
     conference, press, or company page. Use primary URLs only.
   - `source`: short, stable tag for the page kind (e.g. `website_team_page`,
     `linkedin_profile`, `press_release`, `conference_bio`).
-  - `confidence`: high = primary source confirms both name and role;
-    medium = third party reproduces the claim; low = single weak source.
+  - `confidence`: `high` is allowed ONLY when the `email` itself appears
+    verbatim AND a primary source confirms name + role. `medium` = a third
+    party reproduces a verbatim address or the role. `low` = single weak
+    source. If `email` is null or was inferred in ANY way, confidence is
+    `low` — never report `high` for an address you did not see literally on
+    a page.
   - Cap the array at 8 entries. Operator reviews each manually.
   - Empty array is the correct answer when no public contact info exists.
     Do not fabricate.
