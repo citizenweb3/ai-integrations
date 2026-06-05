@@ -1,6 +1,6 @@
 import { getCampaignDiscoveryView } from "@bizdev/db";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
 import { DiscoveryCandidatePanels } from "@/components/discovery-candidate-panels";
 import { DismissableBanner } from "@/components/dismissable-banner";
@@ -30,6 +30,11 @@ export default async function CampaignCandidatesPage({
   const view = await getCampaignDiscoveryView(id);
   if (!view) {
     notFound();
+  }
+  // T-026BU: archived campaign is stopped + read-only — its candidate Accept /
+  // Reject forms must not be presented, so bounce back to the detail page.
+  if (view.campaign.archivedAt) {
+    redirect(`/campaigns/${id}`);
   }
 
   const totals = Object.values(view.candidatesByStatus).reduce((sum, list) => sum + list.length, 0);

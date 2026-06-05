@@ -9375,6 +9375,17 @@ export async function getSendableDraftsForCampaign(
   campaignId: string
 ): Promise<SendableDraftRow[]> {
   const db = getDb();
+  // T-026BU: an archived campaign is stopped — surface no sendable drafts so the
+  // bulk "Send all" affordance (SendAllDraftsDrawer renders nothing on an empty
+  // list) disappears everywhere this query backs it.
+  const [campaign] = await db
+    .select({ archivedAt: campaigns.archivedAt })
+    .from(campaigns)
+    .where(eq(campaigns.id, campaignId))
+    .limit(1);
+  if (!campaign || campaign.archivedAt) {
+    return [];
+  }
   const rows = await db
     .select({
       id: drafts.id,

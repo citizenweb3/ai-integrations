@@ -4,6 +4,7 @@ import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import { Badge, Button, PageBody, PillLink } from "@/components/ui";
 import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
+import { DismissableBanner } from "@/components/dismissable-banner";
 import { liveActivityTotal } from "@/components/background-activity-strip";
 
 export const dynamic = "force-dynamic";
@@ -16,11 +17,15 @@ export default async function CampaignsIndexPage({
   const query = await searchParams;
   const archivedRaw = query["archived"];
   const showArchived = (Array.isArray(archivedRaw) ? archivedRaw[0] : archivedRaw) === "1";
+  // T-026BU: the command route redirects archive/restore here with a
+  // notice/error; render them so the confirmation is not silently dropped.
+  const notice = readQuery(query["notice"]);
+  const error = readQuery(query["error"]);
 
   // T-026BU: archived (soft-deleted) campaigns view. Hidden from the default
   // list; surfaced here so archive stays self-service reversible via Restore.
   if (showArchived) {
-    return <ArchivedCampaignsView />;
+    return <ArchivedCampaignsView notice={notice} error={error} />;
   }
 
   const items = await listCampaignsForDashboard();
@@ -49,6 +54,7 @@ export default async function CampaignsIndexPage({
 
       <PageBody>
         <AutoRefreshWhenActive active={anyActive} />
+        <CampaignIndexBanners notice={notice} error={error} />
         {items.length === 0 ? (
           <Card>
             <p className="font-light opacity-80">
@@ -130,7 +136,13 @@ export default async function CampaignsIndexPage({
 // objective, the status Restore will return them to, and when they were
 // archived — each with a Restore action (unarchive_campaign). The name links to
 // the campaign's own page, which still loads while archived.
-async function ArchivedCampaignsView() {
+async function ArchivedCampaignsView({
+  notice,
+  error
+}: {
+  notice: string | null;
+  error: string | null;
+}) {
   const items = await listArchivedCampaignsForDashboard();
   return (
     <>
@@ -153,6 +165,7 @@ async function ArchivedCampaignsView() {
       />
 
       <PageBody>
+        <CampaignIndexBanners notice={notice} error={error} />
         {items.length === 0 ? (
           <Card>
             <p className="font-light opacity-80">
@@ -201,6 +214,37 @@ async function ArchivedCampaignsView() {
           </ul>
         )}
       </PageBody>
+    </>
+  );
+}
+
+function readQuery(raw: string | string[] | undefined): string | null {
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) return raw[0] ?? null;
+  return null;
+}
+
+// T-026BU: render the archive/restore notice + error the command route redirects
+// here with (the active and archived index views both use this).
+function CampaignIndexBanners({ notice, error }: { notice: string | null; error: string | null }) {
+  return (
+    <>
+      {error ? (
+        <DismissableBanner
+          tone="error"
+          queryKey="error"
+          eyebrow="Last action failed"
+          message={error}
+        />
+      ) : null}
+      {notice ? (
+        <DismissableBanner
+          tone="notice"
+          queryKey="notice"
+          eyebrow="Action confirmed"
+          message={notice}
+        />
+      ) : null}
     </>
   );
 }

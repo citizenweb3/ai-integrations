@@ -4,7 +4,7 @@ import {
   listOrganizationsForDashboard
 } from "@bizdev/db";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import { Badge, PageBody } from "@/components/ui";
@@ -84,6 +84,11 @@ export default async function CampaignOrganizationsPage({
   const view = await getCampaignDiscoveryView(id);
   if (!view) {
     notFound();
+  }
+  // T-026BU: archived campaign is stopped + read-only — bounce subpages back to
+  // the detail page (archived banner + Restore) instead of showing live actions.
+  if (view.campaign.archivedAt) {
+    redirect(`/campaigns/${id}`);
   }
   const allOrgs = await listOrganizationsForDashboard({ campaignId: id });
   const counts = {

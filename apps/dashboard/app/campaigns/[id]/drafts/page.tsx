@@ -6,7 +6,7 @@ import {
   type DraftSendMode
 } from "@bizdev/db";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
 import { Badge, PageBody } from "@/components/ui";
@@ -50,6 +50,12 @@ export default async function CampaignDraftsPage({
   const view = await getCampaignDiscoveryView(id);
   if (!view) {
     notFound();
+  }
+  // T-026BU: an archived campaign is stopped + read-only — its subpages still
+  // exposed live send actions, so bounce back to the detail page (archived
+  // banner + Restore).
+  if (view.campaign.archivedAt) {
+    redirect(`/campaigns/${id}`);
   }
 
   const tab = parseTab(query["tab"]);
