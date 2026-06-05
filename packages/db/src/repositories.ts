@@ -22902,6 +22902,10 @@ function buildStartCampaignIdempotencyKey(payload: StartCampaignPayload): string
     senderIdentityId: payload.senderIdentityId ?? null,
     policyProfileId: payload.policyProfileId ?? null,
     operatorNotes: payload.operatorNotes?.trim() ?? null,
+    // T-026BV: include the signature (normalized exactly like the write site) so
+    // the same scope submitted with a different sign-off does not dedupe to the
+    // first command and silently drop the requested signature.
+    senderSignature: (payload.senderSignature ?? "").trim() || null,
     discoverySourceHints: [...(payload.discoverySourceHints ?? [])].sort(),
     discoveryExclusions: [...(payload.discoveryExclusions ?? [])].sort(),
     allowedRegions: [...(payload.allowedRegions ?? [])].sort(),
