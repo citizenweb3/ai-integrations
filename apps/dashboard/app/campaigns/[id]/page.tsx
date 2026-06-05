@@ -113,6 +113,7 @@ export default async function CampaignDetailPage({
   );
   const isActiveCampaign = view.campaign.status === "active";
   const isDraftingScope = view.campaign.status === "drafting_scope";
+  const isArchived = view.campaign.archivedAt != null;
   const stage = deriveCampaignStage(view);
   const replyClassBreakdown = Object.entries(view.progress.replyClassCounts)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -162,6 +163,10 @@ export default async function CampaignDetailPage({
             eyebrow="Action confirmed"
             message={noticeMessage}
           />
+        ) : null}
+
+        {isArchived ? (
+          <ArchivedBanner campaignId={view.campaign.id} archivedAt={view.campaign.archivedAt!} />
         ) : null}
 
         <StageStrip stage={stage} />
@@ -477,8 +482,92 @@ export default async function CampaignDetailPage({
           hrefFor={(d) => campaignHref(orgsPage, d)}
         />
 
+        {!isArchived ? (
+          <DangerZoneCard campaignId={view.campaign.id} campaignName={view.campaign.name} />
+        ) : null}
+
       </PageBody>
     </>
+  );
+}
+
+// T-026BU: archived (soft-deleted) campaign banner. The campaign's own page
+// still loads (it is not hidden), so the operator can see it is archived and
+// restore it. Restore posts unarchive_campaign; status returns to its
+// pre-archive value (recurrence stays off until re-enabled).
+function ArchivedBanner({
+  campaignId,
+  archivedAt
+}: {
+  campaignId: string;
+  archivedAt: Date;
+}) {
+  return (
+    <div className="rounded-2xl border border-red-500/40 bg-red-500/[0.06] p-5">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="space-y-2">
+          <div className="text-xs font-semibold tracking-[0.2em] uppercase text-red-400">
+            Archived (deleted)
+          </div>
+          <p className="text-sm font-light opacity-90 max-w-2xl">
+            This campaign is archived — hidden from every list and the inbox, and all its activity is
+            stopped (no discovery, drafting, sending, or notifications). Its data is preserved.
+            Archived {archivedAt.toISOString()}. Restore to bring it back; its status returns to what
+            it was before archiving (recurring discovery stays off until you re-enable it).
+          </p>
+        </div>
+        <form action="/api/commands" method="post" className="shrink-0">
+          <input type="hidden" name="commandType" value="unarchive_campaign" />
+          <input type="hidden" name="campaignId" value={campaignId} />
+          <Button type="submit">Restore campaign</Button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// T-026BU: delete (= soft-archive) the campaign. A two-step <details> confirm
+// (server-rendered, no client JS) since the action is destructive-looking even
+// though it is reversible. Posts archive_campaign; the route redirects to
+// /campaigns with a notice.
+function DangerZoneCard({
+  campaignId,
+  campaignName
+}: {
+  campaignId: string;
+  campaignName: string;
+}) {
+  return (
+    <Card>
+      <BlockTitle title="Danger zone" className="mb-2 text-left" />
+      <p className="text-sm font-light opacity-80 mb-4">
+        Delete this campaign. It disappears from every list and the inbox and all its activity stops,
+        but its data (sent messages, replies, audit trail) is kept — this is a reversible archive, not
+        a hard delete. You can restore it later from{" "}
+        <Link href="/campaigns?archived=1" className="text-[hsl(var(--primary))]">
+          Show archived
+        </Link>
+        .
+      </p>
+      <details className="group">
+        <summary className="inline-flex cursor-pointer select-none items-center rounded-lg border border-[#7f2d20] bg-[#7f2d20]/20 px-4 py-2.5 text-sm font-bold tracking-wide text-red-200 hover:bg-[#7f2d20]/30 transition-colors">
+          Delete campaign
+        </summary>
+        <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/[0.04] p-4 space-y-3">
+          <p className="text-sm font-light opacity-90">
+            Delete <strong>{campaignName}</strong>? It will be hidden everywhere and stopped.
+            Reversible via Restore.
+          </p>
+          <form action="/api/commands" method="post">
+            <input type="hidden" name="commandType" value="archive_campaign" />
+            <input type="hidden" name="campaignId" value={campaignId} />
+            <Button type="submit" tone="danger">
+              Yes, delete campaign
+            </Button>
+          </form>
+        </div>
+      </details>
+    </Card>
   );
 }
 

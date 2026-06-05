@@ -1,14 +1,28 @@
-import { listCampaignsForDashboard } from "@bizdev/db";
+import { listCampaignsForDashboard, listArchivedCampaignsForDashboard } from "@bizdev/db";
 import Link from "next/link";
 import ConsoleHero from "@/components/console-hero";
 import Card from "@/components/card";
-import { Badge, PageBody, PillLink } from "@/components/ui";
+import { Badge, Button, PageBody, PillLink } from "@/components/ui";
 import { AutoRefreshWhenActive } from "@/components/auto-refresh-when-active";
 import { liveActivityTotal } from "@/components/background-activity-strip";
 
 export const dynamic = "force-dynamic";
 
-export default async function CampaignsIndexPage() {
+export default async function CampaignsIndexPage({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const query = await searchParams;
+  const archivedRaw = query["archived"];
+  const showArchived = (Array.isArray(archivedRaw) ? archivedRaw[0] : archivedRaw) === "1";
+
+  // T-026BU: archived (soft-deleted) campaigns view. Hidden from the default
+  // list; surfaced here so archive stays self-service reversible via Restore.
+  if (showArchived) {
+    return <ArchivedCampaignsView />;
+  }
+
   const items = await listCampaignsForDashboard();
   const anyActive = items.some((c) => liveActivityTotal(c.liveActivity) > 0);
 
@@ -25,7 +39,12 @@ export default async function CampaignsIndexPage() {
         }
         title="Campaigns"
         subtitle={`${items.length} campaign${items.length === 1 ? "" : "s"}. Open one to run prospect discovery and triage proposed organisations.`}
-        actions={<PillLink href="/campaigns/new" primary>New campaign</PillLink>}
+        actions={
+          <div className="flex items-center gap-3">
+            <PillLink href="/campaigns?archived=1">Show archived</PillLink>
+            <PillLink href="/campaigns/new" primary>New campaign</PillLink>
+          </div>
+        }
       />
 
       <PageBody>
@@ -101,6 +120,85 @@ export default async function CampaignsIndexPage() {
               </Link>
             ))}
           </div>
+        )}
+      </PageBody>
+    </>
+  );
+}
+
+// T-026BU: archived (soft-deleted) campaigns listing. Lightweight rows — name,
+// objective, the status Restore will return them to, and when they were
+// archived — each with a Restore action (unarchive_campaign). The name links to
+// the campaign's own page, which still loads while archived.
+async function ArchivedCampaignsView() {
+  const items = await listArchivedCampaignsForDashboard();
+  return (
+    <>
+      <ConsoleHero currentNav="campaigns"
+        eyebrow={
+          <>
+            <Link href="/" className="text-[hsl(var(--primary))]">
+              Operator Console
+            </Link>{" "}
+            /{" "}
+            <Link href="/campaigns" className="text-[hsl(var(--primary))]">
+              Campaigns
+            </Link>{" "}
+            / Archived
+          </>
+        }
+        title="Archived campaigns"
+        subtitle={`${items.length} archived campaign${items.length === 1 ? "" : "s"}. Restore brings one back with its previous status; its data was never deleted.`}
+        actions={<PillLink href="/campaigns" primary>Show active</PillLink>}
+      />
+
+      <PageBody>
+        {items.length === 0 ? (
+          <Card>
+            <p className="font-light opacity-80">
+              No archived campaigns.{" "}
+              <Link href="/campaigns" className="text-[hsl(var(--primary))]">
+                Back to active campaigns
+              </Link>
+              .
+            </p>
+          </Card>
+        ) : (
+          <ul className="space-y-3">
+            {items.map((c) => (
+              <li key={c.id}>
+                <Card>
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/campaigns/${c.id}`}
+                          className="text-lg font-bold tracking-[0.02em] truncate hover:text-[var(--accent)] hover:no-underline"
+                        >
+                          {c.name}
+                        </Link>
+                        <Badge tone="danger">archived</Badge>
+                      </div>
+                      <p className="text-sm font-light opacity-70 line-clamp-2 mt-1 max-w-2xl">
+                        {c.objective}
+                      </p>
+                      <div className="text-xs opacity-60 mt-2">
+                        restores to{" "}
+                        <span className="font-semibold">{c.preArchiveStatus ?? "paused"}</span>
+                        {" · archived "}
+                        {c.archivedAt.toISOString()}
+                      </div>
+                    </div>
+                    <form action="/api/commands" method="post" className="shrink-0">
+                      <input type="hidden" name="commandType" value="unarchive_campaign" />
+                      <input type="hidden" name="campaignId" value={c.id} />
+                      <Button type="submit">Restore</Button>
+                    </form>
+                  </div>
+                </Card>
+              </li>
+            ))}
+          </ul>
         )}
       </PageBody>
     </>

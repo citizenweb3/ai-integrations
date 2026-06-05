@@ -23521,6 +23521,8 @@ export type CampaignDiscoveryView = {
     discoveryRecurrenceVersion: number;
     createdAt: Date;
     updatedAt: Date;
+    // T-026BU: archive state. null = live; set = archived (status is 'closed').
+    archivedAt: Date | null;
   };
   progress: CampaignProgress;
   candidatesByStatus: Record<DiscoveryCandidateStatus, DiscoveryCandidateView[]>;
@@ -23572,6 +23574,43 @@ export type CampaignReviewQueueRow = {
 // `proposed` = fresh agent output), so the operator does not have to visit each
 // campaign to discover pending work. Deliberately NOT per-candidate work_items
 // (those would flood the inbox); the operator drills into `/campaigns/[id]`.
+// T-026BU: archived (soft-deleted) campaigns for the /campaigns?archived=1
+// view. Lightweight — id/name/objective + the status it will restore to — since
+// the archived list only needs to label rows and offer Restore.
+export type ArchivedCampaignListItem = {
+  id: string;
+  name: string;
+  objective: string;
+  status: string;
+  preArchiveStatus: string | null;
+  archivedAt: Date;
+};
+
+export async function listArchivedCampaignsForDashboard(limit = 100): Promise<ArchivedCampaignListItem[]> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      id: campaigns.id,
+      name: campaigns.name,
+      objective: campaigns.objective,
+      status: campaigns.status,
+      preArchiveStatus: campaigns.preArchiveStatus,
+      archivedAt: campaigns.archivedAt
+    })
+    .from(campaigns)
+    .where(isNotNull(campaigns.archivedAt))
+    .orderBy(desc(campaigns.archivedAt))
+    .limit(limit);
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    objective: r.objective,
+    status: r.status,
+    preArchiveStatus: r.preArchiveStatus,
+    archivedAt: r.archivedAt as Date
+  }));
+}
+
 export async function getCampaignsNeedingReview(limit = 20): Promise<CampaignReviewQueueRow[]> {
   const db = getDb();
   const rows = await db.execute(sql`
@@ -23861,7 +23900,8 @@ export async function getCampaignDiscoveryView(
       discoveryRecurrenceActive: campaign.discoveryRecurrenceActive,
       discoveryRecurrenceVersion: campaign.discoveryRecurrenceVersion,
       createdAt: campaign.createdAt,
-      updatedAt: campaign.updatedAt
+      updatedAt: campaign.updatedAt,
+      archivedAt: campaign.archivedAt ?? null
     },
     progress,
     candidatesByStatus,
