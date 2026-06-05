@@ -227,6 +227,14 @@ function CampaignScopeForm({
           />
         </ScopeLabel>
 
+        <ScopeLabel label="Sender signature">
+          <textarea
+            className={textareaClass}
+            name="senderSignature"
+            defaultValue={campaign.senderSignature ?? ""}
+          />
+        </ScopeLabel>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <ScopeLabel label="Source hints">
             <textarea

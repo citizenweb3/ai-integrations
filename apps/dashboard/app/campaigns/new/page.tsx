@@ -168,6 +168,19 @@ export default async function NewCampaignPage({
             </Field>
 
             <Field
+              label="Sender signature"
+              hint="Your email sign-off (name, title, company, contact / link). The draft agent closes every email with this verbatim. Leave empty to let the agent decide."
+              className="md:col-span-2"
+            >
+              <textarea
+                name="senderSignature"
+                placeholder={"Jane Doe\nHead of BD, Acme\njane@acme.com · acme.com"}
+                rows={4}
+                className={textareaClass}
+              />
+            </Field>
+
+            <Field
               label="Discovery source hints"
               hint="Sites / sources the discovery agent should prefer. One per line."
             >
