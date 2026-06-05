@@ -244,6 +244,8 @@ export const eventTypes = [
   "campaign_scope_incomplete",
   "campaign_expansion_started",
   "campaign_expansion_completed",
+  "campaign_archived",
+  "campaign_unarchived",
   "job_started",
   "job_succeeded",
   "job_failed",

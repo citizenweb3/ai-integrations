@@ -15033,6 +15033,10 @@ export async function routeCampaignDiscoveryOutcome(input: {
     });
 
     let outcome: ProposalProcessOutcome;
+    // F5: set when an auto-accepted novel proposal needs a fresh organisation
+    // row. The insert is deferred into the locked write tx below so it is not
+    // created for a campaign archived mid-run.
+    let materializeNewOrg = false;
     if (dedupe.result === "strong") {
       outcome = {
         status: "duplicate",
@@ -15086,18 +15090,11 @@ export async function routeCampaignDiscoveryOutcome(input: {
           reasonCode: dedupe.reasonCode
         };
       } else {
-        const [autoOrg] = await db
-          .insert(organizations)
-          .values({
-            name: proposal.proposedName,
-            domain: proposal.domain,
-            countryCode: proposal.countryCode
-          })
-          .returning({ id: organizations.id });
-        const autoOrgId = autoOrg!.id;
+        // Defer the org insert into the locked write tx below (F5).
+        materializeNewOrg = true;
         outcome = {
           status: "accepted",
-          matchedOrganizationId: autoOrgId,
+          matchedOrganizationId: null,
           dedupeResult: "none",
           rejectionReason: null,
           ambiguousMatches: [],
@@ -15106,61 +15103,147 @@ export async function routeCampaignDiscoveryOutcome(input: {
       }
     }
 
-    // Policy gate (canonical §67): only meaningful when the proposal links
-    // onto an existing org. Active org-scoped policy_state_entries
-    // (cooldown / suppression / legal_block) flip the candidate to
-    // `rejected_by_policy` so the operator never sees outreach proposals
-    // for an organization that has already opted out. Domains with no org
-    // link cannot be policy-checked here (no org-level state exists yet);
-    // that gate runs at accept-time in D5 once the org is materialized.
-    if (outcome.matchedOrganizationId) {
-      const blocking = await db
-        .select({
-          stateType: policyStateEntries.stateType,
-          reasonCode: policyStateEntries.reasonCode
-        })
-        .from(policyStateEntries)
-        .where(and(
-          eq(policyStateEntries.scopeType, "organization"),
-          eq(policyStateEntries.scopeId, outcome.matchedOrganizationId),
-          eq(policyStateEntries.status, "active")
-        ))
+    // F5: perform every campaign-scoped write for this candidate UNDER the
+    // campaign row lock, re-checking archived inside the same transaction.
+    // archive_campaign locks the same row in its own tx, so the two serialize:
+    // if archive committed first, this skips the candidate entirely — no
+    // organization, no discovery_candidate, and no org-scoped research job for
+    // a now-deleted campaign (campaign-job cancellation cannot catch the
+    // org-scoped research job, so the lock is the only thing that can).
+    const writeResult = await db.transaction(async (tx): Promise<
+      | { kind: "archived" }
+      | { kind: "duplicate" }
+      | { kind: "inserted"; candidateId: string }
+    > => {
+      const [c] = await tx
+        .select({ archivedAt: campaigns.archivedAt, status: campaigns.status })
+        .from(campaigns)
+        .where(eq(campaigns.id, input.campaignId))
+        .for("update")
         .limit(1);
-      if (blocking.length > 0) {
-        const blocker = blocking[0]!;
-        outcome = {
-          status: "rejected_by_policy",
-          matchedOrganizationId: outcome.matchedOrganizationId,
-          dedupeResult: outcome.dedupeResult,
-          rejectionReason: `policy_state:${blocker.stateType}:${blocker.reasonCode}`,
-          ambiguousMatches: outcome.ambiguousMatches,
-          reasonCode: outcome.reasonCode
-        };
+      if (!c || c.archivedAt || c.status === "closed") {
+        return { kind: "archived" };
       }
+
+      // Materialise the org for an auto-accepted novel proposal — now under the
+      // campaign lock so it is not created for an archived campaign.
+      if (materializeNewOrg) {
+        const [autoOrg] = await tx
+          .insert(organizations)
+          .values({
+            name: proposal.proposedName,
+            domain: proposal.domain,
+            countryCode: proposal.countryCode
+          })
+          .returning({ id: organizations.id });
+        outcome = { ...outcome, matchedOrganizationId: autoOrg!.id };
+      }
+
+      // Policy gate (canonical §67): only meaningful when the proposal links
+      // onto an existing org. Active org-scoped policy_state_entries
+      // (cooldown / suppression / legal_block) flip the candidate to
+      // `rejected_by_policy` so the operator never sees outreach proposals
+      // for an organization that has already opted out. Domains with no org
+      // link cannot be policy-checked here (no org-level state exists yet);
+      // that gate runs at accept-time in D5 once the org is materialized.
+      if (outcome.matchedOrganizationId) {
+        const blocking = await tx
+          .select({
+            stateType: policyStateEntries.stateType,
+            reasonCode: policyStateEntries.reasonCode
+          })
+          .from(policyStateEntries)
+          .where(and(
+            eq(policyStateEntries.scopeType, "organization"),
+            eq(policyStateEntries.scopeId, outcome.matchedOrganizationId),
+            eq(policyStateEntries.status, "active")
+          ))
+          .limit(1);
+        if (blocking.length > 0) {
+          const blocker = blocking[0]!;
+          outcome = {
+            status: "rejected_by_policy",
+            matchedOrganizationId: outcome.matchedOrganizationId,
+            dedupeResult: outcome.dedupeResult,
+            rejectionReason: `policy_state:${blocker.stateType}:${blocker.reasonCode}`,
+            ambiguousMatches: outcome.ambiguousMatches,
+            reasonCode: outcome.reasonCode
+          };
+        }
+      }
+
+      const insertedRows = await tx
+        .insert(discoveryCandidates)
+        .values({
+          campaignId: input.campaignId,
+          proposedName: proposal.proposedName,
+          domain: proposal.domain,
+          websiteUrl: proposal.websiteUrl,
+          countryCode: proposal.countryCode,
+          region: proposal.region,
+          sourceRefs: proposal.sourceRefs,
+          fitRationale: proposal.fitRationale,
+          confidence: proposal.confidence,
+          dedupeResult: outcome.dedupeResult,
+          matchedOrganizationId: outcome.matchedOrganizationId,
+          status: outcome.status,
+          rejectionReason: outcome.rejectionReason,
+          agentRunId: input.agentRunId
+        })
+        .onConflictDoNothing()
+        .returning({ id: discoveryCandidates.id });
+      if (insertedRows.length === 0) {
+        return { kind: "duplicate" };
+      }
+      const candidateId = insertedRows[0]!.id;
+
+      // Auto-accepted novel proposal: queue the org-scoped research snapshot in
+      // the SAME locked tx so it cannot outlive an archive that beat it to the
+      // lock. Per-org concurrency key dedups a same-org race.
+      if (outcome.status === "accepted" && outcome.matchedOrganizationId) {
+        await tx
+          .insert(jobs)
+          .values({
+            jobType: "job.refresh_research_snapshot",
+            status: "queued",
+            workerPool: "background",
+            targetEntityType: "organization",
+            targetEntityId: outcome.matchedOrganizationId,
+            payloadJson: {
+              organizationId: outcome.matchedOrganizationId,
+              prompt: buildDefaultResearchSnapshotPrompt({
+                organizationName: proposal.proposedName,
+                domain: proposal.domain,
+                campaignName: null
+              })
+            },
+            concurrencyKey: `research_snapshot:${outcome.matchedOrganizationId}`,
+            correlationId: input.correlationId
+          })
+          .onConflictDoNothing();
+      }
+      return { kind: "inserted", candidateId };
+    });
+
+    if (writeResult.kind === "archived") {
+      // Campaign was archived / closed before this candidate's writes — skip it
+      // entirely (no org, no candidate, no research job).
+      await appendEvent({
+        eventType: "campaign_discovery_router_failed",
+        entityType: "agent_run",
+        entityId: input.agentRunId,
+        ...(input.jobId ? { jobId: input.jobId } : {}),
+        correlationId: input.correlationId,
+        payloadJson: {
+          reason: "campaign_archived_or_closed",
+          campaignId: input.campaignId,
+          proposedName: proposal.proposedName
+        }
+      });
+      continue;
     }
 
-    const insertedRows = await db
-      .insert(discoveryCandidates)
-      .values({
-        campaignId: input.campaignId,
-        proposedName: proposal.proposedName,
-        domain: proposal.domain,
-        websiteUrl: proposal.websiteUrl,
-        countryCode: proposal.countryCode,
-        region: proposal.region,
-        sourceRefs: proposal.sourceRefs,
-        fitRationale: proposal.fitRationale,
-        confidence: proposal.confidence,
-        dedupeResult: outcome.dedupeResult,
-        matchedOrganizationId: outcome.matchedOrganizationId,
-        status: outcome.status,
-        rejectionReason: outcome.rejectionReason,
-        agentRunId: input.agentRunId
-      })
-      .onConflictDoNothing()
-      .returning({ id: discoveryCandidates.id });
-
-    if (insertedRows.length === 0) {
+    if (writeResult.kind === "duplicate") {
       // The partial unique (campaign_id, lower(domain)) collapsed this
       // proposal against an active row from a prior discovery run on the
       // same campaign. The prior row is the canonical record; emit an
@@ -15179,7 +15262,8 @@ export async function routeCampaignDiscoveryOutcome(input: {
       });
       continue;
     }
-    const candidateId = insertedRows[0]!.id;
+
+    const candidateId = writeResult.candidateId;
     inserted += 1;
 
     // Per-status events. `subType` on `discovery_candidate_rejected`
@@ -15291,69 +15375,25 @@ export async function routeCampaignDiscoveryOutcome(input: {
         });
         break;
       case "accepted":
-        // T-026AW: discovery router materialised the org inline. Queue
-        // the research_snapshot job so the operator never has to click
-        // Accept manually for clean proposals. The job inserts under
-        // a per-org concurrency key so a same-org race (extremely
-        // unlikely on a fresh insert) deduplicates.
+        // T-026AW: the router materialised the org + queued the research
+        // snapshot job inside the locked write tx above (so neither outlives an
+        // archive that beat it to the campaign lock — F5). Here we only record
+        // the auto-accept audit event.
         novel += 1;
         if (outcome.matchedOrganizationId) {
-          const orgId = outcome.matchedOrganizationId;
-          const enrichmentPrompt = buildDefaultResearchSnapshotPrompt({
-            organizationName: proposal.proposedName,
-            domain: proposal.domain,
-            campaignName: null
-          });
-          // F5: enqueue the org-scoped research job UNDER the campaign row lock
-          // and re-check archived inside, so this serializes with the archive
-          // command (which locks the same row in its own tx). If archive
-          // committed first, skip the enqueue — campaign-job cancellation cannot
-          // catch this org-scoped job (it targets the org, not the campaign), so
-          // the lock is the only thing that can stop it.
-          const enqueued = await db.transaction(async (tx) => {
-            const [c] = await tx
-              .select({ archivedAt: campaigns.archivedAt, status: campaigns.status })
-              .from(campaigns)
-              .where(eq(campaigns.id, input.campaignId))
-              .for("update")
-              .limit(1);
-            if (!c || c.archivedAt || c.status === "closed") return false;
-            await tx
-              .insert(jobs)
-              .values({
-                jobType: "job.refresh_research_snapshot",
-                status: "queued",
-                workerPool: "background",
-                targetEntityType: "organization",
-                targetEntityId: orgId,
-                payloadJson: { organizationId: orgId, prompt: enrichmentPrompt },
-                concurrencyKey: `research_snapshot:${orgId}`,
-                correlationId: input.correlationId
-              })
-              .onConflictDoNothing();
-            return true;
-          });
           await appendEvent({
-            eventType: enqueued
-              ? "discovery_candidate_auto_accepted"
-              : "campaign_discovery_router_failed",
+            eventType: "discovery_candidate_auto_accepted",
             entityType: "discovery_candidate",
             entityId: candidateId,
             ...(input.jobId ? { jobId: input.jobId } : {}),
             correlationId: input.correlationId,
-            payloadJson: enqueued
-              ? {
-                  campaignId: input.campaignId,
-                  organizationId: orgId,
-                  proposedName: proposal.proposedName,
-                  domain: proposal.domain,
-                  confidence: proposal.confidence
-                }
-              : {
-                  reason: "campaign_archived_or_closed",
-                  campaignId: input.campaignId,
-                  organizationId: orgId
-                }
+            payloadJson: {
+              campaignId: input.campaignId,
+              organizationId: outcome.matchedOrganizationId,
+              proposedName: proposal.proposedName,
+              domain: proposal.domain,
+              confidence: proposal.confidence
+            }
           });
         }
         break;
