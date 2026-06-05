@@ -119,6 +119,13 @@ export const campaigns = pgTable("campaigns", {
     talkingPoints: string[];
     ourFacts: string[];
   }>(),
+  // T-026BU: soft-archive. `archivedAt` is the hide/restore marker (null =
+  // live/visible; set = archived/hidden). `preArchiveStatus` captures `status`
+  // at archive time so unarchive can restore it (fallback 'paused'). Archive
+  // also flips `status` to 'closed' so the existing inactive guards stop the
+  // campaign's activity; `archivedAt` layers "hidden + restorable" on top.
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  preArchiveStatus: text("pre_archive_status"),
   createdAt: createdAt(),
   updatedAt: updatedAt()
 }, (table) => ({

@@ -69,7 +69,9 @@ export const operatorCommandTypes = [
   "run_campaign_discovery",
   "accept_discovery_candidate",
   "reject_discovery_candidate",
-  "set_campaign_recurrence"
+  "set_campaign_recurrence",
+  "archive_campaign",
+  "unarchive_campaign"
 ] as const;
 
 // Canonical §11.644-684 reply-class taxonomy. The `classify_reply` ADK
@@ -639,6 +641,15 @@ export const setCampaignRecurrencePayloadSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(200).optional()
 });
 
+// T-026BU: soft-archive (reversible delete) / restore a campaign.
+export const archiveCampaignPayloadSchema = z.object({
+  campaignId: z.string().uuid()
+});
+
+export const unarchiveCampaignPayloadSchema = z.object({
+  campaignId: z.string().uuid()
+});
+
 export const updateCampaignScopePayloadSchema = z.object({
   campaignId: z.string().uuid(),
   name: z.string().trim().min(1).max(200).optional(),
@@ -1176,6 +1187,16 @@ export const createCommandRequestSchema = z.discriminatedUnion("commandType", [
     payload: setCampaignRecurrencePayloadSchema
   }),
   z.object({
+    commandType: z.literal("archive_campaign"),
+    actorId: z.string().uuid().optional(),
+    payload: archiveCampaignPayloadSchema
+  }),
+  z.object({
+    commandType: z.literal("unarchive_campaign"),
+    actorId: z.string().uuid().optional(),
+    payload: unarchiveCampaignPayloadSchema
+  }),
+  z.object({
     commandType: z.literal("pause_all_sends"),
     actorId: z.string().uuid().optional(),
     payload: pauseAllSendsPayloadSchema
@@ -1353,6 +1374,8 @@ export type OutboundMessageStatus = (typeof outboundMessageStatuses)[number];
 export type SuppressionReason = (typeof suppressionReasons)[number];
 export type StartCampaignPayload = z.infer<typeof startCampaignPayloadSchema>;
 export type SetCampaignRecurrencePayload = z.infer<typeof setCampaignRecurrencePayloadSchema>;
+export type ArchiveCampaignPayload = z.infer<typeof archiveCampaignPayloadSchema>;
+export type UnarchiveCampaignPayload = z.infer<typeof unarchiveCampaignPayloadSchema>;
 export type UpdateCampaignScopePayload = z.infer<typeof updateCampaignScopePayloadSchema>;
 export type PauseAllSendsPayload = z.infer<typeof pauseAllSendsPayloadSchema>;
 export type ResumeAllSendsPayload = z.infer<typeof resumeAllSendsPayloadSchema>;

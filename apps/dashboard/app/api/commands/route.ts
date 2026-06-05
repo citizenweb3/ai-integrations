@@ -2,6 +2,7 @@ import {
   acceptDiscoveryCandidateCommand,
   approveContactCandidateCommand,
   approveDraftForSendCommand,
+  archiveCampaignCommand,
   attachInboundToThreadCommand,
   clearSuppressionCommand,
   createDraftCommand,
@@ -29,6 +30,7 @@ import {
   setPrimaryContactCommand,
   suppressContactCommand,
   traceOperation,
+  unarchiveCampaignCommand,
   updateCampaignScopeCommand,
   type TraceSpanHandle
 } from "@bizdev/db";
@@ -793,6 +795,68 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
       return NextResponse.redirect(target, { status: 303 });
     }
 
+    case "archive_campaign": {
+      const result = await archiveCampaignCommand({
+        ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
+        payload: parsed.data.payload
+      });
+      if (!result.ok) {
+        if (isJson) {
+          return NextResponse.json({ error: result.failure }, { status: 409 });
+        }
+        const redirect = safeRedirectUrl(request);
+        redirect.searchParams.set("error", `${result.failure.code}: ${result.failure.message}`);
+        return NextResponse.redirect(redirect, { status: 303 });
+      }
+      if (isJson) {
+        return NextResponse.json({
+          commandId: result.commandId,
+          campaignId: result.campaignId,
+          alreadyArchived: result.alreadyArchived
+        });
+      }
+      // The campaign vanished from every list; send the operator to the
+      // campaigns index with a confirmation rather than back to the now-hidden
+      // detail page.
+      const target = safeRedirectUrl(request);
+      target.pathname = "/campaigns";
+      target.search = "";
+      target.searchParams.set(
+        "notice",
+        result.alreadyArchived ? "Campaign was already deleted." : "Campaign deleted."
+      );
+      return NextResponse.redirect(target, { status: 303 });
+    }
+
+    case "unarchive_campaign": {
+      const result = await unarchiveCampaignCommand({
+        ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
+        payload: parsed.data.payload
+      });
+      if (!result.ok) {
+        if (isJson) {
+          return NextResponse.json({ error: result.failure }, { status: 409 });
+        }
+        const redirect = safeRedirectUrl(request);
+        redirect.searchParams.set("error", `${result.failure.code}: ${result.failure.message}`);
+        return NextResponse.redirect(redirect, { status: 303 });
+      }
+      if (isJson) {
+        return NextResponse.json({
+          commandId: result.commandId,
+          campaignId: result.campaignId,
+          restoredStatus: result.restoredStatus,
+          alreadyLive: result.alreadyLive
+        });
+      }
+      const target = safeRedirectUrl(request);
+      target.searchParams.set(
+        "notice",
+        result.alreadyLive ? "Campaign is already active." : "Campaign restored."
+      );
+      return NextResponse.redirect(target, { status: 303 });
+    }
+
     case "set_campaign_recurrence": {
       const result = await setCampaignRecurrenceCommand({
         ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
@@ -1547,6 +1611,15 @@ function formDataToCommand(formData: FormData) {
         campaignId,
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
+    };
+  }
+
+  if (commandType === "archive_campaign" || commandType === "unarchive_campaign") {
+    const campaignId = String(formData.get("campaignId") ?? "").trim();
+    return {
+      commandType,
+      ...base,
+      payload: { campaignId }
     };
   }
 

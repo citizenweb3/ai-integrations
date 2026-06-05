@@ -56,6 +56,8 @@ import {
   type SetPrimaryContactPayload,
   type StartCampaignPayload,
   type SetCampaignRecurrencePayload,
+  type ArchiveCampaignPayload,
+  type UnarchiveCampaignPayload,
   type SuppressContactPayload,
   type UpdateCampaignScopePayload,
   type WorkItemAction,
@@ -1486,7 +1488,7 @@ export async function getDashboardSnapshot() {
     recentSuppressions,
     activeWorkItems
   ] = await Promise.all([
-    db.select().from(campaigns).orderBy(desc(campaigns.createdAt)).limit(10),
+    db.select().from(campaigns).where(isNull(campaigns.archivedAt)).orderBy(desc(campaigns.createdAt)).limit(10),
     db.select().from(commands).orderBy(desc(commands.createdAt)).limit(10),
     db.select().from(jobs).orderBy(desc(jobs.createdAt)).limit(10),
     // Operator-relevant jobs only — cron + policy-state resurfacing hidden.
@@ -9334,6 +9336,7 @@ export async function getCampaignsWithDraftCounts(): Promise<CampaignDraftRollup
       max(d.updated_at) as last_draft_at
     from campaigns c
     join drafts d on d.campaign_id = c.id and d.status <> 'discarded'
+    where c.archived_at is null
     group by c.id, c.name
     order by max(d.updated_at) desc
   `);
@@ -10115,6 +10118,28 @@ export async function completeCampaignExpansionJob(input: {
       if (!campaign) {
         throw new NonRetryableJobError(`Campaign ${input.campaignId} not found`);
       }
+      // F2: a leased expansion must not re-activate an archived campaign. The
+      // status flip to 'closed' already trips the drafting_scope guard below;
+      // this explicit archived early-return is the belt (clearer skip reason,
+      // and independent of status should the two ever diverge).
+      if (campaign.archivedAt) {
+        await tx.insert(eventLog).values({
+          eventType: "campaign_expansion_completed",
+          entityType: "campaign",
+          entityId: campaign.id,
+          jobId: input.job.id,
+          correlationId: input.job.correlation_id,
+          payloadJson: {
+            workerId: input.workerId,
+            skipped: true,
+            reason: "campaign_archived",
+            campaignStatus: campaign.status,
+            discoveryJobId: null,
+            runCap: 0
+          }
+        });
+        return;
+      }
       if (campaign.status !== "drafting_scope") {
         await tx.insert(eventLog).values({
           eventType: "campaign_expansion_completed",
@@ -10552,7 +10577,10 @@ export async function ensureActiveCampaignDiscoveryCronsScheduled(): Promise<{ a
       gte(campaigns.discoveryRecurrenceSeconds, 1),
       // Do not arm a terminal campaign (review F3); paused/drafting keep their
       // schedule so it resumes / starts once active.
-      ne(campaigns.status, "closed")
+      ne(campaigns.status, "closed"),
+      // T-026BU: never arm an archived campaign (archive turns recurrence off
+      // and flips status -> closed, so this is belt-and-suspenders).
+      isNull(campaigns.archivedAt)
     ));
   let armed = 0;
   for (const row of rows) {
@@ -10617,6 +10645,7 @@ export async function completeCampaignDiscoveryCronJob(input: {
         !!campaign.discoveryRecurrenceSeconds &&
         campaign.discoveryRecurrenceSeconds > 0;
       if (
+        !campaign.archivedAt &&
         campaign.status === "active" &&
         recurrenceActive &&
         (campaign.discoveryRecurrenceVersion ?? 0) === armedVersion
@@ -10656,6 +10685,7 @@ export async function completeCampaignDiscoveryCronJob(input: {
       const [c] = await tx
         .select({
           status: campaigns.status,
+          archivedAt: campaigns.archivedAt,
           seconds: campaigns.discoveryRecurrenceSeconds,
           active: campaigns.discoveryRecurrenceActive,
           version: campaigns.discoveryRecurrenceVersion
@@ -10664,7 +10694,7 @@ export async function completeCampaignDiscoveryCronJob(input: {
         .where(eq(campaigns.id, campaignId))
         .for("update")
         .limit(1);
-      if (!c || !c.active || !c.seconds || c.seconds <= 0 || c.status === "closed") return;
+      if (!c || !c.active || !c.seconds || c.seconds <= 0 || c.status === "closed" || c.archivedAt) return;
       rearmed = await ensureCampaignDiscoveryCronScheduledTx(tx, {
         campaignId,
         intervalSeconds: c.seconds,
@@ -10862,6 +10892,247 @@ export async function setCampaignRecurrenceCommand(input: {
     }
     throw error;
   }
+}
+
+// T-026BU: soft-archive (reversible delete) a campaign. Under the campaign-row
+// lock: capture pre_archive_status, flip status -> 'closed' (stops every action
+// through the existing inactive guards), set archived_at; stop recurring
+// discovery (turn it off + bump the recurrence version + cancel the cron tick)
+// and cancel every queued campaign job so nothing else fires; resolve the
+// campaign's open work_items so it drops out of the home / inbox queues.
+// Leased / running jobs drain — the closed-status guards stop their downstream
+// effects. Idempotent: a no-op if already archived, so pre_archive_status is
+// never overwritten with 'closed'.
+export async function archiveCampaignCommand(input: {
+  actorId?: string;
+  payload: ArchiveCampaignPayload;
+}): Promise<
+  | { ok: true; campaignId: string; commandId: string; alreadyArchived: boolean }
+  | { ok: false; failure: { code: string; message: string } }
+> {
+  const db = getDb();
+  const { campaignId } = input.payload;
+  const commandId = randomUUID();
+  const correlationId = randomUUID();
+
+  return await db.transaction(async (tx) => {
+    const [campaign] = await tx
+      .select()
+      .from(campaigns)
+      .where(eq(campaigns.id, campaignId))
+      .for("update")
+      .limit(1);
+    if (!campaign) {
+      return {
+        ok: false as const,
+        failure: { code: "campaign_not_found", message: `Campaign ${campaignId} not found` }
+      };
+    }
+    // Idempotent: already archived → no-op (keep the original pre_archive_status).
+    if (campaign.archivedAt) {
+      return { ok: true as const, campaignId, commandId, alreadyArchived: true };
+    }
+
+    const preArchiveStatus = campaign.status;
+
+    await tx
+      .update(campaigns)
+      .set({
+        status: "closed",
+        archivedAt: new Date(),
+        preArchiveStatus,
+        // Stop recurring discovery: turn it off and bump the version so any
+        // in-flight cron tick cannot re-arm against a stale schedule.
+        discoveryRecurrenceActive: false,
+        discoveryRecurrenceVersion: (campaign.discoveryRecurrenceVersion ?? 0) + 1,
+        updatedAt: new Date()
+      })
+      .where(eq(campaigns.id, campaignId));
+
+    // Cancel the queued recurring-discovery cron tick.
+    await cancelCampaignDiscoveryCronTx(tx, campaignId);
+
+    // Cancel queued discovery / expansion jobs for the campaign so nothing else
+    // fires. Leased / running jobs drain; the closed-status guards stop their
+    // downstream effects.
+    await tx
+      .update(jobs)
+      .set({ status: "cancelled", leasedBy: null, leasedUntil: null, updatedAt: new Date() })
+      .where(and(
+        inArray(jobs.jobType, ["job.run_campaign_discovery", "job.start_campaign_expansion"]),
+        eq(jobs.targetEntityType, "campaign"),
+        eq(jobs.targetEntityId, campaignId),
+        eq(jobs.status, "queued")
+      ));
+
+    // Cancel queued Telegram notifications for the campaign (these carry the
+    // campaign only in payload entityType/entityId, not targetEntity) so a
+    // deleted campaign cannot ping (F8 belt).
+    await tx
+      .update(jobs)
+      .set({ status: "cancelled", leasedBy: null, leasedUntil: null, updatedAt: new Date() })
+      .where(and(
+        eq(jobs.jobType, "job.send_telegram_notification"),
+        eq(jobs.status, "queued"),
+        sql`${jobs.payloadJson}->>'entityType' = 'campaign'`,
+        sql`${jobs.payloadJson}->>'entityId' = ${campaignId}`
+      ));
+
+    // Resolve the campaign's open work_items so it stops surfacing in the home /
+    // inbox queues, which read work_items without a campaign filter (F4).
+    await tx
+      .update(workItems)
+      .set({ status: "resolved", resolvedAt: new Date(), updatedAt: new Date() })
+      .where(and(
+        eq(workItems.campaignId, campaignId),
+        sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`
+      ));
+
+    const command = expectOne(
+      await tx
+        .insert(commands)
+        .values({
+          id: commandId,
+          source: "operator",
+          commandType: "archive_campaign",
+          status: "accepted",
+          actorId: input.actorId,
+          targetEntityType: "campaign",
+          targetEntityId: campaignId,
+          payloadJson: input.payload,
+          idempotencyKey: `archive_campaign:${campaignId}:${commandId}`,
+          correlationId
+        })
+        .returning(),
+      "archive_campaign command"
+    );
+
+    await tx.insert(eventLog).values({
+      eventType: "campaign_archived",
+      entityType: "campaign",
+      entityId: campaignId,
+      commandId,
+      correlationId,
+      payloadJson: { preArchiveStatus }
+    });
+
+    return { ok: true as const, campaignId, commandId: command.id, alreadyArchived: false };
+  });
+}
+
+// T-026BU: restore an archived campaign. Clears archived_at, restores status
+// from pre_archive_status (fallback 'paused'), clears pre_archive_status. Does
+// NOT auto-resume recurrence — the operator re-enables it explicitly. F6: if the
+// restored status is 'drafting_scope', re-enqueue job.start_campaign_expansion —
+// archive cancelled the original expansion and resolved its
+// campaign_scope_incomplete work item, so without re-enqueuing a restored
+// drafting campaign would be stuck (never re-validated, never promoted to
+// active). Idempotent: a no-op on a live (non-archived) campaign.
+export async function unarchiveCampaignCommand(input: {
+  actorId?: string;
+  payload: UnarchiveCampaignPayload;
+}): Promise<
+  | { ok: true; campaignId: string; commandId: string; restoredStatus: string; alreadyLive: boolean }
+  | { ok: false; failure: { code: string; message: string } }
+> {
+  const db = getDb();
+  const { campaignId } = input.payload;
+  const commandId = randomUUID();
+  const correlationId = randomUUID();
+
+  return await db.transaction(async (tx) => {
+    const [campaign] = await tx
+      .select()
+      .from(campaigns)
+      .where(eq(campaigns.id, campaignId))
+      .for("update")
+      .limit(1);
+    if (!campaign) {
+      return {
+        ok: false as const,
+        failure: { code: "campaign_not_found", message: `Campaign ${campaignId} not found` }
+      };
+    }
+    // Idempotent: a live campaign → no-op.
+    if (!campaign.archivedAt) {
+      return {
+        ok: true as const,
+        campaignId,
+        commandId,
+        restoredStatus: campaign.status,
+        alreadyLive: true
+      };
+    }
+
+    // pre_archive_status is a plain text column (string | null); narrow it back
+    // to the campaign-status union the schema expects.
+    const restoredStatus = (campaign.preArchiveStatus ?? "paused") as typeof campaign.status;
+
+    await tx
+      .update(campaigns)
+      .set({
+        archivedAt: null,
+        status: restoredStatus,
+        preArchiveStatus: null,
+        updatedAt: new Date()
+      })
+      .where(eq(campaigns.id, campaignId));
+
+    const command = expectOne(
+      await tx
+        .insert(commands)
+        .values({
+          id: commandId,
+          source: "operator",
+          commandType: "unarchive_campaign",
+          status: "accepted",
+          actorId: input.actorId,
+          targetEntityType: "campaign",
+          targetEntityId: campaignId,
+          payloadJson: input.payload,
+          idempotencyKey: `unarchive_campaign:${campaignId}:${commandId}`,
+          correlationId
+        })
+        .returning(),
+      "unarchive_campaign command"
+    );
+
+    // F6: a restored drafting campaign needs its scope re-validated. Re-enqueue
+    // the expansion exactly as creation / scope-edit do (same concurrency key,
+    // current scope version).
+    let reEnqueuedJobId: string | undefined;
+    if (restoredStatus === "drafting_scope") {
+      const jobId = randomUUID();
+      await tx.insert(jobs).values({
+        id: jobId,
+        jobType: "job.start_campaign_expansion",
+        status: "queued",
+        workerPool: "drafting",
+        commandId,
+        targetEntityType: "campaign",
+        targetEntityId: campaignId,
+        payloadJson: {
+          campaignId,
+          discoveryScopeVersion: campaign.discoveryScopeVersion
+        },
+        concurrencyKey: `campaign:${campaignId}`,
+        correlationId
+      });
+      reEnqueuedJobId = jobId;
+    }
+
+    await tx.insert(eventLog).values({
+      eventType: "campaign_unarchived",
+      entityType: "campaign",
+      entityId: campaignId,
+      commandId,
+      ...(reEnqueuedJobId ? { jobId: reEnqueuedJobId } : {}),
+      correlationId,
+      payloadJson: { restoredStatus }
+    });
+
+    return { ok: true as const, campaignId, commandId: command.id, restoredStatus, alreadyLive: false };
+  });
 }
 
 export type AgentStreamEvent = {
@@ -14657,6 +14928,35 @@ export async function routeCampaignDiscoveryOutcome(input: {
   );
   const candidates = candidatesRaw.slice(0, effectiveRunCap);
   const db = getDb();
+
+  // F3: top guard — if the campaign was archived / closed (the archive command
+  // flips status -> 'closed' + sets archived_at) before this router run starts
+  // processing, skip the whole run. No candidate inserts, no org-scoped research
+  // jobs for a hidden campaign. The per-accept enqueue below adds the F5
+  // serialization for the race where archive commits mid-run.
+  const [routeCampaignState] = await db
+    .select({ archivedAt: campaigns.archivedAt, status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.id, input.campaignId))
+    .limit(1);
+  if (!routeCampaignState || routeCampaignState.archivedAt || routeCampaignState.status === "closed") {
+    await appendEvent({
+      eventType: "campaign_discovery_router_failed",
+      entityType: "agent_run",
+      entityId: input.agentRunId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      correlationId: input.correlationId,
+      payloadJson: {
+        reason: "campaign_archived_or_closed",
+        campaignId: input.campaignId,
+        ...(routeCampaignState
+          ? { status: routeCampaignState.status, archived: !!routeCampaignState.archivedAt }
+          : {})
+      }
+    });
+    return null;
+  }
+
   if (candidatesRaw.length > effectiveRunCap) {
     await appendEvent({
       eventType: "campaign_discovery_cap_reached",
@@ -15004,32 +15304,56 @@ export async function routeCampaignDiscoveryOutcome(input: {
             domain: proposal.domain,
             campaignName: null
           });
-          await db
-            .insert(jobs)
-            .values({
-              jobType: "job.refresh_research_snapshot",
-              status: "queued",
-              workerPool: "background",
-              targetEntityType: "organization",
-              targetEntityId: orgId,
-              payloadJson: { organizationId: orgId, prompt: enrichmentPrompt },
-              concurrencyKey: `research_snapshot:${orgId}`,
-              correlationId: input.correlationId
-            })
-            .onConflictDoNothing();
+          // F5: enqueue the org-scoped research job UNDER the campaign row lock
+          // and re-check archived inside, so this serializes with the archive
+          // command (which locks the same row in its own tx). If archive
+          // committed first, skip the enqueue — campaign-job cancellation cannot
+          // catch this org-scoped job (it targets the org, not the campaign), so
+          // the lock is the only thing that can stop it.
+          const enqueued = await db.transaction(async (tx) => {
+            const [c] = await tx
+              .select({ archivedAt: campaigns.archivedAt, status: campaigns.status })
+              .from(campaigns)
+              .where(eq(campaigns.id, input.campaignId))
+              .for("update")
+              .limit(1);
+            if (!c || c.archivedAt || c.status === "closed") return false;
+            await tx
+              .insert(jobs)
+              .values({
+                jobType: "job.refresh_research_snapshot",
+                status: "queued",
+                workerPool: "background",
+                targetEntityType: "organization",
+                targetEntityId: orgId,
+                payloadJson: { organizationId: orgId, prompt: enrichmentPrompt },
+                concurrencyKey: `research_snapshot:${orgId}`,
+                correlationId: input.correlationId
+              })
+              .onConflictDoNothing();
+            return true;
+          });
           await appendEvent({
-            eventType: "discovery_candidate_auto_accepted",
+            eventType: enqueued
+              ? "discovery_candidate_auto_accepted"
+              : "campaign_discovery_router_failed",
             entityType: "discovery_candidate",
             entityId: candidateId,
             ...(input.jobId ? { jobId: input.jobId } : {}),
             correlationId: input.correlationId,
-            payloadJson: {
-              campaignId: input.campaignId,
-              organizationId: orgId,
-              proposedName: proposal.proposedName,
-              domain: proposal.domain,
-              confidence: proposal.confidence
-            }
+            payloadJson: enqueued
+              ? {
+                  campaignId: input.campaignId,
+                  organizationId: orgId,
+                  proposedName: proposal.proposedName,
+                  domain: proposal.domain,
+                  confidence: proposal.confidence
+                }
+              : {
+                  reason: "campaign_archived_or_closed",
+                  campaignId: input.campaignId,
+                  organizationId: orgId
+                }
           });
         }
         break;
@@ -18294,10 +18618,12 @@ async function maybeNotifyFirstAddressable(
   if (!addressable || addressable.count < 1) return;
 
   const [campaign] = await tx
-    .select({ name: campaigns.name })
+    .select({ name: campaigns.name, archivedAt: campaigns.archivedAt, status: campaigns.status })
     .from(campaigns)
     .where(eq(campaigns.id, campaignId))
     .limit(1);
+  // F8: never ping for an archived / closed campaign.
+  if (!campaign || campaign.archivedAt || campaign.status === "closed") return;
 
   const [contact] = await tx
     .select({ email: contacts.email, fullName: contacts.fullName })
@@ -18340,11 +18666,17 @@ async function maybeNotifyExpansionComplete(
   input: { campaignId: string; currentJobId: string; correlationId: string }
 ): Promise<void> {
   const [campaign] = await tx
-    .select({ name: campaigns.name, discoveryScopeVersion: campaigns.discoveryScopeVersion })
+    .select({
+      name: campaigns.name,
+      discoveryScopeVersion: campaigns.discoveryScopeVersion,
+      archivedAt: campaigns.archivedAt,
+      status: campaigns.status
+    })
     .from(campaigns)
     .where(eq(campaigns.id, input.campaignId))
     .limit(1);
-  if (!campaign) return;
+  // F8: never ping for an archived / closed campaign.
+  if (!campaign || campaign.archivedAt || campaign.status === "closed") return;
 
   const notificationKey =
     `campaign_expansion_done:${input.campaignId}:v${campaign.discoveryScopeVersion}`;
@@ -21739,6 +22071,7 @@ export async function listOrganizationsForDashboard(
       from discovery_candidates dc
       join campaigns c on c.id = dc.campaign_id
       where dc.matched_organization_id is not null
+        and c.archived_at is null
       group by dc.matched_organization_id
     ) cam on cam.organization_id = o.id
     left join lateral (
@@ -21850,6 +22183,7 @@ export async function listCampaignsWithOrgRollup(): Promise<CampaignOrgRollupRow
       where status = 'pending'
       group by organization_id
     ) pcc_per_org on pcc_per_org.organization_id = co.org_id
+    where c.archived_at is null
     group by c.id, c.name, c.status
     order by org_count desc, c.name asc
   `);
@@ -22144,6 +22478,7 @@ export async function getOrganizationDetail(id: string): Promise<OrganizationDet
     from discovery_candidates dc
     join campaigns c on c.id = dc.campaign_id
     where dc.matched_organization_id = ${id}::uuid
+      and c.archived_at is null
     order by c.name asc
   `);
   const sourceCampaigns = (sourceCampaignRows as unknown as Array<{ id: string; name: string }>).map(
@@ -22961,6 +23296,7 @@ export async function listCampaignsForDashboard(limit = 100): Promise<CampaignLi
         group by status
       ) s
     ) d on true
+    where c.archived_at is null
     order by c.updated_at desc
     limit ${limit}
   `);
@@ -23247,6 +23583,7 @@ export async function getCampaignsNeedingReview(limit = 20): Promise<CampaignRev
     from discovery_candidates dc
     join campaigns c on c.id = dc.campaign_id
     where dc.status in ('needs_review', 'proposed')
+      and c.archived_at is null
     group by c.id, c.name, c.status
     order by needs_review desc, proposed desc, c.name asc
     limit ${limit}
