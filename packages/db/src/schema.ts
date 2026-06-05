@@ -119,6 +119,11 @@ export const campaigns = pgTable("campaigns", {
     talkingPoints: string[];
     ourFacts: string[];
   }>(),
+  // T-026BV: operator's email sign-off, captured free-text (scope chat / forms)
+  // and rendered verbatim into the cold-draft + revise prompts. NULL = none
+  // (pre-feature campaigns or scope without a signature); the prompt builders
+  // omit the signature block when null.
+  senderSignature: text("sender_signature"),
   // T-026BU: soft-archive. `archivedAt` is the hide/restore marker (null =
   // live/visible; set = archived/hidden). `preArchiveStatus` captures `status`
   // at archive time so unarchive can restore it (fallback 'paused'). Archive

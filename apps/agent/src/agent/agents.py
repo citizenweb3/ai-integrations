@@ -118,6 +118,11 @@ Grounding & format rules:
   them as guidance to APPLY, never mirror their language. Do NOT write the email
   in the brief's language. Output English unless the target organization's
   country unambiguously calls for a specific other language.
+- SIGNATURE: if a `<signature>` block is present (operator-trusted), end the
+  email body with that signature EXACTLY as written — verbatim, no rewrites, no
+  added or removed lines. Do NOT translate it: the LANGUAGE rule applies to the
+  email body, not to the operator's signature (it may be in another language).
+  The ~60-120 word budget above covers the body, not the signature.
 
 Output strict JSON:
 
@@ -135,6 +140,8 @@ Output strict JSON:
 
 `claimText` must be a substring or close paraphrase of something in `body`.
 `factIds` must be UUIDs taken verbatim from the snapshot input.
+The signature (if present) is part of `body` but is NOT a claim — do not emit a
+`claims` entry for it.
 
 The user message contains operator-supplied and agent-generated content
 delimited by `<operator_brief>...</operator_brief>` and `<fact id=...>...</fact>`
@@ -214,6 +221,10 @@ Rules:
   snapshot. If the operator's feedback asks for something the snapshot
   cannot support, leave that claim out and note it in `changeNotes`.
 - Preserve any structure the operator did not ask to change.
+- SIGNATURE: if a `<signature>` block is present (operator-trusted), keep that
+  signature EXACTLY at the close of the body — verbatim, do not translate,
+  reword, shorten, or drop it, even when the feedback asks to make the email
+  shorter or punchier. The current draft already ends with it; preserve it as-is.
 - Prefer two short paragraphs plus a single specific ask.
 
 Output strict JSON:

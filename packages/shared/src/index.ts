@@ -611,6 +611,8 @@ export const startCampaignPayloadSchema = z.object({
   senderIdentityId: z.string().uuid().optional(),
   policyProfileId: z.string().uuid().optional(),
   operatorNotes: z.string().trim().max(4000).optional(),
+  // T-026BV: operator's email sign-off, rendered verbatim into the draft prompt.
+  senderSignature: z.string().trim().max(1000).optional(),
   discoverySourceHints: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
   discoveryExclusions: z.array(z.string().trim().min(1).max(500)).max(50).default([]),
   allowedRegions: z.array(z.string().trim().min(1).max(120)).max(25).default([]),
@@ -663,6 +665,8 @@ export const updateCampaignScopePayloadSchema = z.object({
   senderIdentityId: z.string().uuid().nullable().optional(),
   policyProfileId: z.string().uuid().nullable().optional(),
   operatorNotes: z.string().trim().max(4000).nullable().optional(),
+  // T-026BV: editable on a drafting_scope campaign; nullable so it can be cleared.
+  senderSignature: z.string().trim().max(1000).nullable().optional(),
   discoverySourceHints: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
   discoveryExclusions: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
   allowedRegions: z.array(z.string().trim().min(1).max(120)).max(25).optional(),
