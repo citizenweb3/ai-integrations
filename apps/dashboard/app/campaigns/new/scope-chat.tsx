@@ -23,6 +23,8 @@ export type ScopeDraft = {
   targetSegments: string[];
   forbiddenClaims: string[];
   operatorNotes: string;
+  // T-026BV: operator's verbatim email sign-off (empty = none).
+  senderSignature: string;
   discoverySourceHints: string[];
   discoveryExclusions: string[];
   allowedRegions: string[];
@@ -47,7 +49,7 @@ export type AssistTurn =
   | { type: "sample_draft"; sampleDraft: SampleDraft }
   | { type: "ready"; scope: ScopeDraft; draftBrief: DraftBrief | null; inferred: InferredFlag[] };
 
-const INITIAL_ASSISTANT_MESSAGE = `Hi — let's build a campaign. First I'll collect the targeting scope, then we'll shape how the emails should read (angle, tone, a sample draft you can tweak) — all in this chat.
+const INITIAL_ASSISTANT_MESSAGE = `Hi — let's build a campaign. First I'll collect the targeting scope, then we'll shape how the emails should read (angle, tone, your sign-off, a sample draft you can tweak) — all in this chat.
 
 A complete opening message covers the seven scope things I have to ask about:
 

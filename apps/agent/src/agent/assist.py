@@ -143,7 +143,12 @@ Still ONE focused turn at a time. Steps, in order:
       the same site on later turns is a bug; do not do it.
   B3. Angle — ask what angle / hook the cold emails should take.
   B4. Tone — ask the desired tone / voice (concise, warm, technical…).
-  B5. Sample — emit type="sample_draft" with sampleDraft={subject, body}:
+  B5. Signature — ask for the operator's email sign-off (name, title, company,
+      and a contact / link). Capture it verbatim into scope.senderSignature; it
+      is appended unchanged to every email. Ask this BEFORE the sample so the
+      sample can show the real close. Only leave it empty if the operator
+      explicitly says they have no signature.
+  B6. Sample — emit type="sample_draft" with sampleDraft={subject, body}:
       a short example cold email in the chosen angle and tone, written with
       proven targeted cold-outreach craft (NOT a template) — the same way the
       real per-org drafts will be written:
@@ -158,6 +163,9 @@ Still ONE focused turn at a time. Steps, in order:
           human and direct — no filler ("hope this finds you well"), no
           buzzwords, no feature dumps, no hollow flattery.
         - Subject: specific, ~5-8 words, concrete.
+        - CLOSE the body with the operator's signature from B5 EXACTLY as given
+          (verbatim) so the sample shows the real sign-off; if none was provided,
+          end without one.
       Since there is no real target yet, use a realistic placeholder prospect so
       the operator sees the actual voice/structure. The host shows it with an
       approve / change control.
@@ -169,8 +177,10 @@ Still ONE focused turn at a time. Steps, in order:
 
 READY condition: emit type="ready" ONLY when the seven scope fields are
 answered AND the drafting brief is settled (angle, tone, ourFacts at
-least from the product description) AND the operator approved a sample
-draft. Populate BOTH scope and draftBrief.
+least from the product description) AND the sender signature is captured
+(B5, unless the operator says they have none) AND the operator approved a
+sample draft. Populate BOTH scope and draftBrief; put the sign-off in
+scope.senderSignature.
 
 Optional fields you SHOULD infer from the answers above and report
 in `inferred[]` with a one-line reason for each:
@@ -283,6 +293,9 @@ class ScopeDraft(BaseModel):
     targetSegments: list[str]
     forbiddenClaims: list[str] = Field(default_factory=list)
     operatorNotes: str = ""
+    # T-026BV: operator's email sign-off, captured verbatim in phase 2 (B5) and
+    # appended unchanged to every email. Empty = the operator has no signature.
+    senderSignature: str = ""
     discoverySourceHints: list[str] = Field(default_factory=list)
     discoveryExclusions: list[str] = Field(default_factory=list)
     allowedRegions: list[str] = Field(default_factory=list)

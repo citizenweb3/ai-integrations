@@ -97,6 +97,13 @@ export default function ScopePreview({ turn, onBackToChat }: ScopePreviewProps) 
             className="md:col-span-2"
           />
         ) : null}
+        {scope.senderSignature ? (
+          <PreviewField
+            label="Sender signature"
+            value={scope.senderSignature}
+            className="md:col-span-2"
+          />
+        ) : null}
       </div>
 
       {hasBrief && draftBrief ? (
@@ -147,6 +154,7 @@ export default function ScopePreview({ turn, onBackToChat }: ScopePreviewProps) 
           value={scope.forbiddenClaims.join("\n")}
         />
         <input type="hidden" name="operatorNotes" value={scope.operatorNotes} />
+        <input type="hidden" name="senderSignature" value={scope.senderSignature ?? ""} />
         <input
           type="hidden"
           name="discoverySourceHints"
