@@ -5,8 +5,9 @@ A single Pydantic-typed Gemini call per turn. The endpoint that calls
 route, which forwards the entire chat history each turn — there is no
 server-side session.
 
-The agent either asks one follow-up question or, once the five required
-campaign-scope fields are unambiguous, returns a full `ScopeDraft` along
+The agent either asks one follow-up question or, once the seven required
+campaign-scope questions (Q1-Q7) are answered and the phase-2 drafting brief
+(angle, tone, signature, sample) is settled, returns a full `ScopeDraft` along
 with an `inferred[]` list explaining each optional field it filled in.
 """
 
