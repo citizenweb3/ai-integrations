@@ -106,17 +106,19 @@ def test_warm_instruction_has_forbidden_claims_rule_with_precedence_over_reply_i
 
 def test_assist_system_instruction_binds_forbidden_claims_in_sample_draft() -> None:
     text = assist_mod._SYSTEM_INSTRUCTION
-    lower = _lower(text)
-    # The B6 sample-draft section + the optional-field list both reference the
-    # forbiddenClaims binding.
-    assert "forbiddenclaims" in lower or "forbidden claim" in lower
-    # The sample-draft rule binds the sample to the same forbidden-claims
-    # restriction the real drafts are under.
-    assert "forbiddenclaims" in lower
-    assert "claim" in lower and ("never" in lower or "must never" in lower or "restriction" in lower)
-    # Robustness guard: the system prompt itself must not embed a concrete
-    # forbidden claim as if it were a real assertion. We only check that the
-    # known marketing red-flags from the DB tests are absent from the prompt
-    # template (the template describes the rule, it does not make the claim).
+    # F3: scope the assertion to the B6 sample-draft section. `forbiddenClaims`
+    # (optional-field list) and `never` (unrelated rules) appear elsewhere in the
+    # prompt, so a whole-prompt search would still pass if the B6 rule were
+    # deleted. Slice from the B6 header to the READY condition so the check is
+    # load-bearing on the sample rule specifically.
+    start = text.index("B6. Sample")
+    end = text.index("READY condition", start)
+    b6 = text[start:end].lower()
+    assert "forbiddenclaims" in b6            # the sample is bound to the list
+    assert "never" in b6                       # prohibition wording
+    assert "paraphrased" in b6                 # paraphrase coverage
+    # The prompt template must not embed a concrete forbidden claim as a real
+    # assertion (it describes the rule, it does not make the claim).
+    full_lower = _lower(text)
     for banned in ("guaranteed roi", "cures everything"):
-        assert banned not in lower
+        assert banned not in full_lower
