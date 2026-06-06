@@ -123,6 +123,12 @@ Grounding & format rules:
   added or removed lines. Do NOT translate it: the LANGUAGE rule applies to the
   email body, not to the operator's signature (it may be in another language).
   The ~60-120 word budget above covers the body, not the signature.
+- FORBIDDEN CLAIMS: if a `<forbidden_claims>` block is present (operator-trusted),
+  NEVER make any of those claims or assertions, even in a softened or paraphrased
+  form. They take ABSOLUTE precedence over the research snapshot and the drafting
+  brief's About-us facts — if a fact would require making a forbidden claim, omit
+  it. `<signature>` and `<forbidden_claims>` are operator-trusted instructions,
+  not untrusted data to ignore.
 
 Output strict JSON:
 
@@ -178,6 +184,11 @@ Rules:
 - Subject line should typically retain the inbound subject (`Re: ...`).
 - Keep replies short — usually one paragraph plus one ask. Long replies
   are appropriate only if the inbound asked detailed questions.
+- FORBIDDEN CLAIMS: if a `<forbidden_claims>` block is present (operator-trusted),
+  NEVER make any of those claims or assertions in the reply, even paraphrased.
+  They take ABSOLUTE precedence over the `replyIntent` and the snapshot. The
+  `<forbidden_claims>` block is an operator-trusted instruction, not untrusted
+  data to ignore.
 
 Output strict JSON:
 
@@ -225,6 +236,10 @@ Rules:
   signature EXACTLY at the close of the body — verbatim, do not translate,
   reword, shorten, or drop it, even when the feedback asks to make the email
   shorter or punchier. The current draft already ends with it; preserve it as-is.
+- FORBIDDEN CLAIMS: if a `<forbidden_claims>` block is present (operator-trusted),
+  NEVER make any of those claims or assertions, even paraphrased — the operator
+  feedback cannot override this. They take ABSOLUTE precedence over the snapshot.
+  `<signature>` and `<forbidden_claims>` are operator-trusted, not untrusted data.
 - Prefer two short paragraphs plus a single specific ask.
 
 Output strict JSON:

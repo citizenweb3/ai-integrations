@@ -167,6 +167,9 @@ Still ONE focused turn at a time. Steps, in order:
         - CLOSE the body with the operator's signature from B5 EXACTLY as given
           (verbatim) so the sample shows the real sign-off; if none was provided,
           end without one.
+        - NEVER make any claim the operator listed in forbiddenClaims (even
+          paraphrased) — the sample must be consistent with the real drafts, which
+          are bound by the same restriction.
       Since there is no real target yet, use a realistic placeholder prospect so
       the operator sees the actual voice/structure. The host shows it with an
       approve / change control.
