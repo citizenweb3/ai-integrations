@@ -16475,11 +16475,15 @@ export function sanitizePromptUntrusted(value: string): string {
 // `< system>` is left as inert literal text (an LLM does not honour it, and a
 // \b-free strip would over-reach into legitimate `<`+prose).
 export function sanitizePromptScalar(raw: string, maxLen: number): string {
-  // Inline scalar: additionally collapse whitespace + backticks to one space, so
-  // a forged tag cannot be split across a newline / unicode separator gap, then
-  // trim + clamp. NFKC, format-control stripping and delimiter stripping all
-  // come from sanitizePromptUntrusted (shared with the fenced-text path).
-  return sanitizePromptUntrusted(raw.replace(/[\s`]+/g, " ")).trim().slice(0, maxLen);
+  // Inline scalar: collapse whitespace + backticks to one space, so a forged tag
+  // cannot be split across a newline / unicode separator gap, then trim + clamp.
+  // Codex F3: NFKC-normalize BEFORE the collapse, otherwise a fullwidth grave
+  // accent (U+FF40 `｀`) or fullwidth space folds to its ASCII form only AFTER the
+  // collapse pass and survives. sanitizePromptUntrusted normalizes again
+  // (idempotent) and strips format controls + delimiter tags.
+  return sanitizePromptUntrusted(raw.normalize("NFKC").replace(/[\s`]+/g, " "))
+    .trim()
+    .slice(0, maxLen);
 }
 
 // Render a `<rag_examples>` block for a draft prompt. Each hit gets its own

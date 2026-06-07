@@ -120,6 +120,14 @@ test("sanitizePromptScalar leaves a malformed '< system>' as inert literal text 
   assert.equal(sanitizePromptScalar("< system>", 50), "< system>");
 });
 
+test("sanitizePromptScalar folds a fullwidth grave accent (U+FF40) so no backtick survives (F3)", () => {
+  // NFKC(U+FF40) -> U+0060 backtick; must be normalized BEFORE the backtick
+  // collapse, else it survives the collapse pass.
+  const out = sanitizePromptScalar("a｀b", 50);
+  assert.doesNotMatch(out, /`/);
+  assert.equal(out, "a b");
+});
+
 test("sanitizePromptScalar clamps to maxLen", () => {
   assert.equal(sanitizePromptScalar("x".repeat(500), 200).length, 200);
 });
