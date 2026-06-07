@@ -2504,7 +2504,8 @@ export async function approveDraftForSendCommand(input: {
           eq(workItems.status, "open")
         ));
 
-      // T-026BW: a stale forbidden-claim flag must not outlive the sent draft.
+      // T-026BW/T-026BX: a stale forbidden-claim or prompt-injection flag must not
+      // outlive the sent draft.
       await tx
         .update(workItems)
         .set({
@@ -2515,7 +2516,7 @@ export async function approveDraftForSendCommand(input: {
         })
         .where(and(
           eq(workItems.draftId, payload.draftId),
-          eq(workItems.type, "draft_forbidden_claim_hit"),
+          inArray(workItems.type, ["draft_forbidden_claim_hit", "prompt_injection_suspected"]),
           sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`
         ));
 
@@ -8796,7 +8797,8 @@ export async function discardDraftCommand(input: {
         )
       );
 
-    // T-026BW: a stale forbidden-claim flag must not outlive the discarded draft.
+    // T-026BW/T-026BX: a stale forbidden-claim or prompt-injection flag must not
+    // outlive the discarded draft.
     await tx
       .update(workItems)
       .set({
@@ -8808,7 +8810,7 @@ export async function discardDraftCommand(input: {
       .where(
         and(
           eq(workItems.draftId, payload.draftId),
-          eq(workItems.type, "draft_forbidden_claim_hit"),
+          inArray(workItems.type, ["draft_forbidden_claim_hit", "prompt_injection_suspected"]),
           sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`
         )
       );
@@ -12940,6 +12942,10 @@ export async function routeDraftEmailOutcome(input: {
   // T-026BW: campaign's forbidden claims (passed from completeGenerateDraftJob's
   // campaignContext — no extra query). Empty/omitted = no scan.
   forbiddenClaims?: string[];
+  // T-026BX M2: injection-signature labels from scanForInjection over the draft
+  // inputs (org/contact/facts/brief), computed in the completion fn where those
+  // are in memory. Non-empty = raise a non-blocking prompt_injection_suspected flag.
+  injectionMatched?: string[];
 }): Promise<RouteDraftEmailOutput | null> {
   const parsed = tryParseDraftOutput(input.finalText);
   if (!parsed || typeof parsed.subject !== "string" || typeof parsed.body !== "string") {
@@ -13172,6 +13178,20 @@ export async function routeDraftEmailOutcome(input: {
       resolvePrior: false
     });
 
+    // T-026BX M2: non-blocking injection flag over the draft inputs. v1 is fresh,
+    // nothing prior to resolve.
+    await flagPromptInjection(tx, {
+      boundary: "draft_inputs",
+      matched: input.injectionMatched ?? [],
+      draftId,
+      organizationId: input.organizationId,
+      campaignId: input.campaignId ?? null,
+      correlationId: input.correlationId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      dedupeKey: `prompt_injection:draft:${draftId}:v1`,
+      resolvePrior: false
+    });
+
     await recomputeDraftScores(tx, draftId, input.correlationId);
 
     return { draftId, workItemId, claimCount, factRefCount, unresolvedFactIds, revalidationJobId };
@@ -13200,6 +13220,10 @@ export async function routeWarmDraftEmailOutcome(input: {
   // T-026BW: campaign's forbidden claims (already loaded for the prompt). Empty
   // = no scan.
   forbiddenClaims?: string[];
+  // T-026BX M2: injection-signature labels from scanForInjection over the warm
+  // inputs (org/contact + inbound reply + thread bodies + facts). Non-empty =
+  // raise a non-blocking flag on the draft.
+  injectionMatched?: string[];
 }): Promise<RouteWarmDraftEmailOutput | null> {
   const parsed = tryParseDraftOutput(input.finalText);
   if (!parsed || typeof parsed.subject !== "string" || typeof parsed.body !== "string") {
@@ -13419,6 +13443,19 @@ export async function routeWarmDraftEmailOutcome(input: {
       campaignId: input.campaignId ?? null,
       correlationId: input.correlationId,
       ...(input.jobId ? { jobId: input.jobId } : {}),
+      resolvePrior: false
+    });
+
+    // T-026BX M2: non-blocking injection flag over the warm inputs. v1 fresh.
+    await flagPromptInjection(tx, {
+      boundary: "warm_draft_inputs",
+      matched: input.injectionMatched ?? [],
+      draftId,
+      organizationId: input.organizationId,
+      campaignId: input.campaignId ?? null,
+      correlationId: input.correlationId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      dedupeKey: `prompt_injection:draft:${draftId}:v1`,
       resolvePrior: false
     });
 
@@ -13684,6 +13721,19 @@ export async function completeGenerateWarmDraftJob(input: {
       artifactType: "draft_warm_email_output",
       payloadJson: { finalText }
     });
+    // T-026BX M2: scan the warm inputs — the inbound reply is the genuinely
+    // adversarial third-party text here, plus org/contact + thread history + facts.
+    const injectionMatched = scanForInjection(
+      organization.name,
+      organization.domain,
+      contactInfo?.fullName,
+      contactInfo?.email,
+      latestInbound.subject,
+      latestInbound.rawText,
+      latestInbound.fromEmail,
+      ...messages.flatMap((m) => [m.subject, m.body, m.fromEmail]),
+      ...(snapshot?.facts.map((f) => f.factText) ?? [])
+    );
     routerResult = await routeWarmDraftEmailOutcome({
       agentRunId,
       organizationId: input.organizationId,
@@ -13695,7 +13745,8 @@ export async function completeGenerateWarmDraftJob(input: {
       // T-026BW/F4: persist + scope by the thread's campaign; reuse the forbidden
       // claims already loaded for the prompt.
       campaignId: warmCampaignId,
-      forbiddenClaims
+      forbiddenClaims,
+      injectionMatched
     });
   }
 
@@ -14112,7 +14163,7 @@ export async function routeClassifyReplyOutcome(input: {
   finalText: string;
   correlationId: string;
   jobId?: string;
-}): Promise<{ replyClass: ReplyClass; confidence: ReplyClassConfidence } | null> {
+}): Promise<{ replyClass: ReplyClass; confidence: ReplyClassConfidence; quarantined?: boolean } | null> {
   const parsed = tryParseClassifyReplyOutput(input.finalText);
   if (!parsed) {
     await appendEvent({
@@ -14235,11 +14286,59 @@ export async function routeClassifyReplyOutcome(input: {
       .select({
         threadId: inboundMessages.threadId,
         fromEmail: inboundMessages.fromEmail,
-        subject: inboundMessages.subject
+        subject: inboundMessages.subject,
+        rawText: inboundMessages.rawText
       })
       .from(inboundMessages)
       .where(eq(inboundMessages.id, input.inboundMessageId))
       .limit(1);
+
+    // T-026BX M2/F1: the inbound reply is the genuinely adversarial third-party
+    // text, and `applyReplyClassRouting` acts on the model's class with NO human
+    // in the loop — `unsubscribe`/`complaint` auto-(re)activate a suppression
+    // entry and the warm classes auto-generate a draft. So on an injection hit we
+    // QUARANTINE: the classification stays written (audit), but we skip the
+    // consequential routing + the post-commit auto-warm and raise only the
+    // injection review item. The class is advisory until the operator clears it.
+    const injectionMatched = scanForInjection(target?.subject, target?.rawText, target?.fromEmail);
+    let injectionOrgId: string | null = null;
+    let injectionCampaignId: string | null = null;
+    if (target?.threadId) {
+      const [threadRow] = await tx
+        .select({ organizationId: threads.organizationId, campaignId: threads.campaignId })
+        .from(threads)
+        .where(eq(threads.id, target.threadId))
+        .limit(1);
+      injectionOrgId = threadRow?.organizationId ?? null;
+      injectionCampaignId = threadRow?.campaignId ?? null;
+    }
+    if (injectionMatched.length > 0) {
+      await flagPromptInjection(tx, {
+        boundary: "inbound_reply",
+        matched: injectionMatched,
+        inboundMessageId: input.inboundMessageId,
+        organizationId: injectionOrgId,
+        campaignId: injectionCampaignId,
+        correlationId: input.correlationId,
+        ...(input.jobId ? { jobId: input.jobId } : {}),
+        dedupeKey: `prompt_injection:inbound:${input.inboundMessageId}`,
+        resolvePrior: false
+      });
+      await tx.insert(eventLog).values({
+        eventType: "reply_routing_quarantined",
+        entityType: "inbound_message",
+        entityId: input.inboundMessageId,
+        ...(input.jobId ? { jobId: input.jobId } : {}),
+        correlationId: input.correlationId,
+        payloadJson: {
+          replyClass,
+          matched: injectionMatched,
+          reason: "prompt_injection_suspected"
+        }
+      });
+      return { replyClass, confidence, quarantined: true };
+    }
+
     const actions = await applyReplyClassRouting(tx, {
       inboundMessageId: input.inboundMessageId,
       threadId: target?.threadId ?? null,
@@ -14261,6 +14360,8 @@ export async function routeClassifyReplyOutcome(input: {
       }
     });
 
+    // Clean path returns no `quarantined` key (back-compat with existing callers
+    // that deepEqual the result); the auto-warm gate treats absent as not-quarantined.
     return { replyClass, confidence };
   });
 
@@ -14272,6 +14373,7 @@ export async function routeClassifyReplyOutcome(input: {
   // is a no-op.
   if (
     winner
+    && !winner.quarantined // T-026BX M2/F1: injection-quarantined inbound skips auto-warm
     && (winner.replyClass === "positive_interest"
       || winner.replyClass === "question"
       || winner.replyClass === "neutral")
@@ -16486,6 +16588,130 @@ export function sanitizePromptScalar(raw: string, maxLen: number): string {
     .slice(0, maxLen);
 }
 
+// T-026BX M2: best-effort prompt-injection heuristic. High-signal override
+// phrasings only — precision over recall; this is a non-blocking operator flag,
+// not a hard gate (paraphrase evasion is an accepted limitation, as with
+// scanForbiddenClaims). Patterns are anchored on imperative override vocabulary
+// that does not occur in normal B2B outreach. None carry the `g` flag, so
+// `.test()` is stateless.
+const INJECTION_PATTERNS: { label: string; re: RegExp }[] = [
+  // Dropped `context|message` from the noun anchor (codex R6): "ignore my
+  // previous message" / "disregard the prior context" are legitimate replies.
+  { label: "ignore-previous", re: /\b(ignore|disregard|forget)\b[^.\n]{0,40}\b(previous|prior|above|earlier|all)\b[^.\n]{0,20}\b(instruction|prompt|rule|directive|command)s?\b/i },
+  { label: "new-instructions", re: /\b(new|updated|revised)\b[^.\n]{0,20}\b(instruction|prompt|system\s+message)s?\b\s*[:\-]/i },
+  // Anchored on a role/persona noun so benign "you are now a preferred partner"
+  // does not match — only "you are now a/the <assistant|system|…>".
+  { label: "you-are-now", re: /\b(you\s+are\s+now|from\s+now\s+on)\b[^.\n]{0,40}\b(assistant|ai|model|system|admin|administrator|developer|chatbot|persona|character|jailbreak|dan)\b/i },
+  { label: "reveal-system", re: /\b(reveal|print|show|repeat|output)\b[^.\n]{0,30}\b(system\s+prompt|your\s+instructions|the\s+prompt)\b/i },
+  { label: "role-override", re: /\b(act\s+as|pretend\s+(you\s+are|to\s+be)|roleplay\s+as)\b[^.\n]{0,40}\b(assistant|system|admin|developer)\b/i },
+  // Line-start role-prefix smuggling ("system: you must…", "### assistant").
+  { label: "role-prefix", re: /(^|\n)\s*#{0,3}\s*(system|assistant|developer)\s*[:>\]]/i },
+  { label: "override-rules", re: /\b(override|bypass|skip)\b[^.\n]{0,30}\b(the\s+)?(rule|guardrail|restriction|safety|policy|instruction)s?\b/i }
+];
+
+// Lazily built so it can reference PROMPT_DELIMITER_TAGS without TDZ ordering
+// concerns. `forged-tag` derives from the FULL union (codex F5), so breakout
+// attempts like </latest_inbound> / </thread_transcript> are caught, not just a
+// hand-picked subset.
+let injectionForgedTagRe: RegExp | null = null;
+
+// Scan untrusted texts for injection signatures. Returns the matched signature
+// labels (for the work-item summary), empty if clean. Inputs are NFKC-normalized
+// + format-control-stripped first, so an obfuscated forged tag is caught here as
+// it is by the sanitizer.
+export function scanForInjection(...texts: (string | null | undefined)[]): string[] {
+  if (!injectionForgedTagRe) {
+    injectionForgedTagRe = new RegExp(`</?(?:${PROMPT_DELIMITER_TAGS.join("|")})\\b`, "i");
+  }
+  const matched = new Set<string>();
+  for (const t of texts) {
+    if (!t) continue;
+    const norm = t.normalize("NFKC").replace(/\p{Cf}/gu, "");
+    for (const { label, re } of INJECTION_PATTERNS) {
+      if (re.test(norm)) matched.add(label);
+    }
+    if (injectionForgedTagRe.test(norm)) matched.add("forged-tag");
+  }
+  return [...matched];
+}
+
+// T-026BX M2: raise a non-blocking prompt-injection flag (event + dedupe-keyed
+// work item), mirroring flagForbiddenClaims. Draft boundaries pass `draftId`,
+// the classify boundary passes `inboundMessageId`; createWorkItem renders the
+// matching link in getWorkItemDetail. `organizationId`/`campaignId` may be null
+// (an inbound's thread may have neither). When `resolvePrior`, any non-terminal
+// prior flag for the entity is resolved first (codex F4: active-status predicate
+// covers snoozed/blocked, not just open) so a cleaned revision clears a stale
+// warning and a reintroduced payload re-flags.
+async function flagPromptInjection(
+  tx: DbTransaction,
+  input: {
+    boundary: "draft_inputs" | "warm_draft_inputs" | "revise_inputs" | "inbound_reply";
+    matched: string[];
+    draftId?: string;
+    inboundMessageId?: string;
+    organizationId: string | null;
+    campaignId: string | null;
+    correlationId: string;
+    jobId?: string;
+    dedupeKey: string;
+    resolvePrior: boolean;
+  }
+): Promise<void> {
+  const entityType = input.draftId ? "draft" : "inbound_message";
+  const entityId = input.draftId ?? input.inboundMessageId;
+  if (!entityId) throw new Error("flagPromptInjection requires draftId or inboundMessageId");
+
+  if (input.resolvePrior) {
+    await tx
+      .update(workItems)
+      .set({ status: "resolved", resolvedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          input.draftId
+            ? eq(workItems.draftId, input.draftId)
+            : eq(workItems.inboundMessageId, input.inboundMessageId!),
+          eq(workItems.type, "prompt_injection_suspected"),
+          sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`
+        )
+      );
+  }
+
+  if (input.matched.length === 0) return;
+
+  await tx.insert(eventLog).values({
+    eventType: "prompt_injection_suspected",
+    entityType,
+    entityId,
+    ...(input.jobId ? { jobId: input.jobId } : {}),
+    correlationId: input.correlationId,
+    payloadJson: {
+      boundary: input.boundary,
+      matched: input.matched,
+      organizationId: input.organizationId,
+      campaignId: input.campaignId,
+      ...(input.draftId ? { draftId: input.draftId } : {}),
+      ...(input.inboundMessageId ? { inboundMessageId: input.inboundMessageId } : {})
+    }
+  });
+
+  await createWorkItem(tx, {
+    type: "prompt_injection_suspected",
+    priority: 80,
+    sourceEntityType: entityType,
+    sourceEntityId: entityId,
+    title: "Possible prompt injection",
+    summary: `Suspicious patterns in ${input.boundary}: ${input.matched.join(", ")}`,
+    reasonCode: "prompt_injection_suspected",
+    actionLabel: "Review inputs",
+    dedupeKey: input.dedupeKey,
+    ...(input.draftId ? { draftId: input.draftId } : {}),
+    ...(input.inboundMessageId ? { inboundMessageId: input.inboundMessageId } : {}),
+    ...(input.organizationId ? { organizationId: input.organizationId } : {}),
+    ...(input.campaignId ? { campaignId: input.campaignId } : {})
+  });
+}
+
 // Render a `<rag_examples>` block for a draft prompt. Each hit gets its own
 // `<rag_example>` tag carrying the corpus label, similarity score, and
 // (optionally) the source entity type so the agent can read the metadata
@@ -16721,6 +16947,21 @@ export async function completeGenerateDraftJob(input: {
       artifactType: "draft_email_output",
       payloadJson: { finalText }
     });
+    // T-026BX M2: scan the third-party draft inputs (web-sourced org/contact +
+    // research facts + the brief free-text the assistant may have laundered
+    // site-study text into) for injection signatures. The values are already in
+    // memory from building the prompt, so no extra query.
+    const draftBrief = campaignContext?.draftBrief ?? null;
+    const injectionMatched = scanForInjection(
+      organization.name,
+      organization.domain,
+      contactInfo?.fullName,
+      contactInfo?.email,
+      ...(snapshot?.facts.map((f) => f.factText) ?? []),
+      ...(draftBrief
+        ? [draftBrief.angle, draftBrief.tone, ...draftBrief.talkingPoints, ...draftBrief.ourFacts]
+        : [])
+    );
     routerResult = await routeDraftEmailOutcome({
       agentRunId,
       organizationId: input.organizationId,
@@ -16732,7 +16973,8 @@ export async function completeGenerateDraftJob(input: {
       ...(input.contactId ? { contactId: input.contactId } : {}),
       // T-026BW: forbidden claims already loaded for the prompt; pass them so the
       // post-gen scan needs no extra query.
-      forbiddenClaims: campaignContext?.forbiddenClaims ?? []
+      forbiddenClaims: campaignContext?.forbiddenClaims ?? [],
+      injectionMatched
     });
   }
 
@@ -16786,6 +17028,10 @@ export async function routeReviseDraftOutcome(input: {
   // extra query. resolvedCampaignId scopes the event/work item (codex F7).
   resolvedCampaignId?: string | null;
   forbiddenClaims?: string[];
+  // T-026BX M2: injection-signature labels over the revise inputs (org/contact +
+  // facts). Always resolves the prior flag first (resolvePrior), so a clean
+  // revision clears a stale warning and a reintroduced payload re-flags.
+  injectionMatched?: string[];
 }): Promise<RouteReviseDraftOutput | null> {
   const parsed = tryParseDraftOutput(input.finalText);
   if (!parsed || typeof parsed.subject !== "string" || typeof parsed.body !== "string") {
@@ -17027,6 +17273,21 @@ export async function routeReviseDraftOutcome(input: {
       campaignId: input.resolvedCampaignId ?? null,
       correlationId: input.correlationId,
       ...(input.jobId ? { jobId: input.jobId } : {}),
+      resolvePrior: true
+    });
+
+    // T-026BX M2: resolve the prior injection flag and re-scan the revise inputs
+    // under the new version's dedupeKey (clean revision clears it; reintroduced
+    // payload re-flags).
+    await flagPromptInjection(tx, {
+      boundary: "revise_inputs",
+      matched: input.injectionMatched ?? [],
+      draftId: input.draftId,
+      organizationId: input.organizationId,
+      campaignId: input.resolvedCampaignId ?? null,
+      correlationId: input.correlationId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      dedupeKey: `prompt_injection:draft:${input.draftId}:v${newVersion}`,
       resolvePrior: true
     });
 
@@ -17324,6 +17585,16 @@ export async function completeReviseDraftJob(input: {
     artifactType: "revise_email_output",
     payloadJson: { finalText }
   });
+  // T-026BX M2: scan the revise inputs (org/contact + facts). The current draft
+  // body + operator feedback are our own / operator content, not scanned. Always
+  // passed (even empty) so the router resolves any prior flag for this draft.
+  const injectionMatched = scanForInjection(
+    organization.name,
+    organization.domain,
+    contactInfo?.fullName,
+    contactInfo?.email,
+    ...(snapshot?.facts.map((f) => f.factText) ?? [])
+  );
   const routerResult = await routeReviseDraftOutcome({
     agentRunId,
     draftId: input.draftId,
@@ -17335,7 +17606,8 @@ export async function completeReviseDraftJob(input: {
     // T-026BW: reuse the campaign + forbidden claims already resolved above for
     // the prompt — the post-gen scan needs no extra query.
     resolvedCampaignId,
-    forbiddenClaims
+    forbiddenClaims,
+    injectionMatched
   });
   if (!routerResult) {
     // Router rejected the agent output (invalid JSON, missing subject/body,
@@ -21872,6 +22144,7 @@ const inboxTabTypeFilters: Record<Exclude<InboxTab, "all">, string[]> = {
   // inboxTabFilterSql) so nothing stuck is hidden.
   attention: [
     "policy_blocker",
+    "prompt_injection_suspected",
     "campaign_scope_incomplete",
     "cooldown_expired",
     "followup_eligible",

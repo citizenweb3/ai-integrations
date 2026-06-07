@@ -43,6 +43,7 @@ const REGISTRY: Record<string, WorkItemMeta> = {
 
   // — attention —
   policy_blocker: { label: "Policy block", glyph: "🛡", tone: "danger" },
+  prompt_injection_suspected: { label: "Injection suspected", glyph: "⚠", tone: "danger" },
   campaign_scope_incomplete: { label: "Scope incomplete", glyph: "◷", tone: "warning" },
   cooldown_expired: { label: "Cooldown expired", glyph: "♻", tone: "accent" },
   followup_eligible: { label: "Follow-up due", glyph: "♻", tone: "accent" },
