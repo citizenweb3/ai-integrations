@@ -12009,7 +12009,7 @@ function isWellFormedEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-function buildDefaultContactDiscoveryPrompt(input: {
+export function buildDefaultContactDiscoveryPrompt(input: {
   organizationName: string;
   domain: string | null;
   // T-026AI: the field is accepted for backwards compatibility (existing
@@ -16258,18 +16258,24 @@ function buildDraftPrompt(input: {
     if (brief && (brief.angle || brief.tone || brief.talkingPoints.length > 0 || brief.ourFacts.length > 0)) {
       lines.push("Drafting brief (operator-trusted — follow it):");
       lines.push("<drafting_brief>");
-      if (brief.angle) lines.push(`Angle: ${truncatePromptField(brief.angle, 2000)}`);
-      if (brief.tone) lines.push(`Tone: ${truncatePromptField(brief.tone, 500)}`);
+      // Codex F2/F8: the brief free-text fields are operator-reviewed in the
+      // scope-chat, but site-study / chat-derived content can be laundered into
+      // them (e.g. ourFacts) and would otherwise render under the trusted
+      // <drafting_brief> block verbatim. Tag-strip them so a laundered
+      // `</drafting_brief><system>…` cannot break out. (The draft-stage injection
+      // scan over these fields lands in M2.)
+      if (brief.angle) lines.push(`Angle: ${truncatePromptField(sanitizePromptUntrusted(brief.angle), 2000)}`);
+      if (brief.tone) lines.push(`Tone: ${truncatePromptField(sanitizePromptUntrusted(brief.tone), 500)}`);
       if (brief.talkingPoints.length > 0) {
         lines.push("Key points to hit:");
         for (const point of brief.talkingPoints) {
-          lines.push(`  - ${truncatePromptField(point, 500)}`);
+          lines.push(`  - ${truncatePromptField(sanitizePromptUntrusted(point), 500)}`);
         }
       }
       if (brief.ourFacts.length > 0) {
         lines.push("About us (ground claims about ourselves in these, treat as trusted):");
         for (const fact of brief.ourFacts) {
-          lines.push(`  - ${truncatePromptField(fact, 1000)}`);
+          lines.push(`  - ${truncatePromptField(sanitizePromptUntrusted(fact), 1000)}`);
         }
       }
       lines.push("</drafting_brief>");
@@ -16448,8 +16454,16 @@ const PROMPT_DELIMITER_RE = new RegExp(
 // inbound bodies, operator brief/feedback). Newlines are kept — the value sits
 // inside an explicit `<...>` block, so multi-line is fine; only forged tags are
 // dangerous here.
+//
+// Codex F1: NFKC-normalize + strip Unicode format controls (\p{Cf} — zero-width
+// chars and U+2060 WORD JOINER) BEFORE the tag strip, so an obfuscated forged
+// tag survives in NEITHER fenced text nor inline scalars. NFKC folds fullwidth /
+// compatibility forms to ASCII (`＜system＞` → `<system>` → stripped) and removing
+// the invisible joiners re-forms `<sy⁠stem>` → `<system>` → stripped. Benign
+// accented / CJK names are unaffected (NFKC only touches compatibility forms).
 export function sanitizePromptUntrusted(value: string): string {
-  return value.replace(PROMPT_DELIMITER_RE, "");
+  const normalized = value.normalize("NFKC").replace(/\p{Cf}/gu, "");
+  return normalized.replace(PROMPT_DELIMITER_RE, "");
 }
 
 // Untrusted SCALAR (org/contact name, domain, email, fromEmail) spliced inline
@@ -16461,11 +16475,11 @@ export function sanitizePromptUntrusted(value: string): string {
 // `< system>` is left as inert literal text (an LLM does not honour it, and a
 // \b-free strip would over-reach into legitimate `<`+prose).
 export function sanitizePromptScalar(raw: string, maxLen: number): string {
-  const flattened = raw
-    .normalize("NFKC")
-    .replace(/\p{Cf}/gu, "")
-    .replace(/[\s`]+/g, " ");
-  return sanitizePromptUntrusted(flattened).trim().slice(0, maxLen);
+  // Inline scalar: additionally collapse whitespace + backticks to one space, so
+  // a forged tag cannot be split across a newline / unicode separator gap, then
+  // trim + clamp. NFKC, format-control stripping and delimiter stripping all
+  // come from sanitizePromptUntrusted (shared with the fenced-text path).
+  return sanitizePromptUntrusted(raw.replace(/[\s`]+/g, " ")).trim().slice(0, maxLen);
 }
 
 // Render a `<rag_examples>` block for a draft prompt. Each hit gets its own

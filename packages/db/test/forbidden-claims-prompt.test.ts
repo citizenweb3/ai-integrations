@@ -775,7 +775,7 @@ test("case 6 — warm generation: completeGenerateWarmDraftJob renders <forbidde
   assert.equal(warmDraftRow?.campaignId, campaign.id);
 });
 
-test("case 7 — revise sanitizer: <forbidden_claims> injected in operatorFeedback + draft body is stripped by sanitizeRevisePromptUntrusted", async (t) => {
+test("case 7 — revise sanitizer: <forbidden_claims> injected in operatorFeedback + draft body is stripped by sanitizePromptUntrusted", async (t) => {
   const db = getDb();
   await clearFcArtifacts();
   t.after(clearFcArtifacts);
@@ -791,7 +791,7 @@ test("case 7 — revise sanitizer: <forbidden_claims> injected in operatorFeedba
 
   // Empty forbiddenClaims so any <forbidden_claims>/</forbidden_claims> in the
   // revise prompt could only come from the injected untrusted inputs if the
-  // sanitizeRevisePromptUntrusted regex failed to strip them.
+  // the sanitizePromptUntrusted regex failed to strip them.
   const [campaign] = await db
     .insert(campaigns)
     .values({
@@ -873,7 +873,7 @@ test("case 7 — revise sanitizer: <forbidden_claims> injected in operatorFeedba
 
   // Campaign forbiddenClaims is empty, so no operator-trusted block is rendered;
   // the injected delimiters in operatorFeedback + draft body must be stripped by
-  // sanitizeRevisePromptUntrusted. NO forbidden_claims tag of either form remains.
+  // sanitizePromptUntrusted. NO forbidden_claims tag of either form remains.
   assert.doesNotMatch(capturedPrompt, /<forbidden_claims>/);
   assert.doesNotMatch(capturedPrompt, /<\/forbidden_claims>/);
 });
