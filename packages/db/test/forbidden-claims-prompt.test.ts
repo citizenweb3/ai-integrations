@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, test } from "node:test";
-import { inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import {
   agentRunArtifacts,
   agentRunEvents,
@@ -864,4 +864,197 @@ test("case 7 — revise sanitizer: <forbidden_claims> injected in operatorFeedba
   // sanitizeRevisePromptUntrusted. NO forbidden_claims tag of either form remains.
   assert.doesNotMatch(capturedPrompt, /<forbidden_claims>/);
   assert.doesNotMatch(capturedPrompt, /<\/forbidden_claims>/);
+});
+
+// ── M2: post-generation flag ────────────────────────────────────────────────────
+
+test("M2 — cold draft containing a forbidden phrase raises the event + work item", async (t) => {
+  const db = getDb();
+  await clearFcArtifacts();
+  t.after(clearFcArtifacts);
+
+  const suffix = randomUUID();
+  const email = `fc-hit-${suffix}@example.com`;
+
+  const [org] = await db
+    .insert(organizations)
+    .values({ name: `fc-org-${suffix}`, domain: `fc-${suffix}.example` })
+    .returning({ id: organizations.id });
+  assert.ok(org);
+
+  const [campaign] = await db
+    .insert(campaigns)
+    .values({
+      name: `fc-campaign-${suffix}`,
+      objective: "Book discovery calls.",
+      targetSegments: ["fintech"],
+      forbiddenClaims: ["guaranteed ROI", "cures everything"]
+    })
+    .returning({ id: campaigns.id });
+  assert.ok(campaign);
+
+  const [contact] = await db
+    .insert(contacts)
+    .values({ organizationId: org.id, email, fullName: "FC Buyer" })
+    .returning({ id: contacts.id });
+  assert.ok(contact);
+
+  const jobHandle = await createColdDraftJob({
+    organizationId: org.id,
+    campaignId: campaign.id,
+    contactId: contact.id,
+    operatorBrief: "Write a cold intro."
+  });
+
+  const dispatcher: AgentStageDispatcher = async function* () {
+    yield {
+      eventType: "final_response",
+      payloadJson: {
+        // Body makes a banned claim (case-insensitive substring match).
+        text: JSON.stringify({ subject: "Intro", body: "We offer Guaranteed ROI for you.", claims: [] })
+      }
+    };
+  };
+
+  await completeGenerateDraftJob({
+    ...jobHandle,
+    organizationId: org.id,
+    campaignId: campaign.id,
+    contactId: contact.id,
+    operatorBrief: "Write a cold intro.",
+    dispatcher
+  });
+
+  const [draftRow] = await db
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(eq(drafts.campaignId, campaign.id))
+    .limit(1);
+  assert.ok(draftRow);
+
+  const hitEvents = await db
+    .select({ id: eventLog.id, payloadJson: eventLog.payloadJson })
+    .from(eventLog)
+    .where(
+      and(
+        eq(eventLog.eventType, "draft_email_forbidden_claim_hit"),
+        eq(eventLog.entityId, draftRow.id)
+      )
+    );
+  assert.equal(hitEvents.length, 1);
+  const payload = hitEvents[0]!.payloadJson as Record<string, unknown>;
+  assert.equal(payload["campaignId"], campaign.id);
+  assert.equal(payload["draftVersion"], 1);
+  assert.deepEqual(payload["matched"], ["guaranteed ROI"]);
+
+  const hitWorkItems = await db
+    .select({ id: workItems.id, dedupeKey: workItems.dedupeKey, campaignId: workItems.campaignId })
+    .from(workItems)
+    .where(
+      and(
+        eq(workItems.draftId, draftRow.id),
+        eq(workItems.type, "draft_forbidden_claim_hit")
+      )
+    );
+  assert.equal(hitWorkItems.length, 1);
+  assert.equal(hitWorkItems[0]!.dedupeKey, `draft_forbidden_claim:${draftRow.id}:v1`);
+  assert.equal(hitWorkItems[0]!.campaignId, campaign.id);
+
+  // The draft still got its normal review item — the flag is non-blocking.
+  const reviewItems = await db
+    .select({ id: workItems.id })
+    .from(workItems)
+    .where(
+      and(
+        eq(workItems.draftId, draftRow.id),
+        eq(workItems.type, "draft_review_pending")
+      )
+    );
+  assert.equal(reviewItems.length, 1);
+});
+
+test("M2 — clean cold draft raises no forbidden-claim event or work item", async (t) => {
+  const db = getDb();
+  await clearFcArtifacts();
+  t.after(clearFcArtifacts);
+
+  const suffix = randomUUID();
+  const email = `fc-clean-${suffix}@example.com`;
+
+  const [org] = await db
+    .insert(organizations)
+    .values({ name: `fc-org-${suffix}`, domain: `fc-${suffix}.example` })
+    .returning({ id: organizations.id });
+  assert.ok(org);
+
+  const [campaign] = await db
+    .insert(campaigns)
+    .values({
+      name: `fc-campaign-${suffix}`,
+      objective: "Book discovery calls.",
+      targetSegments: ["fintech"],
+      forbiddenClaims: ["guaranteed ROI"]
+    })
+    .returning({ id: campaigns.id });
+  assert.ok(campaign);
+
+  const [contact] = await db
+    .insert(contacts)
+    .values({ organizationId: org.id, email, fullName: "FC Buyer" })
+    .returning({ id: contacts.id });
+  assert.ok(contact);
+
+  const jobHandle = await createColdDraftJob({
+    organizationId: org.id,
+    campaignId: campaign.id,
+    contactId: contact.id,
+    operatorBrief: "Write a cold intro."
+  });
+
+  const dispatcher: AgentStageDispatcher = async function* () {
+    yield {
+      eventType: "final_response",
+      payloadJson: {
+        text: JSON.stringify({ subject: "Intro", body: "Hi there, hope this finds you well.", claims: [] })
+      }
+    };
+  };
+
+  await completeGenerateDraftJob({
+    ...jobHandle,
+    organizationId: org.id,
+    campaignId: campaign.id,
+    contactId: contact.id,
+    operatorBrief: "Write a cold intro.",
+    dispatcher
+  });
+
+  const [draftRow] = await db
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(eq(drafts.campaignId, campaign.id))
+    .limit(1);
+  assert.ok(draftRow);
+
+  const hitEvents = await db
+    .select({ id: eventLog.id })
+    .from(eventLog)
+    .where(
+      and(
+        eq(eventLog.eventType, "draft_email_forbidden_claim_hit"),
+        eq(eventLog.entityId, draftRow.id)
+      )
+    );
+  assert.equal(hitEvents.length, 0);
+
+  const hitWorkItems = await db
+    .select({ id: workItems.id })
+    .from(workItems)
+    .where(
+      and(
+        eq(workItems.draftId, draftRow.id),
+        eq(workItems.type, "draft_forbidden_claim_hit")
+      )
+    );
+  assert.equal(hitWorkItems.length, 0);
 });

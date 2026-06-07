@@ -2504,6 +2504,21 @@ export async function approveDraftForSendCommand(input: {
           eq(workItems.status, "open")
         ));
 
+      // T-026BW: a stale forbidden-claim flag must not outlive the sent draft.
+      await tx
+        .update(workItems)
+        .set({
+          status: "resolved",
+          resolvedAt: new Date(),
+          resolvedByOperatorId: input.actorId ?? null,
+          updatedAt: new Date()
+        })
+        .where(and(
+          eq(workItems.draftId, payload.draftId),
+          eq(workItems.type, "draft_forbidden_claim_hit"),
+          eq(workItems.status, "open")
+        ));
+
       await tx
         .insert(jobs)
         .values({
@@ -7356,6 +7371,95 @@ async function recordDraftVersion(
   });
 }
 
+// T-026BW: post-generation compliance scan. Case-insensitive substring match of
+// each forbidden claim against the combined subject + body. The prompt block is
+// the primary guard; this is a cheap belt that flags (never blocks) a draft that
+// still ships a banned phrase. Returns the matched claims (deduped by the input
+// list order). Paraphrase evasion is an accepted limitation.
+export function scanForbiddenClaims(
+  subject: string,
+  body: string,
+  forbiddenClaims: string[]
+): string[] {
+  if (!forbiddenClaims || forbiddenClaims.length === 0) return [];
+  const haystack = `${subject}\n${body}`.toLowerCase();
+  const matched: string[] = [];
+  for (const claim of forbiddenClaims) {
+    const needle = claim.trim().toLowerCase();
+    if (!needle) continue;
+    if (haystack.includes(needle)) matched.push(claim);
+  }
+  return matched;
+}
+
+// T-026BW: resolve any open forbidden-claim flag for a draft, then re-scan the
+// just-written version and (re)flag if it still hits. Mirrors the
+// draft_review_pending lifecycle (resolve-then-recreate) so a clean revision
+// clears a prior warning and a reintroduced phrase flags again. The event and
+// work item carry the RESOLVED campaignId (draft.campaignId ?? threads.campaignId
+// — codex F7), passed in by the caller, so legacy warm rows stay campaign-scoped.
+async function flagForbiddenClaims(
+  tx: DbTransaction,
+  input: {
+    draftId: string;
+    draftVersion: number;
+    subject: string;
+    body: string;
+    forbiddenClaims: string[];
+    organizationId: string;
+    campaignId: string | null;
+    correlationId: string;
+    jobId?: string;
+    resolvePrior: boolean;
+  }
+): Promise<void> {
+  if (input.resolvePrior) {
+    await tx
+      .update(workItems)
+      .set({ status: "resolved", resolvedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(workItems.draftId, input.draftId),
+          eq(workItems.type, "draft_forbidden_claim_hit"),
+          eq(workItems.status, "open")
+        )
+      );
+  }
+
+  const matched = scanForbiddenClaims(input.subject, input.body, input.forbiddenClaims);
+  if (matched.length === 0) return;
+
+  await tx.insert(eventLog).values({
+    eventType: "draft_email_forbidden_claim_hit",
+    entityType: "draft",
+    entityId: input.draftId,
+    ...(input.jobId ? { jobId: input.jobId } : {}),
+    correlationId: input.correlationId,
+    payloadJson: {
+      draftId: input.draftId,
+      draftVersion: input.draftVersion,
+      organizationId: input.organizationId,
+      campaignId: input.campaignId,
+      matched
+    }
+  });
+
+  await createWorkItem(tx, {
+    type: "draft_forbidden_claim_hit",
+    priority: 75,
+    sourceEntityType: "draft",
+    sourceEntityId: input.draftId,
+    title: "Forbidden claim in draft",
+    summary: `${matched.length} forbidden claim(s) detected: ${matched.join(", ")}`,
+    reasonCode: "forbidden_claim_detected",
+    actionLabel: "Review draft",
+    dedupeKey: `draft_forbidden_claim:${input.draftId}:v${input.draftVersion}`,
+    draftId: input.draftId,
+    organizationId: input.organizationId,
+    ...(input.campaignId ? { campaignId: input.campaignId } : {})
+  });
+}
+
 // Deterministic edit severity classifier per canonical §15.800-822. Inputs
 // are the (prevSubject, prevBody) the operator edited away from and the
 // (newSubject, newBody) they saved. The CHECK constraint on the column
@@ -8362,6 +8466,45 @@ export async function requestManualEditSaveCommand(input: {
       }
     });
 
+    // T-026BW: an operator can hand-type a forbidden phrase, so the manual-edit
+    // save path scans the new version too. Resolve the campaign via the draft
+    // column with a thread fallback (codex F6: legacy warm rows have null
+    // campaignId but a campaign-linked thread); load its forbidden claims; resolve
+    // any prior open flag, then re-scan. Skip when no org resolves (can't scope a
+    // work item). campaignId on the event/work item = the resolved campaign
+    // (codex F7).
+    if (organizationId) {
+      let resolvedCampaignId: string | null = draft.campaignId ?? null;
+      if (!resolvedCampaignId && draft.threadId) {
+        const [threadRow] = await tx
+          .select({ campaignId: threads.campaignId })
+          .from(threads)
+          .where(eq(threads.id, draft.threadId))
+          .limit(1);
+        resolvedCampaignId = threadRow?.campaignId ?? null;
+      }
+      let forbiddenClaims: string[] = [];
+      if (resolvedCampaignId) {
+        const [campaignRow] = await tx
+          .select({ forbiddenClaims: campaigns.forbiddenClaims })
+          .from(campaigns)
+          .where(eq(campaigns.id, resolvedCampaignId))
+          .limit(1);
+        forbiddenClaims = Array.isArray(campaignRow?.forbiddenClaims) ? campaignRow.forbiddenClaims : [];
+      }
+      await flagForbiddenClaims(tx, {
+        draftId: payload.draftId,
+        draftVersion: newVersion,
+        subject: payload.subject,
+        body: payload.body,
+        forbiddenClaims,
+        organizationId,
+        campaignId: resolvedCampaignId,
+        correlationId: command.correlationId,
+        resolvePrior: true
+      });
+    }
+
     await recomputeDraftScores(tx, payload.draftId, command.correlationId);
 
     return {
@@ -8647,6 +8790,23 @@ export async function discardDraftCommand(input: {
         and(
           eq(workItems.draftId, payload.draftId),
           eq(workItems.type, "draft_review_pending"),
+          eq(workItems.status, "open")
+        )
+      );
+
+    // T-026BW: a stale forbidden-claim flag must not outlive the discarded draft.
+    await tx
+      .update(workItems)
+      .set({
+        status: "resolved",
+        resolvedAt: now,
+        resolvedByOperatorId: input.actorId,
+        updatedAt: now
+      })
+      .where(
+        and(
+          eq(workItems.draftId, payload.draftId),
+          eq(workItems.type, "draft_forbidden_claim_hit"),
           eq(workItems.status, "open")
         )
       );
@@ -12774,6 +12934,9 @@ export async function routeDraftEmailOutcome(input: {
   campaignId?: string;
   threadId?: string;
   contactId?: string;
+  // T-026BW: campaign's forbidden claims (passed from completeGenerateDraftJob's
+  // campaignContext — no extra query). Empty/omitted = no scan.
+  forbiddenClaims?: string[];
 }): Promise<RouteDraftEmailOutput | null> {
   const parsed = tryParseDraftOutput(input.finalText);
   if (!parsed || typeof parsed.subject !== "string" || typeof parsed.body !== "string") {
@@ -12991,6 +13154,21 @@ export async function routeDraftEmailOutcome(input: {
       }
     });
 
+    // T-026BW: post-gen forbidden-claim scan (non-blocking; the draft still got
+    // its draft_review_pending above). v1 is fresh so no prior flag to resolve.
+    await flagForbiddenClaims(tx, {
+      draftId,
+      draftVersion: 1,
+      subject,
+      body,
+      forbiddenClaims: input.forbiddenClaims ?? [],
+      organizationId: input.organizationId,
+      campaignId: input.campaignId ?? null,
+      correlationId: input.correlationId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      resolvePrior: false
+    });
+
     await recomputeDraftScores(tx, draftId, input.correlationId);
 
     return { draftId, workItemId, claimCount, factRefCount, unresolvedFactIds, revalidationJobId };
@@ -13012,6 +13190,13 @@ export async function routeWarmDraftEmailOutcome(input: {
   finalText: string;
   correlationId: string;
   jobId?: string;
+  // T-026BW/F4: the thread's campaign, carried in so the warm draft row persists
+  // campaignId (keeps warm-revise guarded + scopes the event/work item). null =
+  // thread has no campaign (backward-compat).
+  campaignId?: string | null;
+  // T-026BW: campaign's forbidden claims (already loaded for the prompt). Empty
+  // = no scan.
+  forbiddenClaims?: string[];
 }): Promise<RouteWarmDraftEmailOutput | null> {
   const parsed = tryParseDraftOutput(input.finalText);
   if (!parsed || typeof parsed.subject !== "string" || typeof parsed.body !== "string") {
@@ -13079,6 +13264,9 @@ export async function routeWarmDraftEmailOutcome(input: {
         kind: "warm",
         claimsValidatedVersion: 1,
         threadId: input.threadId,
+        // T-026BW/F4: persist the thread's campaign so a later AI-revise resolves
+        // policy from the draft row. null thread campaign → null (backward-compat).
+        ...(input.campaignId ? { campaignId: input.campaignId } : {}),
         ...(input.contactId ? { contactId: input.contactId } : {})
       })
       .returning({ id: drafts.id });
@@ -13174,7 +13362,9 @@ export async function routeWarmDraftEmailOutcome(input: {
         dedupeKey,
         draftId,
         organizationId: input.organizationId,
-        threadId: input.threadId
+        threadId: input.threadId,
+        // T-026BW/F4: link the review item to the resolved campaign too.
+        ...(input.campaignId ? { campaignId: input.campaignId } : {})
       })
       .onConflictDoNothing({ target: workItems.dedupeKey })
       .returning({ id: workItems.id });
@@ -13211,6 +13401,22 @@ export async function routeWarmDraftEmailOutcome(input: {
         unresolvedFactIds,
         workItemId
       }
+    });
+
+    // T-026BW: post-gen forbidden-claim scan for warm replies (non-blocking).
+    // v1 is fresh so no prior flag to resolve. campaignId = the resolved campaign
+    // (threads.campaignId), carried in by the caller (codex F7).
+    await flagForbiddenClaims(tx, {
+      draftId,
+      draftVersion: 1,
+      subject,
+      body,
+      forbiddenClaims: input.forbiddenClaims ?? [],
+      organizationId: input.organizationId,
+      campaignId: input.campaignId ?? null,
+      correlationId: input.correlationId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      resolvePrior: false
     });
 
     await recomputeDraftScores(tx, draftId, input.correlationId);
@@ -13280,6 +13486,7 @@ export async function completeGenerateWarmDraftJob(input: {
     .from(threads)
     .where(eq(threads.id, input.threadId))
     .limit(1);
+  const warmCampaignId: string | null = warmThread?.campaignId ?? null;
   if (warmThread?.campaignId) {
     const [warmCampaign] = await db
       .select({ forbiddenClaims: campaigns.forbiddenClaims })
@@ -13481,7 +13688,11 @@ export async function completeGenerateWarmDraftJob(input: {
       contactId: input.contactId ?? null,
       finalText,
       jobId: input.job.id,
-      correlationId: input.job.correlation_id
+      correlationId: input.job.correlation_id,
+      // T-026BW/F4: persist + scope by the thread's campaign; reuse the forbidden
+      // claims already loaded for the prompt.
+      campaignId: warmCampaignId,
+      forbiddenClaims
     });
   }
 
@@ -16460,7 +16671,10 @@ export async function completeGenerateDraftJob(input: {
       correlationId: input.job.correlation_id,
       ...(input.campaignId ? { campaignId: input.campaignId } : {}),
       ...(input.threadId ? { threadId: input.threadId } : {}),
-      ...(input.contactId ? { contactId: input.contactId } : {})
+      ...(input.contactId ? { contactId: input.contactId } : {}),
+      // T-026BW: forbidden claims already loaded for the prompt; pass them so the
+      // post-gen scan needs no extra query.
+      forbiddenClaims: campaignContext?.forbiddenClaims ?? []
     });
   }
 
@@ -16509,6 +16723,11 @@ export async function routeReviseDraftOutcome(input: {
   finalText: string;
   correlationId: string;
   jobId?: string;
+  // T-026BW: the resolved campaign (draft.campaignId ?? threads.campaignId) and
+  // its forbidden claims, both already computed in completeReviseDraftJob — no
+  // extra query. resolvedCampaignId scopes the event/work item (codex F7).
+  resolvedCampaignId?: string | null;
+  forbiddenClaims?: string[];
 }): Promise<RouteReviseDraftOutput | null> {
   const parsed = tryParseDraftOutput(input.finalText);
   if (!parsed || typeof parsed.subject !== "string" || typeof parsed.body !== "string") {
@@ -16734,6 +16953,23 @@ export async function routeReviseDraftOutcome(input: {
         workItemId,
         changeNotes
       }
+    });
+
+    // T-026BW: a new version was written — resolve any prior open forbidden-claim
+    // flag, then re-scan this version (a clean revision clears the warning; a
+    // reintroduced phrase re-flags under the version-scoped dedupeKey). Scoped to
+    // the resolved campaign (codex F7).
+    await flagForbiddenClaims(tx, {
+      draftId: input.draftId,
+      draftVersion: newVersion,
+      subject,
+      body,
+      forbiddenClaims: input.forbiddenClaims ?? [],
+      organizationId: input.organizationId,
+      campaignId: input.resolvedCampaignId ?? null,
+      correlationId: input.correlationId,
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      resolvePrior: true
     });
 
     await recomputeDraftScores(tx, input.draftId, input.correlationId);
@@ -17044,7 +17280,11 @@ export async function completeReviseDraftJob(input: {
     organizationId: input.organizationId,
     finalText,
     jobId: input.job.id,
-    correlationId: input.job.correlation_id
+    correlationId: input.job.correlation_id,
+    // T-026BW: reuse the campaign + forbidden claims already resolved above for
+    // the prompt — the post-gen scan needs no extra query.
+    resolvedCampaignId,
+    forbiddenClaims
   });
   if (!routerResult) {
     // Router rejected the agent output (invalid JSON, missing subject/body,
@@ -21573,7 +21813,7 @@ const inboxTabTypeFilters: Record<Exclude<InboxTab, "all">, string[]> = {
   ],
   // Drafts waiting for an operator go-ahead before send, plus drafts flagged
   // stale because fresh research landed after an operator-invested draft (T-026BP).
-  approvals: ["draft_review_pending", "draft_stale_research_updated"],
+  approvals: ["draft_review_pending", "draft_stale_research_updated", "draft_forbidden_claim_hit"],
   // Policy / scope / suppression / provider-reconciliation blockers, plus
   // policy-lifecycle resurfacing prompts. `cooldown_expired` / `followup_eligible`
   // (canonical §66.5447-5456) are the operator's "resume cold expansion / send a

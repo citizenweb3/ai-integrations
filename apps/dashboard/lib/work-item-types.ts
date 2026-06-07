@@ -39,6 +39,7 @@ const REGISTRY: Record<string, WorkItemMeta> = {
   // — approvals —
   draft_review_pending: { label: "Draft review", glyph: "✍", tone: "primary" },
   draft_stale_research_updated: { label: "Draft stale", glyph: "♻", tone: "warning" },
+  draft_forbidden_claim_hit: { label: "Forbidden claim", glyph: "⛔", tone: "danger" },
 
   // — attention —
   policy_blocker: { label: "Policy block", glyph: "🛡", tone: "danger" },
