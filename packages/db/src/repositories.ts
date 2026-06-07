@@ -1197,7 +1197,7 @@ async function loadOperationsCounters(): Promise<OperationsCounters> {
       select type, count(*)::int as count
       from work_items
       where status in ('open', 'blocked')
-        and type in ('send_ambiguity_review', 'policy_blocker', 'thread_match_ambiguous', 'unmatched_inbound_message')
+        and type in ('send_ambiguity_review', 'policy_blocker', 'thread_match_ambiguous', 'unmatched_inbound_message', 'prompt_injection_suspected')
       group by type
     `),
     isSendsPaused()
@@ -14300,7 +14300,6 @@ export async function routeClassifyReplyOutcome(input: {
     // QUARANTINE: the classification stays written (audit), but we skip the
     // consequential routing + the post-commit auto-warm and raise only the
     // injection review item. The class is advisory until the operator clears it.
-    const injectionMatched = scanForInjection(target?.subject, target?.rawText, target?.fromEmail);
     let injectionOrgId: string | null = null;
     let injectionCampaignId: string | null = null;
     if (target?.threadId) {
@@ -14312,6 +14311,18 @@ export async function routeClassifyReplyOutcome(input: {
       injectionOrgId = threadRow?.organizationId ?? null;
       injectionCampaignId = threadRow?.campaignId ?? null;
     }
+    // Scan exactly what buildClassifyReplyPrompt renders to the model (workflow
+    // SC): the quote-stripped body (not the raw quoted tail), subject, sender, and
+    // the web-sourced research-snapshot facts the classifier was grounded on.
+    const classifyFacts = injectionOrgId
+      ? (await getLatestResearchSnapshotForDraft(injectionOrgId, { requireSafeForCopy: true }))?.facts.map((f) => f.factText) ?? []
+      : [];
+    const injectionMatched = scanForInjection(
+      target?.subject,
+      target?.rawText ? stripQuotedReplyAndSignature(target.rawText) : null,
+      target?.fromEmail,
+      ...classifyFacts
+    );
     if (injectionMatched.length > 0) {
       await flagPromptInjection(tx, {
         boundary: "inbound_reply",
@@ -14321,8 +14332,24 @@ export async function routeClassifyReplyOutcome(input: {
         campaignId: injectionCampaignId,
         correlationId: input.correlationId,
         ...(input.jobId ? { jobId: input.jobId } : {}),
+        // Inbound flag is unversioned (the inbound is immutable once classified),
+        // unlike the version-scoped draft dedupeKey.
         dedupeKey: `prompt_injection:inbound:${input.inboundMessageId}`,
         resolvePrior: false
+      });
+      // Preserve the reply_classified + reply_class_routed both-or-neither event
+      // invariant (workflow CQ) — emit reply_class_routed carrying the quarantine
+      // action, plus a distinct reply_routing_quarantined signal for ops.
+      await tx.insert(eventLog).values({
+        eventType: "reply_class_routed",
+        entityType: "inbound_message",
+        entityId: input.inboundMessageId,
+        ...(input.jobId ? { jobId: input.jobId } : {}),
+        correlationId: input.correlationId,
+        payloadJson: {
+          replyClass,
+          actions: [{ kind: "quarantined_injection", matched: injectionMatched }]
+        }
       });
       await tx.insert(eventLog).values({
         eventType: "reply_routing_quarantined",
@@ -16599,9 +16626,11 @@ const INJECTION_PATTERNS: { label: string; re: RegExp }[] = [
   // previous message" / "disregard the prior context" are legitimate replies.
   { label: "ignore-previous", re: /\b(ignore|disregard|forget)\b[^.\n]{0,40}\b(previous|prior|above|earlier|all)\b[^.\n]{0,20}\b(instruction|prompt|rule|directive|command)s?\b/i },
   { label: "new-instructions", re: /\b(new|updated|revised)\b[^.\n]{0,20}\b(instruction|prompt|system\s+message)s?\b\s*[:\-]/i },
-  // Anchored on a role/persona noun so benign "you are now a preferred partner"
-  // does not match — only "you are now a/the <assistant|system|…>".
-  { label: "you-are-now", re: /\b(you\s+are\s+now|from\s+now\s+on)\b[^.\n]{0,40}\b(assistant|ai|model|system|admin|administrator|developer|chatbot|persona|character|jailbreak|dan)\b/i },
+  // Anchored on an ADVERSARIAL-persona noun. Ambiguous business titles
+  // (system/admin/developer) were removed — "you are now our primary developer"
+  // / "you are now system administrator" are legitimate B2B role announcements
+  // (workflow HQ). LLM names added for modern jailbreak phrasings.
+  { label: "you-are-now", re: /\b(you\s+are\s+now|from\s+now\s+on)\b[^.\n]{0,40}\b(assistant|ai|model|chatbot|persona|character|jailbreak|dan|gpt|claude|gemini|llama)\b/i },
   { label: "reveal-system", re: /\b(reveal|print|show|repeat|output)\b[^.\n]{0,30}\b(system\s+prompt|your\s+instructions|the\s+prompt)\b/i },
   { label: "role-override", re: /\b(act\s+as|pretend\s+(you\s+are|to\s+be)|roleplay\s+as)\b[^.\n]{0,40}\b(assistant|system|admin|developer)\b/i },
   // Line-start role-prefix smuggling ("system: you must…", "### assistant").
@@ -16950,7 +16979,9 @@ export async function completeGenerateDraftJob(input: {
     // T-026BX M2: scan the third-party draft inputs (web-sourced org/contact +
     // research facts + the brief free-text the assistant may have laundered
     // site-study text into) for injection signatures. The values are already in
-    // memory from building the prompt, so no extra query.
+    // memory from building the prompt, so no extra query. operatorBrief is
+    // operator-authored UI input (the operator is us), so it is intentionally NOT
+    // scanned — only tag-scrubbed in the builder.
     const draftBrief = campaignContext?.draftBrief ?? null;
     const injectionMatched = scanForInjection(
       organization.name,
