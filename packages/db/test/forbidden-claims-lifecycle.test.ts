@@ -801,3 +801,100 @@ test("lifecycle 7 — a snoozed flag is resolved by a clean discard (F1 regressi
   assert.ok(flag);
   assert.ok(RESOLVED_LIKE.has(flag.status), `snoozed flag should be resolved, got ${flag.status}`);
 });
+
+// CASE 8 — F6/F7 regression: revise FLAGGING on a LEGACY warm draft (campaignId
+// NULL on the row) resolves the campaign via the thread fallback. Both the work
+// item AND the event must be scoped to the thread's campaign, not null. This
+// catches a regression where completeReviseDraftJob fails to pass
+// threads.campaignId into flagForbiddenClaims.
+test("lifecycle 8 — revise flag on a legacy warm draft scopes campaignId via the thread", async (t) => {
+  const db = getDb();
+  await clearFclArtifacts();
+  t.after(clearFclArtifacts);
+
+  const suffix = randomUUID();
+  const { orgId, campaignId, contactId } = await seedCampaign({
+    suffix,
+    forbiddenClaims: ["guaranteed ROI"]
+  });
+
+  // Thread linked to the campaign.
+  const [thread] = await db
+    .insert(threads)
+    .values({ campaignId, organizationId: orgId, status: "open" })
+    .returning({ id: threads.id });
+  assert.ok(thread);
+
+  // LEGACY warm draft: kind="warm", campaignId NULL, threadId set. The flag path
+  // must fall back to threads.campaignId for scoping.
+  const [draft] = await db
+    .insert(drafts)
+    .values({
+      campaignId: null,
+      contactId,
+      threadId: thread.id,
+      subject: "Re: Warm subject",
+      body: "Hi, a clean warm reply here.",
+      status: "draft",
+      version: 1,
+      kind: "warm",
+      claimsValidatedVersion: 1
+    })
+    .returning({ id: drafts.id });
+  assert.ok(draft);
+
+  await db.insert(draftVersions).values({
+    draftId: draft.id,
+    version: 1,
+    subject: "Re: Warm subject",
+    body: "Hi, a clean warm reply here.",
+    bodyHash: `${PREFIX}warm-hash-${suffix}-${randomUUID()}`,
+    source: "agent_generated"
+  });
+
+  const jobHandle = await createReviseDraftJob({ organizationId: orgId, draftId: draft.id, expectedVersion: 1 });
+  const dispatcher: AgentStageDispatcher = async function* () {
+    yield {
+      eventType: "final_response",
+      payloadJson: {
+        text: JSON.stringify({
+          subject: "Re: Warm subject revised",
+          body: "Reply revised — we deliver Guaranteed ROI on every engagement.",
+          claims: []
+        })
+      }
+    };
+  };
+
+  await completeReviseDraftJob({
+    ...jobHandle,
+    draftId: draft.id,
+    expectedVersion: 1,
+    organizationId: orgId,
+    operatorFeedback: "Make it bolder.",
+    dispatcher
+  });
+
+  // 1. The created flag (v2-scoped) is campaign-scoped via the thread fallback.
+  const v2 = (await forbiddenFlags(draft.id)).find(
+    (f) => f.dedupeKey === `draft_forbidden_claim:${draft.id}:v2`
+  );
+  assert.ok(v2, "a v2-scoped flag must exist for the reintroduced phrase");
+  assert.equal(v2.status, "open");
+
+  const [wi] = await db
+    .select({ campaignId: workItems.campaignId })
+    .from(workItems)
+    .where(eq(workItems.id, v2.id));
+  assert.equal(wi?.campaignId, campaignId);
+
+  // 2. The event_log row's payload is scoped to the thread's campaign, not null.
+  const events = await db
+    .select({ id: eventLog.id, payloadJson: eventLog.payloadJson })
+    .from(eventLog)
+    .where(
+      and(eq(eventLog.eventType, "draft_email_forbidden_claim_hit"), eq(eventLog.entityId, draft.id))
+    );
+  assert.equal(events.length, 1);
+  assert.equal((events[0]!.payloadJson as Record<string, unknown>)["campaignId"], campaignId);
+});
