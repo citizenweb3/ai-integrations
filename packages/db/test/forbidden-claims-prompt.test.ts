@@ -600,8 +600,11 @@ test("case 5 — revise warm draft: <forbidden_claims> resolved via thread, no <
     .returning({ id: contacts.id });
   assert.ok(contact);
 
-  // Thread linked to the campaign (warm draft rows have NULL campaignId but the
-  // thread carries the campaignId, which is the fallback path in revise)
+  // Thread linked to the campaign. This fixture creates a LEGACY warm draft with
+  // NULL campaignId (pre-M2) to exercise the backward-compat fallback. New warm
+  // drafts from completeGenerateWarmDraftJob now persist campaignId from the
+  // thread (M2/F4); revise resolves draft.campaignId ?? threads.campaignId so both
+  // cases are handled uniformly.
   const [thread] = await db
     .insert(threads)
     .values({
@@ -761,6 +764,15 @@ test("case 6 — warm generation: completeGenerateWarmDraftJob renders <forbidde
   assert.match(capturedPrompt, /<forbidden_claims>/);
   assert.match(capturedPrompt, /unverified claims allowed/);
   assert.match(capturedPrompt, /Forbidden claims \(operator-trusted/);
+
+  // F4: the generated warm draft persists its thread's campaignId on the row, so
+  // a later AI-revise resolves the campaign policy directly from the draft.
+  const [warmDraftRow] = await db
+    .select({ campaignId: drafts.campaignId })
+    .from(drafts)
+    .where(eq(drafts.threadId, thread.id))
+    .limit(1);
+  assert.equal(warmDraftRow?.campaignId, campaign.id);
 });
 
 test("case 7 — revise sanitizer: <forbidden_claims> injected in operatorFeedback + draft body is stripped by sanitizeRevisePromptUntrusted", async (t) => {
