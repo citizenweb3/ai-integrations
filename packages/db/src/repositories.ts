@@ -2516,7 +2516,7 @@ export async function approveDraftForSendCommand(input: {
         .where(and(
           eq(workItems.draftId, payload.draftId),
           eq(workItems.type, "draft_forbidden_claim_hit"),
-          eq(workItems.status, "open")
+          sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`
         ));
 
       await tx
@@ -7421,7 +7421,7 @@ async function flagForbiddenClaims(
         and(
           eq(workItems.draftId, input.draftId),
           eq(workItems.type, "draft_forbidden_claim_hit"),
-          eq(workItems.status, "open")
+          sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`
         )
       );
   }
@@ -8807,7 +8807,7 @@ export async function discardDraftCommand(input: {
         and(
           eq(workItems.draftId, payload.draftId),
           eq(workItems.type, "draft_forbidden_claim_hit"),
-          eq(workItems.status, "open")
+          sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`
         )
       );
 
