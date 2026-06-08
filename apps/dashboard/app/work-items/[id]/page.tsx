@@ -270,6 +270,24 @@ export default async function WorkItemDetailPage({ params }: Props) {
           </Card>
         ) : null}
 
+        {item.type === "prompt_injection_suspected" && item.inboundMessage && !isResolved ? (
+          <Card>
+            <BlockTitle title="Apply routing" className="mb-4 text-left" />
+            <p className="text-sm font-light opacity-80 mb-3">
+              Cleared as a false positive? Apply the routing this reply was quarantined from —
+              suppression for an unsubscribe/complaint, or a warm draft for a warm reply — using the
+              stored reply class. This also resolves the injection flag.
+            </p>
+            <form action="/api/commands" method="post">
+              <input type="hidden" name="commandType" value="apply_quarantined_routing" />
+              <input type="hidden" name="inboundMessageId" value={item.inboundMessage.id} />
+              <Button type="submit" size="sm">
+                Apply routing
+              </Button>
+            </form>
+          </Card>
+        ) : null}
+
         {item.webhookEvent ? (
           <Card>
             <BlockTitle title="Webhook Event" className="mb-4 text-left" />

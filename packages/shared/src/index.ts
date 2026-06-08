@@ -49,6 +49,7 @@ export const operatorCommandTypes = [
   "request_research_more",
   "skip_draft",
   "attach_inbound_to_thread",
+  "apply_quarantined_routing",
   "merge_threads",
   "mark_thread_manual_hold",
   "return_thread_to_agent",
@@ -1221,6 +1222,11 @@ export const createCommandRequestSchema = z.discriminatedUnion("commandType", [
     commandType: z.literal("attach_inbound_to_thread"),
     actorId: z.string().uuid().optional(),
     payload: attachInboundToThreadPayloadSchema
+  }),
+  z.object({
+    commandType: z.literal("apply_quarantined_routing"),
+    actorId: z.string().uuid().optional(),
+    payload: z.object({ inboundMessageId: z.string().uuid() })
   }),
   z.object({
     commandType: z.literal("merge_threads"),

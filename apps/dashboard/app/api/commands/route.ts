@@ -3,6 +3,7 @@ import {
   approveContactCandidateCommand,
   approveDraftForSendCommand,
   archiveCampaignCommand,
+  applyQuarantinedReplyRoutingCommand,
   attachInboundToThreadCommand,
   clearSuppressionCommand,
   createDraftCommand,
@@ -289,6 +290,30 @@ async function handlePost(request: Request, traceSpan?: TraceSpanHandle) {
           inboundMessageId: result.inboundMessageId,
           resolvedWorkItemId: result.resolvedWorkItemId,
           deduplicated: result.deduplicated
+        });
+      }
+      return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
+    }
+
+    case "apply_quarantined_routing": {
+      const result = traceCommandResult(traceSpan, await applyQuarantinedReplyRoutingCommand({
+        ...(parsed.data.actorId ? { actorId: parsed.data.actorId } : {}),
+        payload: parsed.data.payload
+      }));
+      if (!result.ok) {
+        if (isJson) {
+          return NextResponse.json({ error: result.failure }, { status: 409 });
+        }
+        const redirect = safeRedirectUrl(request);
+        redirect.searchParams.set("error", `${result.failure.code}: ${result.failure.message}`);
+        return NextResponse.redirect(redirect, { status: 303 });
+      }
+      if (isJson) {
+        return NextResponse.json({
+          commandId: result.commandId,
+          inboundMessageId: result.inboundMessageId,
+          replyClass: result.replyClass,
+          alreadyApplied: result.alreadyApplied
         });
       }
       return NextResponse.redirect(safeRedirectUrl(request), { status: 303 });
@@ -1582,6 +1607,15 @@ function formDataToCommand(formData: FormData) {
         ...(organizationId ? { organizationId } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {})
       }
+    };
+  }
+
+  if (commandType === "apply_quarantined_routing") {
+    const inboundMessageId = String(formData.get("inboundMessageId") ?? "").trim();
+    return {
+      commandType,
+      ...base,
+      payload: { inboundMessageId }
     };
   }
 
