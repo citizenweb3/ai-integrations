@@ -19,6 +19,7 @@ import {
   BackgroundActivityStrip,
   liveActivityTotal,
 } from "@/components/background-activity-strip";
+import { SnapshotFreshness } from "@/components/snapshot-freshness";
 
 // T-026AH/B: split the org detail page into tabs (research / contacts /
 // threads / timeline) so the operator sees one section at a time
@@ -903,7 +904,7 @@ function SnapshotPanel({
                   unverified
                 </span>
               )}{" · "}
-              {new Date(snapshot.createdAt).toISOString().slice(0, 19).replace("T", " ")}{" · "}
+              <SnapshotFreshness createdAt={snapshot.createdAt} />{" · "}
               <span title="Number of distinct facts the agent extracted into this snapshot.">
                 {snapshot.facts.length} fact{snapshot.facts.length === 1 ? "" : "s"}
               </span>

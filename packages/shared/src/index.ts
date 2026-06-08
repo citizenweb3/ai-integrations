@@ -1775,3 +1775,32 @@ export function isNonRetryableJobError(error: unknown): error is NonRetryableJob
       && error !== null
       && (error as { name?: unknown }).name === "NonRetryableJobError");
 }
+
+// G4.9 research-snapshot freshness. A snapshot grounds every draft for an org,
+// but nothing surfaced its age — a draft can ground on facts months old. These
+// thresholds classify a snapshot's `createdAt` into a freshness tier the
+// operator UI badges. Kept here (not in the dashboard) because the cutoffs are
+// a domain rule a future pre-send guardrail could also read, and this is the
+// package with test coverage. The tiers are advisory/visual only; the
+// `claims_stale` guardrail separately hard-blocks send when a snapshot is
+// MISSING, not when it is merely old.
+export const researchAgingDays = 30;
+export const researchStaleDays = 90;
+export type ResearchFreshnessTier = "fresh" | "aging" | "stale";
+export interface ResearchFreshness {
+  ageDays: number;
+  tier: ResearchFreshnessTier;
+}
+
+// Classify a snapshot's age. Accepts a Date or an ISO string (server-action
+// results may serialize `createdAt` to a string across the RSC boundary).
+// `now` is injectable for deterministic tests, mirroring `formatRelativeTime`.
+// Negative ages (SSR/persisted-row clock skew) clamp to 0 → fresh.
+export function researchFreshness(createdAt: Date | string, now: Date = new Date()): ResearchFreshness {
+  const created = createdAt instanceof Date ? createdAt : new Date(createdAt);
+  const diffMs = now.getTime() - created.getTime();
+  const ageDays = Math.max(0, Math.floor(diffMs / 86_400_000));
+  const tier: ResearchFreshnessTier =
+    ageDays >= researchStaleDays ? "stale" : ageDays >= researchAgingDays ? "aging" : "fresh";
+  return { ageDays, tier };
+}

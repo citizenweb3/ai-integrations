@@ -20,6 +20,7 @@ import { BackLink } from "@/components/back-link";
 import { Badge, Button, InfoRow, MetricCard, PageBody, inputClass, textareaClass } from "@/components/ui";
 import { SideDrawer } from "@/components/side-drawer";
 import { DraftModifyDrawers } from "@/components/draft-modify-drawers";
+import { SnapshotFreshness, SnapshotStaleWarning } from "@/components/snapshot-freshness";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +79,7 @@ function Collapsible({
   defaultOpen = false,
   children,
 }: {
-  title: string;
+  title: ReactNode;
   hint?: string;
   defaultOpen?: boolean;
   children: ReactNode;
@@ -498,11 +499,18 @@ export default async function DraftDetailPage({ params }: Props) {
         />
 
         <Collapsible
-          title={`Research used by the agent${
-            researchContext?.snapshot
-              ? ` · snapshot v${researchContext.snapshot.version}`
-              : ""
-          }`}
+          title={
+            <>
+              Research used by the agent
+              {researchContext?.snapshot ? (
+                <>
+                  {" · "}snapshot v{researchContext.snapshot.version}
+                  {" · "}
+                  <SnapshotFreshness createdAt={researchContext.snapshot.createdAt} />
+                </>
+              ) : null}
+            </>
+          }
           hint="Facts from research_snapshot the agent had available + which ones it actually cited in the body."
         >
           {!researchContext ? (
@@ -549,6 +557,10 @@ export default async function DraftDetailPage({ params }: Props) {
                 )}{" · "}
                 {researchContext.snapshot.createdAt.toISOString()}
               </p>
+              <SnapshotStaleWarning
+                createdAt={researchContext.snapshot.createdAt}
+                orgId={researchContext.organization.id}
+              />
               {researchContext.facts.length === 0 ? (
                 <p className="text-sm font-light opacity-60">
                   Snapshot has no active facts. Try “Investigate flagged claims” under Modify.
