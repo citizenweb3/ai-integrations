@@ -16724,13 +16724,22 @@ async function flagPromptInjection(
     }
   });
 
+  // The inbound boundary quarantines routing (no suppression / auto-warm), so a
+  // false positive on a genuine unsubscribe/complaint would otherwise be missed —
+  // tell the operator to act manually. (A one-click re-route affordance is a
+  // deferred follow-up; see the post-launch backlog.)
+  const summary =
+    input.boundary === "inbound_reply"
+      ? `Reply routing was withheld — suspicious patterns: ${input.matched.join(", ")}. Review; if this is a genuine unsubscribe/complaint, suppress the address manually.`
+      : `Suspicious patterns in ${input.boundary}: ${input.matched.join(", ")}`;
+
   await createWorkItem(tx, {
     type: "prompt_injection_suspected",
     priority: 80,
     sourceEntityType: entityType,
     sourceEntityId: entityId,
     title: "Possible prompt injection",
-    summary: `Suspicious patterns in ${input.boundary}: ${input.matched.join(", ")}`,
+    summary,
     reasonCode: "prompt_injection_suspected",
     actionLabel: "Review inputs",
     dedupeKey: input.dedupeKey,
