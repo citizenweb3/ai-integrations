@@ -14663,10 +14663,101 @@ async function applyReplyClassRouting(
     }
 
     case "complaint": {
-      // Complaint is P0 per §65.5125 but we do NOT auto-suppress — operator
-      // decides because complaint semantics from the reply text are noisier
-      // than provider-attested complaints (which DO auto-suppress via the
-      // webhook path).
+      // Complaint is P0 per §65.5125 and auto-suppresses as a HARD,
+      // non-overridable entry — same as a provider-attested complaint
+      // (`reason="complaint"` is in `hardSuppressionReasons`). Mirrors the
+      // `unsubscribe` case: a reply-text complaint is no noisier than a
+      // reply-text unsubscribe, which already auto-suppresses, and the
+      // compliance gap (discovery/another campaign re-emailing the address)
+      // closes immediately. The `reply_complaint_received` work item below is
+      // the operator's audit/escalation surface; the operator can lift the
+      // suppression if it was a misclassification. Unlike `unsubscribe` there
+      // is no legacy reason to merge (no `user_complaint` backfill), so the
+      // canonical-conflict branch is intentionally omitted.
+      let suppressionAction: Record<string, unknown> = { kind: "suppression_skipped", reason: "missing_from_email" };
+      if (input.fromEmail) {
+        const normalizedEmail = input.fromEmail.trim().toLowerCase();
+        const [existing] = await tx
+          .select()
+          .from(suppressionEntries)
+          .where(sql`lower(${suppressionEntries.email}) = ${normalizedEmail}`)
+          .orderBy(desc(suppressionEntries.updatedAt))
+          .limit(1);
+        let suppressionId: string;
+        let reactivated = false;
+        let updatedReason = false;
+        let inserted = false;
+        // Track the source actually written, so the event payload and action
+        // reflect provider attribution rather than always claiming the reply.
+        let appliedSource = "reply_classification";
+        if (existing && existing.active && existing.reason === "complaint") {
+          // Already hard-suppressed as a complaint (this path or the provider
+          // webhook). Reuse without clobbering its source.
+          suppressionId = existing.id;
+          appliedSource = existing.source;
+        } else if (existing) {
+          // Reactivate / upgrade an existing row to a complaint. Preserve
+          // provider attribution: a row that was ALREADY a complaint (e.g. a
+          // deactivated provider-attested `resend` complaint) keeps its source;
+          // only a row whose reason actually changes to complaint is
+          // (re)attributed to this reply. Complaint, unlike unsubscribe, has a
+          // legally meaningful provider-attested origin worth retaining.
+          const nextSource = existing.reason === "complaint" ? existing.source : "reply_classification";
+          await tx
+            .update(suppressionEntries)
+            .set({
+              active: true,
+              reason: "complaint",
+              source: nextSource,
+              updatedAt: new Date()
+            })
+            .where(eq(suppressionEntries.id, existing.id));
+          suppressionId = existing.id;
+          reactivated = !existing.active;
+          updatedReason = existing.reason !== "complaint";
+          appliedSource = nextSource;
+        } else {
+          const insertedRows = await tx
+            .insert(suppressionEntries)
+            .values({
+              email: input.fromEmail,
+              reason: "complaint",
+              source: "reply_classification",
+              active: true
+            })
+            .returning({ id: suppressionEntries.id });
+          suppressionId = expectOne(insertedRows, "complaint suppression insert").id;
+          inserted = true;
+        }
+        if (inserted || reactivated || updatedReason) {
+          await tx.insert(eventLog).values({
+            eventType: "suppression_entry_created",
+            entityType: "suppression_entry",
+            entityId: suppressionId,
+            ...(input.jobId ? { jobId: input.jobId } : {}),
+            correlationId: input.correlationId,
+            payloadJson: {
+              email: input.fromEmail,
+              reason: "complaint",
+              source: appliedSource,
+              reactivated,
+              updatedReason,
+              triggeredByInboundMessageId: input.inboundMessageId
+            }
+          });
+        }
+        suppressionAction = {
+          kind: "suppression_applied",
+          suppressionId,
+          source: appliedSource,
+          inserted,
+          reactivated,
+          updatedReason,
+          alreadyActive: !inserted && !reactivated && !updatedReason
+        };
+      }
+      actions.push(suppressionAction);
+
       const created = await createWorkItem(tx, {
         type: "reply_complaint_received",
         priority: 95,
@@ -14674,7 +14765,9 @@ async function applyReplyClassRouting(
         sourceEntityId: input.inboundMessageId,
         inboundMessageId: input.inboundMessageId,
         title: `Complaint reply received${subjectHint}`,
-        summary: "Recipient reply was classified as a complaint. Operator decides whether to suppress/escalate.",
+        summary: input.fromEmail
+          ? `${input.fromEmail} auto-suppressed (hard) after a complaint reply. Review the thread, escalate, or lift the suppression if this was a misclassification.`
+          : "Complaint reply with no resolvable from-email — suppression NOT applied. Operator must review.",
         reasonCode: "reply_class:complaint",
         actionLabel: "Triage complaint",
         dedupeKey: `reply_complaint:${input.inboundMessageId}`
