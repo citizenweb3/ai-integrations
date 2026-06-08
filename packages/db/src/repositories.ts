@@ -14812,6 +14812,164 @@ async function applyReplyClassRouting(
   return actions;
 }
 
+// G6.17-followup (T-026C0): the operator's one-click "apply routing" after an
+// injection quarantine. `classify_reply` quarantines an injection-flagged inbound
+// — the class is written to `inbound_messages.reply_class` (audit) but the
+// consequential routing (`applyReplyClassRouting`: suppression for
+// unsubscribe/complaint, warm work item) and the post-commit auto-warm are
+// skipped, and only a `prompt_injection_suspected` work item is raised. When the
+// operator judges it a false positive, this command runs the withheld routing
+// using the already-stored class, resolves the injection item, and (for warm
+// classes) generates the warm draft — full parity with the non-quarantined path.
+// Idempotent via the injection work item's active status: applying the routing
+// resolves the item in the same tx, so a repeat call — or a call on a
+// never-quarantined inbound (no such item) — is a no-op.
+export async function applyQuarantinedReplyRoutingCommand(input: {
+  actorId?: string;
+  payload: { inboundMessageId: string };
+}): Promise<
+  | {
+      ok: true;
+      inboundMessageId: string;
+      commandId: string;
+      replyClass: ReplyClass;
+      alreadyApplied: boolean;
+      actions: Array<Record<string, unknown>>;
+    }
+  | { ok: false; failure: { code: string; message: string } }
+> {
+  const db = getDb();
+  const { inboundMessageId } = input.payload;
+  const commandId = randomUUID();
+  const correlationId = randomUUID();
+  const injectionDedupeKey = `prompt_injection:inbound:${inboundMessageId}`;
+
+  const outcome = await db.transaction(async (tx) => {
+    const [inbound] = await tx
+      .select({
+        id: inboundMessages.id,
+        replyClass: inboundMessages.replyClass,
+        threadId: inboundMessages.threadId,
+        fromEmail: inboundMessages.fromEmail,
+        subject: inboundMessages.subject
+      })
+      .from(inboundMessages)
+      .where(eq(inboundMessages.id, inboundMessageId))
+      .for("update")
+      .limit(1);
+    if (!inbound) {
+      return {
+        ok: false as const,
+        failure: { code: "inbound_not_found", message: `Inbound ${inboundMessageId} not found` }
+      };
+    }
+    if (!inbound.replyClass) {
+      return {
+        ok: false as const,
+        failure: { code: "not_classified", message: `Inbound ${inboundMessageId} has no classified reply class` }
+      };
+    }
+    const replyClass = inbound.replyClass as ReplyClass;
+
+    // Idempotency / quarantine gate: apply only while the injection work item is
+    // still open. Resolving it below makes a repeat call a no-op, and a
+    // never-quarantined inbound (no such item) is likewise a no-op.
+    const [injectionItem] = await tx
+      .select({ id: workItems.id, status: workItems.status })
+      .from(workItems)
+      .where(eq(workItems.dedupeKey, injectionDedupeKey))
+      .limit(1);
+    const stillQuarantined =
+      injectionItem != null && !["resolved", "dismissed", "superseded"].includes(injectionItem.status);
+    if (!stillQuarantined) {
+      return {
+        ok: true as const,
+        inboundMessageId,
+        commandId,
+        replyClass,
+        alreadyApplied: true,
+        actions: [] as Array<Record<string, unknown>>
+      };
+    }
+
+    const actions = await applyReplyClassRouting(tx, {
+      inboundMessageId,
+      threadId: inbound.threadId,
+      fromEmail: inbound.fromEmail,
+      subject: inbound.subject,
+      replyClass,
+      correlationId
+    });
+
+    // Insert the command row before the events — event_log.command_id FKs to it.
+    await tx.insert(commands).values({
+      id: commandId,
+      source: "operator",
+      commandType: "apply_quarantined_routing",
+      status: "accepted",
+      actorId: input.actorId,
+      targetEntityType: "inbound_message",
+      targetEntityId: inboundMessageId,
+      payloadJson: input.payload,
+      idempotencyKey: `apply_quarantined_routing:${inboundMessageId}:${commandId}`,
+      correlationId
+    });
+
+    await tx.insert(eventLog).values({
+      eventType: "reply_class_routed",
+      entityType: "inbound_message",
+      entityId: inboundMessageId,
+      commandId,
+      correlationId,
+      payloadJson: { replyClass, actions }
+    });
+    await tx.insert(eventLog).values({
+      eventType: "reply_routing_dequarantined",
+      entityType: "inbound_message",
+      entityId: inboundMessageId,
+      commandId,
+      correlationId,
+      payloadJson: { replyClass, triggeredByActorId: input.actorId ?? null }
+    });
+
+    await tx
+      .update(workItems)
+      .set({
+        status: "resolved",
+        resolvedAt: new Date(),
+        resolvedByOperatorId: input.actorId ?? null,
+        updatedAt: new Date()
+      })
+      .where(and(
+        eq(workItems.dedupeKey, injectionDedupeKey),
+        sql`${workItems.status} not in ('resolved', 'dismissed', 'superseded')`
+      ));
+
+    return {
+      ok: true as const,
+      inboundMessageId,
+      commandId,
+      replyClass,
+      alreadyApplied: false,
+      actions
+    };
+  });
+
+  // Post-tx auto-warm (mirrors routeClassifyReplyOutcome): a false-positive warm
+  // reply gets its draft generated, full parity with the non-quarantined path.
+  if (
+    outcome.ok
+    && !outcome.alreadyApplied
+    && (outcome.replyClass === "positive_interest"
+      || outcome.replyClass === "question"
+      || outcome.replyClass === "neutral")
+  ) {
+    await maybeAutoGenerateWarmDraft({ inboundMessageId });
+  }
+
+  return outcome;
+}
+
 async function buildClassifyReplyPrompt(inboundMessageId: string): Promise<{
   prompt: string;
   threadId: string | null;
