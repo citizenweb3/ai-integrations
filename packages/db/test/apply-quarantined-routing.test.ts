@@ -7,6 +7,7 @@ import {
   applyQuarantinedReplyRoutingCommand,
   campaigns,
   closeDb,
+  commands,
   contacts,
   eventLog,
   getDb,
@@ -88,15 +89,15 @@ async function teardown(db: ReturnType<typeof getDb>, s: Seed): Promise<void> {
   await db.delete(campaigns).where(eq(campaigns.id, s.campaignId));
 }
 
-async function quarantine(db: ReturnType<typeof getDb>, s: Seed): Promise<void> {
+async function quarantine(db: ReturnType<typeof getDb>, s: Seed, replyClass = "unsubscribe"): Promise<void> {
   const routed = await routeClassifyReplyOutcome({
     agentRunId: s.agentRunId,
     inboundMessageId: s.inboundId,
-    finalText: JSON.stringify({ class: "unsubscribe", confidence: "high" }),
+    finalText: JSON.stringify({ class: replyClass, confidence: "high" }),
     correlationId: randomUUID(),
     injectionMatched: INJECTION
   });
-  assert.deepEqual(routed, { replyClass: "unsubscribe", confidence: "high", quarantined: true });
+  assert.deepEqual(routed, { replyClass, confidence: "high", quarantined: true });
 }
 
 function injectionDedupeKey(inboundId: string): string {
@@ -149,6 +150,61 @@ test("apply routing on a quarantined unsubscribe suppresses and resolves the inj
     .from(eventLog)
     .where(sql`${eventLog.entityId} = ${s.inboundId} and ${eventLog.eventType} = 'reply_routing_dequarantined'`);
   assert.equal(deq.length, 1);
+
+  // The de-quarantined routing emits its own reply_class_routed (command-scoped,
+  // distinct from the quarantine-path one which carries no command id).
+  const routedEvents = await db
+    .select({ id: eventLog.id })
+    .from(eventLog)
+    .where(sql`${eventLog.entityId} = ${s.inboundId} and ${eventLog.eventType} = 'reply_class_routed' and ${eventLog.commandId} is not null`);
+  assert.equal(routedEvents.length, 1);
+
+  // Returned routing actions carry the applied suppression.
+  assert.ok(result.actions.some((action) => action.kind === "suppression_applied"));
+
+  // The command audit row is recorded.
+  const [commandRow] = await db
+    .select({
+      commandType: commands.commandType,
+      targetEntityType: commands.targetEntityType,
+      targetEntityId: commands.targetEntityId
+    })
+    .from(commands)
+    .where(eq(commands.id, result.commandId))
+    .limit(1);
+  assert.deepEqual(commandRow, {
+    commandType: "apply_quarantined_routing",
+    targetEntityType: "inbound_message",
+    targetEntityId: s.inboundId
+  });
+});
+
+test("apply routing on a quarantined warm reply creates the warm-review work item", async (t) => {
+  const db = getDb();
+  const s = await seedInbound(db);
+  t.after(() => teardown(db, s));
+
+  await quarantine(db, s, "positive_interest");
+
+  const result = await applyQuarantinedReplyRoutingCommand({ payload: { inboundMessageId: s.inboundId } });
+  assert.ok(result.ok);
+  assert.equal(result.alreadyApplied, false);
+  assert.equal(result.replyClass, "positive_interest");
+  assert.ok(result.actions.some((action) => action.kind === "warm_reply_review_needed"));
+
+  const [warm] = await db
+    .select({ id: workItems.id })
+    .from(workItems)
+    .where(eq(workItems.dedupeKey, `warm_reply:${s.inboundId}`))
+    .limit(1);
+  assert.ok(warm);
+
+  const [injection] = await db
+    .select({ status: workItems.status })
+    .from(workItems)
+    .where(eq(workItems.dedupeKey, injectionDedupeKey(s.inboundId)))
+    .limit(1);
+  assert.equal(injection?.status, "resolved");
 });
 
 test("apply routing is idempotent — a second call no-ops", async (t) => {
@@ -220,4 +276,10 @@ test("apply routing fails when the inbound has no classified reply class", async
   const result = await applyQuarantinedReplyRoutingCommand({ payload: { inboundMessageId: s.inboundId } });
   assert.ok(!result.ok);
   assert.equal(result.failure.code, "not_classified");
+});
+
+test("apply routing fails when the inbound does not exist", async () => {
+  const result = await applyQuarantinedReplyRoutingCommand({ payload: { inboundMessageId: randomUUID() } });
+  assert.ok(!result.ok);
+  assert.equal(result.failure.code, "inbound_not_found");
 });
