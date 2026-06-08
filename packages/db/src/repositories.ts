@@ -14163,6 +14163,11 @@ export async function routeClassifyReplyOutcome(input: {
   finalText: string;
   correlationId: string;
   jobId?: string;
+  // T-026BX M2/F4: injection-signature labels over the EXACT snippets the
+  // classifier saw, computed in completeClassifyReplyJob from the prompt builder's
+  // scanInputs. When omitted (direct callers / tests) the router falls back to an
+  // in-tx best-effort scan of the inbound + a re-queried snapshot.
+  injectionMatched?: string[];
 }): Promise<{ replyClass: ReplyClass; confidence: ReplyClassConfidence; quarantined?: boolean } | null> {
   const parsed = tryParseClassifyReplyOutput(input.finalText);
   if (!parsed) {
@@ -14311,18 +14316,20 @@ export async function routeClassifyReplyOutcome(input: {
       injectionOrgId = threadRow?.organizationId ?? null;
       injectionCampaignId = threadRow?.campaignId ?? null;
     }
-    // Scan exactly what buildClassifyReplyPrompt renders to the model (workflow
-    // SC): the quote-stripped body (not the raw quoted tail), subject, sender, and
-    // the web-sourced research-snapshot facts the classifier was grounded on.
-    const classifyFacts = injectionOrgId
-      ? (await getLatestResearchSnapshotForDraft(injectionOrgId, { requireSafeForCopy: true }))?.facts.map((f) => f.factText) ?? []
-      : [];
-    const injectionMatched = scanForInjection(
-      target?.subject,
-      target?.rawText ? stripQuotedReplyAndSignature(target.rawText) : null,
-      target?.fromEmail,
-      ...classifyFacts
-    );
+    // F4: prefer the exact snippets the classifier saw (passed in by
+    // completeClassifyReplyJob from the prompt builder). Direct callers / tests
+    // omit it — fall back to an in-tx best-effort scan of the quote-stripped body
+    // (not the raw tail), subject, sender, and a re-queried snapshot's facts.
+    const injectionMatched =
+      input.injectionMatched ??
+      scanForInjection(
+        target?.subject,
+        target?.rawText ? stripQuotedReplyAndSignature(target.rawText) : null,
+        target?.fromEmail,
+        ...(injectionOrgId
+          ? (await getLatestResearchSnapshotForDraft(injectionOrgId, { requireSafeForCopy: true }))?.facts.map((f) => f.factText) ?? []
+          : [])
+      );
     if (injectionMatched.length > 0) {
       await flagPromptInjection(tx, {
         boundary: "inbound_reply",
@@ -14715,6 +14722,11 @@ async function applyReplyClassRouting(
 async function buildClassifyReplyPrompt(inboundMessageId: string): Promise<{
   prompt: string;
   threadId: string | null;
+  // T-026BX M2/F4: the EXACT untrusted snippets rendered to the model (stripped +
+  // truncated body, subject, sender, and the sliced/truncated facts) — so the
+  // injection scan runs on what the classifier actually saw, not a re-queried
+  // superset that could false-quarantine on fact #9 / post-truncation text.
+  scanInputs: string[];
 } | null> {
   const db = getDb();
   const [inbound] = await db
@@ -14797,12 +14809,17 @@ async function buildClassifyReplyPrompt(inboundMessageId: string): Promise<{
   };
 
   const sections: string[] = [];
+  const scanInputs: string[] = [];
   const inboundText = sanitizePromptUntrusted(
     stripQuotedReplyAndSignature(inbound.rawText ?? "")
   );
+  const renderedSubject = sanitizePromptUntrusted(inbound.subject ?? "(no subject)");
+  const renderedBody = truncate(inboundText, 4000);
   sections.push(
-    `<latest_inbound>\nFrom: ${inbound.fromEmail ? sanitizePromptScalar(inbound.fromEmail, 320) : "(unknown)"}\nSubject: ${sanitizePromptUntrusted(inbound.subject ?? "(no subject)")}\n\n${truncate(inboundText, 4000)}\n</latest_inbound>`
+    `<latest_inbound>\nFrom: ${inbound.fromEmail ? sanitizePromptScalar(inbound.fromEmail, 320) : "(unknown)"}\nSubject: ${renderedSubject}\n\n${renderedBody}\n</latest_inbound>`
   );
+  scanInputs.push(renderedSubject, renderedBody);
+  if (inbound.fromEmail) scanInputs.push(inbound.fromEmail);
   if (priorSubject !== null || priorBody !== null) {
     sections.push(
       `<prior_outbound>\nSubject: ${sanitizePromptUntrusted(priorSubject ?? "(no subject)")}\n\n${truncate(sanitizePromptUntrusted(priorBody ?? ""), 4000)}\n</prior_outbound>`
@@ -14814,12 +14831,19 @@ async function buildClassifyReplyPrompt(inboundMessageId: string): Promise<{
     );
   }
   if (snapshot && snapshot.facts.length > 0) {
-    const factLines = snapshot.facts.slice(0, 8).map((fact) =>
-      `<fact id="${fact.id}" confidence="${fact.confidence}">${truncate(sanitizePromptUntrusted(fact.factText), 500)}</fact>`
+    const renderedFacts = snapshot.facts.slice(0, 8).map((fact) => ({
+      id: fact.id,
+      confidence: fact.confidence,
+      text: truncate(sanitizePromptUntrusted(fact.factText), 500)
+    }));
+    const factLines = renderedFacts.map(
+      (fact) => `<fact id="${fact.id}" confidence="${fact.confidence}">${fact.text}</fact>`
     );
     sections.push(
       `<research_snapshot version="${snapshot.snapshotVersion}">\n${factLines.join("\n")}\n</research_snapshot>`
     );
+    // F4: scan exactly the fact snippets that reached the model.
+    for (const fact of renderedFacts) scanInputs.push(fact.text);
   }
   sections.push(
     "Classify the inbound's reply intent per the rules in the system message. Output strict JSON only."
@@ -14827,7 +14851,8 @@ async function buildClassifyReplyPrompt(inboundMessageId: string): Promise<{
 
   return {
     prompt: sections.join("\n\n"),
-    threadId: inbound.threadId
+    threadId: inbound.threadId,
+    scanInputs
   };
 }
 
@@ -14975,7 +15000,11 @@ export async function completeClassifyReplyJob(input: {
       inboundMessageId: input.inboundMessageId,
       finalText,
       correlationId: input.job.correlation_id,
-      jobId: input.job.id
+      jobId: input.job.id,
+      // T-026BX M2/F4: scan EXACTLY the snippets the classifier saw (captured by
+      // buildClassifyReplyPrompt), so the quarantine gate matches the model's
+      // actual exposure — no re-query mismatch on fact #9 / post-truncation text.
+      injectionMatched: scanForInjection(...built.scanInputs)
     });
   }
 
