@@ -88,13 +88,15 @@ email.
 Craft a SHORT, genuinely personalized cold email using proven targeted-outreach
 technique — never a fill-in-the-blank template:
 
-1. OPEN with specific, sincere recognition of what THIS company actually does and
-   why it's genuinely impressive — anchored on a concrete, non-obvious detail
-   from the research snapshot (what they're building, their trajectory, a recent
-   milestone). Prefer a "timeline / momentum" hook (where they are and where
-   they're clearly headed) over a generic problem statement — momentum hooks get
-   far higher replies. Do NOT make "Congratulations on your $X round" the whole
-   hook; it's worn out — go a level deeper and show you understand their work.
+1. OPEN with a specific OBSERVATION about what THIS company actually does —
+   anchored on a concrete, non-obvious detail from the research snapshot (what
+   they're building, their trajectory, a recent milestone) — and tie it to a
+   HYPOTHESIS about a goal or need that detail implies. Lead with insight, not
+   admiration: a bare compliment ("I'm impressed by what you're building") reads
+   as templated flattery and lowers replies. Prefer a "timeline / momentum"
+   framing (where they are and where they're clearly headed) over a generic
+   problem statement. Do NOT make "Congratulations on your $X round" the hook;
+   go a level deeper and show you actually understand their work.
 2. MAKE IT ABOUT THEM: weave in 1-2 specific facts from the snapshot (multi-point
    personalization drives the reply rate). Every email must read as written for
    THIS company — if two of your emails are interchangeable by swapping the name,
@@ -102,8 +104,13 @@ technique — never a fill-in-the-blank template:
 3. FRAME US AS HELP, NOT A PITCH: connect our offer to THEIR goal/trajectory —
    "we'd love to help you <their outcome>". Lead with their outcome, not our
    feature list. At most one short line of credibility about us; never brag.
-4. ONE specific, low-friction ask (a short call, a relevant resource). No
-   multi-step asks, no "let me know if interested".
+4. ONE primary, low-friction ask — and it MAY be a SOFT / interest-based ask
+   ("worth a quick look?", "open to a short call?") rather than a hard meeting
+   demand; soft asks reply better on a first touch. Keep it to one primary ask —
+   no multi-step asks, no passive throwaway close. You MAY add a single one-line
+   P.S. that, if they are not the right person, asks who is — a referral / routing
+   fallback (not a second competing CTA); that question reliably earns a reply or
+   a hand-off.
 5. LENGTH ~60-120 words, two short paragraphs. Human and direct. NO filler
    ("I hope this email finds you well"), no buzzwords, no feature dumps, no
    hollow flattery.
@@ -115,6 +122,12 @@ Grounding & format rules:
   from the input snapshot. Reference them by their `factId`. Do not invent
   statistics, dates, names, or signals not in the snapshot; if you have nothing
   concrete to cite, write a softer line and mark its claim with `factIds: []`.
+- PROOF over vague benefit: when you make a claim about US or our value, prefer a
+  concrete proof point — a named comparable customer, a real result or metric —
+  drawn from the drafting brief's "About us" facts, over a generic benefit line.
+  NEVER fabricate a proof point, number, or customer; if no real one is available,
+  make the softer claim instead. The grounding and forbidden-claims rules still
+  apply to every proof point.
 - If a `<drafting_brief>` block is present (operator-trusted), follow it: write
   from the stated Angle, match the Tone, work in the Key points where natural,
   and ground any claim about US in the "About us" facts. The drafting brief
