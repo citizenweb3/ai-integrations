@@ -42,6 +42,7 @@ export function createResendClient(options: ResendClientOptions): ResendClient {
             to: input.to,
             subject: input.subject,
             text: input.text,
+            reply_to: input.headers?.["Reply-To"] ?? undefined,
             ...(input.headers && Object.keys(input.headers).length > 0
               ? { headers: input.headers }
               : {})

@@ -97,6 +97,14 @@ const sendEmailDispatcher: SendEmailDispatcher = (() => {
     };
     if (input.inReplyTo) headers["In-Reply-To"] = input.inReplyTo;
     if (input.references.length > 0) headers["References"] = input.references.join(" ");
+
+    // For cold outreach, if we want to send from partner@citizenweb3.com
+    // but receive replies at outreach.citizenweb3.com (our Resend inbound domain).
+    const replyTo = process.env.RESEND_REPLY_TO_EMAIL;
+    if (replyTo) {
+      headers["Reply-To"] = replyTo.trim();
+    }
+
     return client.send({
       from: input.fromEmail,
       to: input.recipientEmail,
