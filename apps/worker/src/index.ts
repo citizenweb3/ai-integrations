@@ -52,6 +52,7 @@ import {
   readTelegramRuntimeConfigFromEnv
 } from "./telegramClient";
 import { createWorkerLogger, type WorkerLogLevel } from "./logger";
+import { runWorkerTick, type WorkerTickDeps } from "./tick";
 
 const workerId = process.env.WORKER_ID ?? `worker-${randomUUID()}`;
 const pollIntervalMs = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 1000);
@@ -193,26 +194,28 @@ async function main() {
     log("info", "campaign_discovery_crons_bootstrap", recurrence);
   }
 
+  // Each loop iteration is delegated to `runWorkerTick`, which catches a
+  // transient DB failure (e.g. Postgres restarting mid-query) and returns it as
+  // a non-fatal "error" outcome instead of letting it propagate to
+  // `main().catch` → `process.exit(1)`. The worker now survives a connection
+  // blip and resumes once the pool reconnects.
+  const tickDeps: WorkerTickDeps = {
+    workerId,
+    maybeRecordHeartbeat,
+    recoverStaleJobs,
+    leaseJob: leaseNextJobFromPools,
+    runJob,
+    log,
+    serializeError
+  };
+
   while (!shuttingDown) {
-    await maybeRecordHeartbeat();
-    const recoveredJobs = await recoverStaleJobs(workerId);
-    if (recoveredJobs > 0) {
-      log("warn", "stale_jobs_recovered", { count: recoveredJobs });
-    }
-    log("debug", "worker_poll", { workerPools });
-
-    const job = await leaseNextJobFromPools();
-    if (!job) {
-      if (runOnce) {
-        break;
-      }
-      await sleep(pollIntervalMs);
-      continue;
-    }
-
-    await runJob(job);
+    const outcome = await runWorkerTick(tickDeps);
     if (runOnce) {
       break;
+    }
+    if (outcome !== "ran_job") {
+      await sleep(pollIntervalMs);
     }
   }
 
