@@ -12,7 +12,8 @@ type Mode = "form" | "chat";
 
 function resolveMode(raw: string | string[] | undefined): Mode {
   const value = typeof raw === "string" ? raw : Array.isArray(raw) ? raw[0] : null;
-  return value === "chat" ? "chat" : "form";
+  // Default to the chat assistant — only an explicit ?mode=form opts into the form.
+  return value === "form" ? "form" : "chat";
 }
 
 export default async function NewCampaignPage({
@@ -371,11 +372,11 @@ function ModeTabs({ active }: { active: Mode }) {
     }`;
   return (
     <div className="flex items-center gap-2">
-      <Link href="/campaigns/new?mode=form" className={`${tabClass("form")} hover:no-underline`}>
-        Form
-      </Link>
       <Link href="/campaigns/new?mode=chat" className={`${tabClass("chat")} hover:no-underline`}>
         Chat assistant
+      </Link>
+      <Link href="/campaigns/new?mode=form" className={`${tabClass("form")} hover:no-underline`}>
+        Form
       </Link>
     </div>
   );
