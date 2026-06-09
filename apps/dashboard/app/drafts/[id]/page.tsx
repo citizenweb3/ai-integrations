@@ -132,7 +132,7 @@ export default async function DraftDetailPage({ params }: Props) {
   const draftOrgId = draft.contact?.organizationId ?? draft.thread?.organizationId ?? null;
   const needsReviewClaims = draft.claims.filter((c) => c.safety === "needs_review");
   const claimsStale = editable && draft.claimsValidatedVersion !== draft.version;
-  const guardrails = recipientEmail
+  const guardrails = editable && recipientEmail
     ? await evaluatePreSendGuardrails({
         draftId: draft.id,
         recipientEmail,
@@ -368,7 +368,7 @@ export default async function DraftDetailPage({ params }: Props) {
                   </span>
                 }
               />
-              {recipientEmail ? (
+              {editable && recipientEmail ? (
                 <InfoRow
                   label="Pre-send guardrails"
                   value={
@@ -399,7 +399,7 @@ export default async function DraftDetailPage({ params }: Props) {
         </Card>
 
         {/* GUARDRAIL DETAILS — only when there are failures the operator must see. */}
-        {recipientEmail && guardrails.failures.length > 0 ? (
+        {editable && recipientEmail && guardrails.failures.length > 0 ? (
           <Card>
             <BlockTitle title="What is blocking send" className="mb-3 text-left" />
             <p className="text-xs opacity-60 mb-3">
