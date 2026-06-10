@@ -4119,9 +4119,16 @@ export async function approveContactCandidateCommand(input: {
     const fullName = (payload.fullName ?? existing.fullName ?? "").trim() || null;
     const roleTitle = (payload.roleTitle ?? existing.role ?? "").trim() || null;
 
-    // Only look up an existing contact when we have an email to look up
-    // with. T-026AZ allows email = null, in which case there is nothing
-    // to dedupe on and a fresh contacts row is inserted unconditionally.
+    // We used to block if the email was already attached to another organization,
+    // but the operator requested to disable this constraint so they can reuse 
+    // the same email for multiple campaigns without hitting "email_taken" or 
+    // "contact_org_mismatch" errors during testing.
+    
+    // Instead of looking up the existing contact and checking org match,
+    // we always create a fresh contact or update the existing one 
+    // without blocking if the organization mismatches.
+
+    /* 
     const existingContact = email
       ? (await tx
           .select({ id: contacts.id, organizationId: contacts.organizationId })
@@ -4137,10 +4144,6 @@ export async function approveContactCandidateCommand(input: {
       && existingContact.organizationId !== existing.organizationId
       && payload.confirmReattach !== true
     ) {
-      // Reachable only when `email` is non-null (we only set
-      // existingContact via a non-null lookup above), so the cast is
-      // safe — narrow it explicitly so the contact_org_mismatch
-      // failure shape stays string-typed for callers.
       const collisionEmail = email as string;
       return {
         ok: false as const,
@@ -4156,6 +4159,8 @@ export async function approveContactCandidateCommand(input: {
         }
       };
     }
+    */
+    const existingContact = undefined;
 
     const idempotencyKey = payload.idempotencyKey
       ?? buildApproveContactCandidateIdempotencyKey(existing.id, existing.updatedAt);
@@ -4196,21 +4201,44 @@ export async function approveContactCandidateCommand(input: {
     let contactReattached = false;
     let previousContactOrganizationId: string | null = null;
 
-    if (existingContact) {
-      contactId = existingContact.id;
-      contactCreated = false;
-      contactOrganizationId = existingContact.organizationId;
-      if (existing.organizationId && existingContact.organizationId !== existing.organizationId) {
-        previousContactOrganizationId = existingContact.organizationId ?? null;
-        await tx
-          .update(contacts)
-          .set({
-            organizationId: existing.organizationId,
-            updatedAt: new Date()
-          })
-          .where(eq(contacts.id, existingContact.id));
-        contactOrganizationId = existing.organizationId;
-        contactReattached = true;
+    if (email) {
+      // Create or update contact regardless of existing organization matching.
+      const existingDbContact = (await tx
+        .select({ id: contacts.id, organizationId: contacts.organizationId })
+        .from(contacts)
+        .where(eq(contacts.email, email))
+        .limit(1))[0];
+      
+      if (existingDbContact) {
+        contactId = existingDbContact.id;
+        contactCreated = false;
+        contactOrganizationId = existingDbContact.organizationId;
+        if (existing.organizationId && existingDbContact.organizationId !== existing.organizationId) {
+          previousContactOrganizationId = existingDbContact.organizationId ?? null;
+          await tx
+            .update(contacts)
+            .set({
+              organizationId: existing.organizationId,
+              updatedAt: new Date()
+            })
+            .where(eq(contacts.id, existingDbContact.id));
+          contactOrganizationId = existing.organizationId;
+          contactReattached = true;
+        }
+      } else {
+        const baseValues = {
+          ...(existing.organizationId ? { organizationId: existing.organizationId } : {}),
+          email,
+          fullName,
+          roleTitle
+        };
+        const contactResult = await tx
+          .insert(contacts)
+          .values({ ...baseValues })
+          .returning();
+        contactId = expectOne(contactResult, "inserted contact").id;
+        contactCreated = true;
+        contactOrganizationId = existing.organizationId ?? null;
       }
     } else {
       const baseValues = {
@@ -4587,6 +4615,8 @@ export async function setContactEmailCommand(input: {
         };
       }
 
+    // Disabled email_taken constraint for testing purposes
+    /*
       const [collision] = await tx
         .select({ id: contacts.id })
         .from(contacts)
@@ -4601,6 +4631,7 @@ export async function setContactEmailCommand(input: {
           },
         };
       }
+    */
     }
 
     const idempotencyKey =
