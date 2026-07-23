@@ -1502,12 +1502,19 @@ export async function getDashboardSnapshot() {
     db.select().from(eventLog).orderBy(desc(eventLog.createdAt)).limit(20),
     // Events tied to a system job (`job_started` / `job_succeeded` from a cron
     // tick, etc.) are noise on the operator view; events with no jobId or tied
-    // to a business job stay.
+    // to a business job stay. NOT EXISTS (correlated on the jobs PK) instead of
+    // NOT IN: the latter forces a seq scan across all of event_log + jobs to
+    // build/hash the subquery on every call, which is a full-table anti-join on
+    // two multi-hundred-thousand-row tables — cheap in isolation but pathological
+    // under host memory pressure. NOT EXISTS lets the planner use the jobs PK
+    // index per row instead.
     db.select().from(eventLog)
       .where(sql`
         ${eventLog.jobId} is null
-        or ${eventLog.jobId} not in (
-          select id from jobs where job_type in (${systemTypesFragment})
+        or not exists (
+          select 1 from jobs
+          where ${jobs.id} = ${eventLog.jobId}
+            and ${jobs.jobType} in (${systemTypesFragment})
         )
       `)
       .orderBy(desc(eventLog.createdAt)).limit(20),

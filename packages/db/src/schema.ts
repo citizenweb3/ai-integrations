@@ -452,6 +452,7 @@ export const jobs = pgTable("jobs", {
   leaseIdx: index("jobs_lease_idx").on(table.status, table.availableAt, table.priority),
   workerPoolStatusIdx: index("jobs_worker_pool_status_idx").on(table.workerPool, table.status, table.availableAt, table.priority),
   concurrencyIdx: index("jobs_concurrency_idx").on(table.concurrencyKey),
+  jobTypeIdx: index("jobs_job_type_idx").on(table.jobType),
   // T-026BT: at most one live cron tick per campaign. Scoped to the cron job
   // type so it never touches the `campaign_discovery:*` wave keys, which keep a
   // leased+queued pair during maybeEnqueueNextDiscoveryWave chaining (F5).
@@ -493,7 +494,9 @@ export const eventLog = pgTable("event_log", {
   createdAt: createdAt()
 }, (table) => ({
   entityIdx: index("event_log_entity_idx").on(table.entityType, table.entityId),
-  correlationIdx: index("event_log_correlation_idx").on(table.correlationId)
+  correlationIdx: index("event_log_correlation_idx").on(table.correlationId),
+  jobIdIdx: index("event_log_job_id_idx").on(table.jobId),
+  createdAtIdx: index("event_log_created_at_idx").on(table.createdAt)
 }));
 
 export const eventLogArchive = pgTable("event_log_archive", {
